@@ -2,10 +2,14 @@ name: Build JSR Vlither Debug APK
 
 on:
   push:
-    branches: [master, main]
+    branches:
+      - master
+      - main
 
   pull_request:
-    branches: [master, main]
+    branches:
+      - master
+      - main
 
   workflow_dispatch:
 
@@ -50,28 +54,30 @@ jobs:
             -O slang.tar.gz
 
           if [ ! -s slang.tar.gz ]; then
-            echo "ERROR: Failed to download Slang v${SLANG_VERSION}"
+            echo "ERROR: Failed to download Slang"
             exit 1
           fi
 
           tar -xzf slang.tar.gz
 
-          SLANG_DIR=$(find . -maxdepth 2 -type f -name "slangc" | head -n 1 | xargs dirname)
+          SLANG_BIN=$(find . -type f -name "slangc" | head -n 1)
 
-          if [ -z "$SLANG_DIR" ] || [ ! -f "$SLANG_DIR/slangc" ]; then
+          if [ -z "$SLANG_BIN" ]; then
             echo "ERROR: slangc was not found"
             exit 1
           fi
 
-          SLANG_DIR=$(realpath "$SLANG_DIR")
+          chmod +x "$SLANG_BIN"
 
-          cat > /tmp/slangc_wrapper.sh <<EOF
+          SLANG_DIR=$(dirname "$(realpath "$SLANG_BIN")")
+
+          cat > /tmp/slangc <<EOF
           #!/bin/sh
           export LD_LIBRARY_PATH="$SLANG_DIR:\$LD_LIBRARY_PATH"
-          exec "$SLANG_DIR/slangc" "\$@"
+          exec "$SLANG_BIN" "\$@"
           EOF
 
-          sudo mv /tmp/slangc_wrapper.sh /usr/local/bin/slangc
+          sudo mv /tmp/slangc /usr/local/bin/slangc
           sudo chmod +x /usr/local/bin/slangc
 
           slangc -v
@@ -89,7 +95,7 @@ jobs:
             "$ASSETS/textures"
 
           if [ ! -d "app/res/shaders/bin" ]; then
-            echo "ERROR: app/res/shaders/bin does not exist."
+            echo "ERROR: app/res/shaders/bin does not exist"
             exit 1
           fi
 
@@ -120,7 +126,23 @@ jobs:
             -Pandroid.ndkVersion=26.3.11579264 \
             --stacktrace
 
+      - name: Check APK exists
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not created at:"
+            echo "$APK"
+            exit 1
+          fi
+
+          echo "APK created successfully:"
+          ls -lh "$APK"
+
       - name: Upload JSR Vlither Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name:
+          name: JSR-Vlither-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30

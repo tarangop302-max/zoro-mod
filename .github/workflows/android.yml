@@ -32,7 +32,7 @@ jobs:
       - name: Install NDK and CMake
         run: |
           sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
 
       - name: Set up signing keystore
         env:
@@ -41,6 +41,11 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "ERROR: KEYSTORE_B64 secret is missing"
+            exit 1
+          fi
+
           echo "$KEYSTORE_B64" | base64 -d > android/app/vlither.keystore
 
           cat > android/app/keystore.properties <<EOF
@@ -64,14 +69,80 @@ jobs:
             "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.tar.gz" \
             -O slang.tar.gz
 
-          if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to download Slang"
+          if [ ! -s slang.tar.gz ]; then
+            echo "ERROR: Slang download failed"
             exit 1
           fi
 
           tar -xzf slang.tar.gz
 
-          SLANG_DIR=$(find . -maxdepth 2 -name slangc -type f | head -1 | xargs dirname)
-          SLANG_DIR=$(realpath "$SLANG_DIR")
+          SLANG_BIN=$(find . -type f -name "slangc" | head -n 1)
 
-          printf '#!/bin/sh\n
+          if [ -z "$SLANG_BIN" ]; then
+            echo "ERROR: slangc was not found"
+            exit 1
+          fi
+
+          chmod +x "$SLANG_BIN"
+
+          sudo ln -sf "$(realpath "$SLANG_BIN")" /usr/local/bin/slangc
+
+          slangc -v
+
+      - name: Compile shaders
+        run: python3 build.py 2
+
+      - name: Copy assets to Android project
+        run: |
+          ASSETS=android/app/src/main/assets
+
+          mkdir -p \
+            "$ASSETS/shaders" \
+            "$ASSETS/fonts" \
+            "$ASSETS/textures"
+
+          if [ ! -d "app/res/shaders/bin" ]; then
+            echo "ERROR: app/res/shaders/bin does not exist."
+            exit 1
+          fi
+
+          cp app/res/shaders/bin/*.spv "$ASSETS/shaders/"
+
+          if [ -d "app/res/fonts" ]; then
+            cp app/res/fonts/*.ttf "$ASSETS/fonts/" || true
+          fi
+
+          if [ -d "app/res/textures" ]; then
+            cp -r app/res/textures/. "$ASSETS/textures/"
+          fi
+
+          echo "Assets copied:"
+          find "$ASSETS" -type f
+
+      - name: Generate Gradle wrapper
+        run: |
+          cd android
+          gradle wrapper --gradle-version=8.6
+          chmod +x gradlew
+
+      - name: Build release APK
+        run: |
+          cd android
+          ./gradlew assembleRelease \
+            -Pandroid.ndkVersion=26.3.11579264 \
+            --stacktrace
+
+      - name: Get app version
+        id: get_version
+        run: |
+          VERSION=$(grep 'APP_VERSION=' android/app/src/main/cpp/CMakeLists.txt | grep -oP '"\K[^"]+')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "App version: $VERSION"
+
+      - name: Upload JSR Vlither APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: JSR-Vlither-v${{ steps.get_version.outputs.version }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30

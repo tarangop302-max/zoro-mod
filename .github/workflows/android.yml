@@ -41,7 +41,18 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_B64" | base64 -d > android/app/vlither.keystore
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > android/app/vlither.keystore
+          else
+            echo "No KEYSTORE_B64 secret set — generating a fresh keystore for this build"
+            STORE_PASSWORD=${STORE_PASSWORD:-vlither123}
+            KEY_ALIAS=${KEY_ALIAS:-vlither}
+            KEY_PASSWORD=${KEY_PASSWORD:-vlither123}
+            keytool -genkeypair -v -keystore android/app/vlither.keystore \
+              -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASSWORD" -keypass "$KEY_PASSWORD" \
+              -dname "CN=Vlither, OU=Dev, O=Vlither, L=City, S=State, C=US"
+          fi
           cat > android/app/keystore.properties <<EOF
           STORE_PASSWORD=$STORE_PASSWORD
           KEY_ALIAS=$KEY_ALIAS

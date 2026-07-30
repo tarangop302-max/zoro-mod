@@ -1,10 +1,12 @@
-name: Build JSR Vlither APK
+name: Build JSR Vlither Debug APK
 
 on:
   push:
     branches: [master, main]
+
   pull_request:
     branches: [master, main]
+
   workflow_dispatch:
 
 jobs:
@@ -21,7 +23,7 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Setup Gradle
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.6"
@@ -33,28 +35,6 @@ jobs:
         run: |
           sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
-
-      - name: Set up signing keystore
-        env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          if [ -z "$KEYSTORE_B64" ]; then
-            echo "ERROR: KEYSTORE_B64 secret is missing"
-            exit 1
-          fi
-
-          echo "$KEYSTORE_B64" | base64 -d > android/app/vlither.keystore
-
-          cat > android/app/keystore.properties <<EOF
-          STORE_PASSWORD=$STORE_PASSWORD
-          KEY_ALIAS=$KEY_ALIAS
-          KEY_PASSWORD=$KEY_PASSWORD
-          EOF
-
-          echo "Keystore and properties ready"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -70,22 +50,29 @@ jobs:
             -O slang.tar.gz
 
           if [ ! -s slang.tar.gz ]; then
-            echo "ERROR: Slang download failed"
+            echo "ERROR: Failed to download Slang v${SLANG_VERSION}"
             exit 1
           fi
 
           tar -xzf slang.tar.gz
 
-          SLANG_BIN=$(find . -type f -name "slangc" | head -n 1)
+          SLANG_DIR=$(find . -maxdepth 2 -type f -name "slangc" | head -n 1 | xargs dirname)
 
-          if [ -z "$SLANG_BIN" ]; then
+          if [ -z "$SLANG_DIR" ] || [ ! -f "$SLANG_DIR/slangc" ]; then
             echo "ERROR: slangc was not found"
             exit 1
           fi
 
-          chmod +x "$SLANG_BIN"
+          SLANG_DIR=$(realpath "$SLANG_DIR")
 
-          sudo ln -sf "$(realpath "$SLANG_BIN")" /usr/local/bin/slangc
+          cat > /tmp/slangc_wrapper.sh <<EOF
+          #!/bin/sh
+          export LD_LIBRARY_PATH="$SLANG_DIR:\$LD_LIBRARY_PATH"
+          exec "$SLANG_DIR/slangc" "\$@"
+          EOF
+
+          sudo mv /tmp/slangc_wrapper.sh /usr/local/bin/slangc
+          sudo chmod +x /usr/local/bin/slangc
 
           slangc -v
 
@@ -94,7 +81,7 @@ jobs:
 
       - name: Copy assets to Android project
         run: |
-          ASSETS=android/app/src/main/assets
+          ASSETS="android/app/src/main/assets"
 
           mkdir -p \
             "$ASSETS/shaders" \
@@ -125,24 +112,15 @@ jobs:
           gradle wrapper --gradle-version=8.6
           chmod +x gradlew
 
-      - name: Build release APK
+      - name: Build debug APK
         run: |
           cd android
-          ./gradlew assembleRelease \
+
+          ./gradlew assembleDebug \
             -Pandroid.ndkVersion=26.3.11579264 \
             --stacktrace
 
-      - name: Get app version
-        id: get_version
-        run: |
-          VERSION=$(grep 'APP_VERSION=' android/app/src/main/cpp/CMakeLists.txt | grep -oP '"\K[^"]+')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "App version: $VERSION"
-
-      - name: Upload JSR Vlither APK
+      - name: Upload JSR Vlither Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: JSR-Vlither-v${{ steps.get_version.outputs.version }}
-          path: android/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
-          retention-days: 30
+          name:

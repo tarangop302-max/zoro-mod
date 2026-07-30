@@ -120,7 +120,7 @@ jobs:
       # ── Publish ONLY APK + version files to public releases repo ────────
       # NOTE: Only app-debug.apk, version.txt and download_url.txt are pushed.
       # Source code is NEVER pushed to the public repo.
-      - name: Publish APK to public releases repo
+      
         env:
           RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           VERSION: ${{ steps.get_version.outputs.version }}

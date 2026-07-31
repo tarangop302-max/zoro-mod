@@ -11,7 +11,7 @@
 #endif
 
 #ifndef IM_COL32
-#define IM_COL32(R,G,B,A) (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|(ImU32)(R))
+#define IM_COL32(R,G,B,A) (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)))
 #endif
 #define NTL_MAX_TEAM 64
 #define NTL_URL_MAX 2048
@@ -1001,11 +1001,18 @@ void ntl_team_draw_minimap(tenv *env, float x, float y, float size) {
   float map_radius = radius * 0.90f;
   ImVec2 center = {x + radius, y + radius};
 
-  /* Cover the shader's fixed local marker with the player's chosen marker. */
+  /* Cover the shader's fixed local marker with the player's chosen marker.
+     Normalize against the *current* (possibly shrunk) arena radius,
+     flux_grd, not the original static grd -- flux_grd tracks the safe-zone
+     shrinking over the course of a match, and using the static grd here
+     made the dot drift toward the center relative to the real boundary as
+     the match went on. */
   snake *local = local_snake(g);
   if (local) {
-    float rx = (local->xx - g->data.grd) / g->data.grd;
-    float ry = (local->yy - g->data.grd) / g->data.grd;
+    float lx = local->xx + local->fx;
+    float ly = local->yy + local->fy;
+    float rx = (lx - g->data.grd) / g->data.flux_grd;
+    float ry = (ly - g->data.grd) / g->data.flux_grd;
     float dist = sqrtf(rx * rx + ry * ry);
     if (dist > 1.0f) { rx /= dist; ry /= dist; }
     ImVec2 p = {center.x + rx * map_radius, center.y + ry * map_radius};
@@ -1029,8 +1036,8 @@ void ntl_team_draw_minimap(tenv *env, float x, float y, float size) {
     if (!isfinite(m->x) || !isfinite(m->y) || (m->x == 0.0f && m->y == 0.0f))
       continue;
 
-    float rx = (m->x - g->data.grd) / g->data.grd;
-    float ry = (m->y - g->data.grd) / g->data.grd;
+    float rx = (m->x - g->data.grd) / g->data.flux_grd;
+    float ry = (m->y - g->data.grd) / g->data.flux_grd;
     float dist = sqrtf(rx * rx + ry * ry);
     if (dist > 1.0f) { rx /= dist; ry /= dist; }
     ImVec2 p = {center.x + rx * map_radius, center.y + ry * map_radius};

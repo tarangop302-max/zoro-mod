@@ -76,10 +76,6 @@ void ui_overlay(tenv* env) {
     igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
                usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
     float line_height = igGetCursorPosY();
-    ImVec2 icon_sz;
-    igCalcTextSize(&icon_sz, "\ue971", NULL, false, -1);
-    ImVec2 char_sz;
-    igCalcTextSize(&char_sz, "-", NULL, false, -1);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue971");
     igSameLine(0, -1);
     igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->nickname);
@@ -121,12 +117,6 @@ void ui_overlay(tenv* env) {
     igTextColored((ImVec4){1, 1, 1, 0.7}, "%02d:%02d:%02d", hours, minutes,
                   seconds);
     igText("");
-
-    if (usrs->hotkeys[HOTKEY_MENU].active) {
-      display_hotkeys(usr, (icon_sz.x - char_sz.x) * 0.5f,
-                      usrs->stats_font_size);
-
-    }
 
     float px = (((gdata->data.view_xx - gdata->data.grd) * 2) /
                 ((gdata->data.flux_grd) * 2));

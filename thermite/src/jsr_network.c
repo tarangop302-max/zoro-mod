@@ -448,3 +448,201 @@ bool jsr_network_send_message(
 
         return true;
     }
+
+    buffer[0] = JSR_MSG_TYPE_CHAT;
+
+    memcpy(
+        buffer + 1,
+        message,
+        message_len
+    );
+
+    mg_ws_send(
+        net->ws_connection,
+        buffer,
+        message_len + 1,
+        WEBSOCKET_OP_BINARY
+    );
+
+    return true;
+}
+
+void jsr_network_update(
+    jsr_network *net,
+    float delta_time
+) {
+    time_t now;
+
+    (void) delta_time;
+
+    if (net == NULL || net->mgr == NULL) {
+        return;
+    }
+
+    mg_mgr_poll(net->mgr, 0);
+
+    now = time(NULL);
+
+    if (net->is_connected &&
+        difftime(now, net->last_message_time) >
+            net->connection_timeout) {
+        jsr_network_disconnect(net);
+    }
+
+    if (net->is_connected &&
+        difftime(now, net->last_ping) >
+            net->ping_interval &&
+        net->ws_connection != NULL) {
+        uint8_t ping = JSR_MSG_TYPE_PING;
+
+        mg_ws_send(
+            net->ws_connection,
+            &ping,
+            1,
+            WEBSOCKET_OP_BINARY
+        );
+
+        net->last_ping = now;
+    }
+
+    if (net->is_connected &&
+        net->pending_count > 0) {
+        int count = net->pending_count;
+
+        net->pending_count = 0;
+
+        for (int i = 0; i < count; i++) {
+            jsr_network_send_message(
+                net,
+                net->pending_messages[i]
+            );
+        }
+    }
+}
+
+bool jsr_network_is_connected(
+    jsr_network *net
+) {
+    return net != NULL && net->is_connected;
+}
+
+int jsr_network_pending_count(
+    jsr_network *net
+) {
+    if (net == NULL) {
+        return 0;
+    }
+
+    return net->pending_count;
+}
+
+void jsr_network_request_sync(
+    jsr_network *net
+) {
+    uint8_t buffer[256];
+    size_t position = 0;
+    size_t team_len;
+    size_t username_len;
+    size_t peer_len;
+
+    if (net == NULL ||
+        net->ws_connection == NULL) {
+        return;
+    }
+
+    team_len = jsr_safe_strlen(
+        net->team_key,
+        sizeof(net->team_key) - 1
+    );
+
+    username_len = jsr_safe_strlen(
+        net->username,
+        sizeof(net->username) - 1
+    );
+
+    peer_len = jsr_safe_strlen(
+        net->peer_id,
+        sizeof(net->peer_id) - 1
+    );
+
+    if (team_len > 255 ||
+        username_len > 255 ||
+        peer_len > 255) {
+        return;
+    }
+
+    buffer[position++] = JSR_MSG_TYPE_SYNC;
+
+    buffer[position++] = (uint8_t) team_len;
+    memcpy(
+        buffer + position,
+        net->team_key,
+        team_len
+    );
+    position += team_len;
+
+    buffer[position++] = (uint8_t) username_len;
+    memcpy(
+        buffer + position,
+        net->username,
+        username_len
+    );
+    position += username_len;
+
+    buffer[position++] = (uint8_t) peer_len;
+    memcpy(
+        buffer + position,
+        net->peer_id,
+        peer_len
+    );
+    position += peer_len;
+
+    mg_ws_send(
+        net->ws_connection,
+        buffer,
+        position,
+        WEBSOCKET_OP_BINARY
+    );
+}
+
+void jsr_network_set_timeout(
+    jsr_network *net,
+    double timeout_seconds
+) {
+    if (net == NULL ||
+        timeout_seconds <= 0.0) {
+        return;
+    }
+
+    net->connection_timeout = timeout_seconds;
+}
+
+void jsr_network_set_ping_interval(
+    jsr_network *net,
+    double interval_seconds
+) {
+    if (net == NULL ||
+        interval_seconds <= 0.0) {
+        return;
+    }
+
+    net->ping_interval = interval_seconds;
+}
+
+const char *jsr_network_get_url(
+    jsr_network *net
+) {
+    if (net == NULL) {
+        return "";
+    }
+
+    return net->relay_url;
+}
+
+const char *jsr_network_get_error(
+    jsr_network *net
+) {
+    (void) net;
+
+    return "";
+}

@@ -12,6 +12,9 @@
 #include "game/game_data.h"
 #include "game/user_settings.h"
 
+// JSR Team Chat
+#include "thermite/tchat.h"
+
 TDEF_USER_DATA({
   renderer* r;
 
@@ -26,8 +29,14 @@ TDEF_USER_DATA({
     VkDescriptorSet* scene;
   } viewport_widget;
 
+  // Game data
   game_data gdata;
+
+  // User settings
   user_settings usrs;
+
+  // JSR Team Chat system
+  tchat_system* tchat;
 });
 
 #endif

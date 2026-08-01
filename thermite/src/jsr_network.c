@@ -11,24 +11,38 @@
 #include "../../app/src/external/mongoose.h"
 
 // ============================================================================
+// JSR Railway relay
+// ============================================================================
+
+#define JSR_RAILWAY_HOST \
+    "jsr-relay-server-production.up.railway.app"
+
+// ============================================================================
 // Internal helpers
 // ============================================================================
 
-static size_t jsr_safe_strlen(const char *text, size_t max_len) {
+static size_t jsr_safe_strlen(
+    const char *text,
+    size_t max_len
+) {
     size_t length = 0;
 
     if (text == NULL) {
         return 0;
     }
 
-    while (length < max_len && text[length] != '\0') {
+    while (length < max_len &&
+           text[length] != '\0') {
         length++;
     }
 
     return length;
 }
 
-static void jsr_generate_peer_id(char *peer_id, size_t size) {
+static void jsr_generate_peer_id(
+    char *peer_id,
+    size_t size
+) {
     static const char charset[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
@@ -49,7 +63,8 @@ static void jsr_generate_peer_id(char *peer_id, size_t size) {
     charset_size = sizeof(charset) - 1;
 
     for (size_t i = 0; i + 1 < size; i++) {
-        peer_id[i] = charset[rand() % charset_size];
+        peer_id[i] =
+            charset[rand() % charset_size];
     }
 
     peer_id[size - 1] = '\0';
@@ -63,6 +78,7 @@ static void jsr_add_chat_message(
     size_t message_len
 ) {
     tchat_message *chat_message;
+    char safe_username[TCHAT_USERNAME_MAX];
 
     if (net == NULL ||
         net->chat == NULL ||
@@ -72,30 +88,50 @@ static void jsr_add_chat_message(
     }
 
     if (username_len >= TCHAT_USERNAME_MAX) {
-        username_len = TCHAT_USERNAME_MAX - 1;
+        username_len =
+            TCHAT_USERNAME_MAX - 1;
     }
 
-    if (message_len >= TCHAT_MESSAGE_MAX_LEN) {
-        message_len = TCHAT_MESSAGE_MAX_LEN - 1;
+    if (message_len >=
+        TCHAT_MESSAGE_MAX_LEN) {
+        message_len =
+            TCHAT_MESSAGE_MAX_LEN - 1;
     }
 
-    char safe_username[TCHAT_USERNAME_MAX];
+    memcpy(
+        safe_username,
+        username,
+        username_len
+    );
 
-    memcpy(safe_username, username, username_len);
     safe_username[username_len] = '\0';
 
-    if (strcmp(safe_username, net->username) == 0) {
+    /*
+     * Do not add our own message twice if the
+     * relay sends the message back to us.
+     */
+    if (strcmp(
+            safe_username,
+            net->username
+        ) == 0) {
         return;
     }
 
-    if (net->chat->message_count >= TCHAT_MAX_MESSAGES) {
+    /*
+     * Remove the oldest message if the list
+     * is already full.
+     */
+    if (net->chat->message_count >=
+        TCHAT_MAX_MESSAGES) {
         memmove(
             &net->chat->messages[0],
             &net->chat->messages[1],
-            sizeof(tchat_message) * (TCHAT_MAX_MESSAGES - 1)
+            sizeof(tchat_message) *
+                (TCHAT_MAX_MESSAGES - 1)
         );
 
-        net->chat->message_count = TCHAT_MAX_MESSAGES - 1;
+        net->chat->message_count =
+            TCHAT_MAX_MESSAGES - 1;
     }
 
     if (net->chat->message_count < 0) {
@@ -103,9 +139,15 @@ static void jsr_add_chat_message(
     }
 
     chat_message =
-        &net->chat->messages[net->chat->message_count++];
+        &net->chat->messages[
+            net->chat->message_count++
+        ];
 
-    memset(chat_message, 0, sizeof(*chat_message));
+    memset(
+        chat_message,
+        0,
+        sizeof(*chat_message)
+    );
 
     memcpy(
         chat_message->username,
@@ -113,7 +155,9 @@ static void jsr_add_chat_message(
         username_len
     );
 
-    chat_message->username[username_len] = '\0';
+    chat_message->username[
+        username_len
+    ] = '\0';
 
     memcpy(
         chat_message->message,
@@ -121,12 +165,21 @@ static void jsr_add_chat_message(
         message_len
     );
 
-    chat_message->message[message_len] = '\0';
-    chat_message->timestamp = time(NULL);
-    chat_message->is_system_message = false;
+    chat_message->message[
+        message_len
+    ] = '\0';
 
-    if (net->chat->on_message_received != NULL) {
-        net->chat->on_message_received(chat_message);
+    chat_message->timestamp =
+        time(NULL);
+
+    chat_message->is_system_message =
+        false;
+
+    if (net->chat->on_message_received
+        != NULL) {
+        net->chat->on_message_received(
+            chat_message
+        );
     }
 }
 
@@ -142,15 +195,24 @@ static void jsr_parse_message(
     uint8_t message_type;
 
     if (net == NULL ||
-        net->chat == NULL ||
         data == NULL ||
         data_len == 0) {
         return;
     }
 
-    message_type = (uint8_t) data[0];
+    message_type =
+        (uint8_t) data[0];
 
-    if (message_type == JSR_MSG_TYPE_CHAT) {
+    /*
+     * Chat format:
+     *
+     * [CHAT]
+     * [username length]
+     * [username]
+     * [message]
+     */
+    if (message_type ==
+        JSR_MSG_TYPE_CHAT) {
         size_t username_len;
         const char *username;
         const char *message;
@@ -160,16 +222,29 @@ static void jsr_parse_message(
             return;
         }
 
-        username_len = (uint8_t) data[1];
+        username_len =
+            (uint8_t) data[1];
 
         if (username_len == 0 ||
-            username_len >= data_len - 1) {
+            username_len >
+                data_len - 2) {
             return;
         }
 
-        username = data + 2;
-        message = username + username_len;
-        message_len = data_len - 2 - username_len;
+        username =
+            data + 2;
+
+        message =
+            username + username_len;
+
+        message_len =
+            data_len -
+            2 -
+            username_len;
+
+        if (message_len == 0) {
+            return;
+        }
 
         jsr_add_chat_message(
             net,
@@ -179,12 +254,24 @@ static void jsr_parse_message(
             message_len
         );
     }
-    else if (message_type == JSR_MSG_TYPE_PONG) {
-        net->last_ping = time(NULL);
-        net->last_message_time = time(NULL);
+    else if (message_type ==
+             JSR_MSG_TYPE_PONG) {
+        net->last_ping =
+            time(NULL);
+
+        net->last_message_time =
+            time(NULL);
     }
-    else if (message_type == JSR_MSG_TYPE_ERROR) {
-        size_t error_len = data_len - 1;
+    else if (message_type ==
+             JSR_MSG_TYPE_ERROR) {
+        size_t error_len;
+
+        if (data_len <= 1) {
+            return;
+        }
+
+        error_len =
+            data_len - 1;
 
         printf(
             "JSR relay error: %.*s\n",
@@ -209,55 +296,112 @@ static void jsr_websocket_handler(
         return;
     }
 
-    net = (jsr_network *) connection->fn_data;
+    net =
+        (jsr_network *)
+        connection->fn_data;
 
     if (net == NULL) {
         return;
     }
 
-    if (event == MG_EV_WS_OPEN) {
+    if (event == MG_EV_OPEN) {
+        printf(
+            "JSR: TCP connection opened\n"
+        );
+    }
+    else if (event ==
+             MG_EV_WS_OPEN) {
+        printf(
+            "JSR: Connected to Railway relay\n"
+        );
+
         net->is_connected = true;
+
         net->consecutive_failures = 0;
-        net->reconnect_backoff = 1.0;
-        net->last_message_time = time(NULL);
+
+        net->reconnect_backoff =
+            1.0;
+
+        net->last_message_time =
+            time(NULL);
 
         if (net->chat != NULL &&
-            net->chat->on_connection_changed != NULL) {
-            net->chat->on_connection_changed(true);
+            net->chat
+                ->on_connection_changed
+                != NULL) {
+            net->chat
+                ->on_connection_changed(
+                    true
+                );
         }
 
+        /*
+         * Tell the Railway server our team,
+         * username and peer ID.
+         */
         jsr_network_request_sync(net);
     }
-    else if (event == MG_EV_WS_MSG) {
-        struct mg_ws_message *message =
-            (struct mg_ws_message *) event_data;
+    else if (event ==
+             MG_EV_WS_MSG) {
+        struct mg_ws_message
+            *message;
+
+        message =
+            (struct mg_ws_message *)
+            event_data;
 
         if (message != NULL) {
             jsr_parse_message(
                 net,
-                (const char *) message->data.buf,
+                (const char *)
+                    message->data.buf,
                 message->data.len
             );
 
-            net->last_message_time = time(NULL);
+            net->last_message_time =
+                time(NULL);
         }
     }
-    else if (event == MG_EV_ERROR) {
+    else if (event ==
+             MG_EV_ERROR) {
+        printf(
+            "JSR: Railway connection error\n"
+        );
+
         net->is_connected = false;
+
         net->consecutive_failures++;
 
-        if (net->chat != NULL &&
-            net->chat->on_connection_changed != NULL) {
-            net->chat->on_connection_changed(false);
-        }
-    }
-    else if (event == MG_EV_CLOSE) {
-        net->is_connected = false;
         net->ws_connection = NULL;
 
         if (net->chat != NULL &&
-            net->chat->on_connection_changed != NULL) {
-            net->chat->on_connection_changed(false);
+            net->chat
+                ->on_connection_changed
+                != NULL) {
+            net->chat
+                ->on_connection_changed(
+                    false
+                );
+        }
+    }
+    else if (event ==
+             MG_EV_CLOSE) {
+        printf(
+            "JSR: Railway connection closed\n"
+        );
+
+        net->is_connected = false;
+
+        net->ws_connection = NULL;
+
+        if (net->chat != NULL &&
+            net->chat
+                ->on_connection_changed
+                != NULL) {
+            net->chat
+                ->on_connection_changed(
+                    false
+                );
         }
     }
 }
@@ -272,28 +416,43 @@ jsr_network *jsr_network_create(
 ) {
     jsr_network *net;
 
-    if (relay_host == NULL || relay_port <= 0) {
-        return NULL;
-    }
+    /*
+     * relay_host and relay_port are kept in
+     * the function parameters because the
+     * header/API may require them.
+     */
+    (void) relay_host;
+    (void) relay_port;
 
-    net = calloc(1, sizeof(*net));
+    net = calloc(
+        1,
+        sizeof(*net)
+    );
 
     if (net == NULL) {
         return NULL;
     }
 
-    net->mgr = calloc(1, sizeof(*net->mgr));
+    net->mgr = calloc(
+        1,
+        sizeof(*net->mgr)
+    );
 
     if (net->mgr == NULL) {
         free(net);
         return NULL;
     }
 
-    mg_mgr_init(net->mgr);
+    mg_mgr_init(
+        net->mgr
+    );
 
+    /*
+     * Always use the Railway domain.
+     */
     strncpy(
         net->relay_host,
-        relay_host,
+        JSR_RAILWAY_HOST,
         sizeof(net->relay_host) - 1
     );
 
@@ -301,22 +460,38 @@ jsr_network *jsr_network_create(
         sizeof(net->relay_host) - 1
     ] = '\0';
 
-    net->relay_port = relay_port;
+    /*
+     * Railway uses secure WebSocket over
+     * the normal HTTPS port.
+     */
+    net->relay_port = 443;
 
     snprintf(
         net->relay_url,
         sizeof(net->relay_url),
-        "ws://%s:%d/jsr",
-        net->relay_host,
-        net->relay_port
+        "wss://%s/jsr",
+        net->relay_host
     );
 
-    net->ping_interval = 30.0;
-    net->connection_timeout = 60.0;
-    net->reconnect_backoff = 1.0;
+    printf(
+        "JSR relay URL: %s\n",
+        net->relay_url
+    );
 
-    net->last_ping = time(NULL);
-    net->last_message_time = time(NULL);
+    net->ping_interval =
+        30.0;
+
+    net->connection_timeout =
+        60.0;
+
+    net->reconnect_backoff =
+        1.0;
+
+    net->last_ping =
+        time(NULL);
+
+    net->last_message_time =
+        time(NULL);
 
     jsr_generate_peer_id(
         net->peer_id,
@@ -326,16 +501,26 @@ jsr_network *jsr_network_create(
     return net;
 }
 
-void jsr_network_destroy(jsr_network *net) {
+void jsr_network_destroy(
+    jsr_network *net
+) {
     if (net == NULL) {
         return;
     }
 
-    jsr_network_disconnect(net);
+    jsr_network_disconnect(
+        net
+    );
 
     if (net->mgr != NULL) {
-        mg_mgr_free(net->mgr);
-        free(net->mgr);
+        mg_mgr_free(
+            net->mgr
+        );
+
+        free(
+            net->mgr
+        );
+
         net->mgr = NULL;
     }
 
@@ -347,7 +532,8 @@ bool jsr_network_connect(
     const char *team_key,
     const char *username
 ) {
-    struct mg_connection *connection;
+    struct mg_connection
+        *connection;
 
     if (net == NULL ||
         net->mgr == NULL ||
@@ -380,32 +566,51 @@ bool jsr_network_connect(
         sizeof(net->username) - 1
     ] = '\0';
 
-    connection = mg_ws_connect(
-        net->mgr,
-        net->relay_url,
-        jsr_websocket_handler,
-        net,
-        NULL
+    printf(
+        "JSR: Connecting to %s\n",
+        net->relay_url
     );
 
+    connection =
+        mg_ws_connect(
+            net->mgr,
+            net->relay_url,
+            jsr_websocket_handler,
+            net,
+            NULL
+        );
+
     if (connection == NULL) {
+        printf(
+            "JSR: Could not create "
+            "WebSocket connection\n"
+        );
+
         net->consecutive_failures++;
+
         return false;
     }
 
-    net->ws_connection = connection;
-    net->last_reconnect_attempt = time(NULL);
+    net->ws_connection =
+        connection;
+
+    net->last_reconnect_attempt =
+        time(NULL);
 
     return true;
 }
 
-void jsr_network_disconnect(jsr_network *net) {
+void jsr_network_disconnect(
+    jsr_network *net
+) {
     if (net == NULL) {
         return;
     }
 
     if (net->ws_connection != NULL) {
-        net->ws_connection->is_closing = 1;
+        net->ws_connection
+            ->is_closing = 1;
+
         net->ws_connection = NULL;
     }
 
@@ -417,16 +622,25 @@ bool jsr_network_send_message(
     const char *message
 ) {
     size_t message_len;
-    uint8_t buffer[1 + TCHAT_MESSAGE_MAX_LEN];
 
-    if (net == NULL || message == NULL) {
+    uint8_t buffer[
+        1 + TCHAT_MESSAGE_MAX_LEN
+    ];
+
+    if (net == NULL ||
+        message == NULL) {
         return false;
     }
 
-    message_len = jsr_safe_strlen(
-        message,
-        TCHAT_MESSAGE_MAX_LEN - 1
-    );
+    message_len =
+        jsr_safe_strlen(
+            message,
+            TCHAT_MESSAGE_MAX_LEN - 1
+        );
+
+    if (message_len == 0) {
+        return false;
+    }
 
     if (!net->is_connected ||
         net->ws_connection == NULL) {
@@ -435,7 +649,9 @@ bool jsr_network_send_message(
         }
 
         strncpy(
-            net->pending_messages[net->pending_count],
+            net->pending_messages[
+                net->pending_count
+            ],
             message,
             255
         );
@@ -449,7 +665,8 @@ bool jsr_network_send_message(
         return true;
     }
 
-    buffer[0] = JSR_MSG_TYPE_CHAT;
+    buffer[0] =
+        JSR_MSG_TYPE_CHAT;
 
     memcpy(
         buffer + 1,
@@ -475,25 +692,42 @@ void jsr_network_update(
 
     (void) delta_time;
 
-    if (net == NULL || net->mgr == NULL) {
+    if (net == NULL ||
+        net->mgr == NULL) {
         return;
     }
 
-    mg_mgr_poll(net->mgr, 0);
+    mg_mgr_poll(
+        net->mgr,
+        0
+    );
 
     now = time(NULL);
 
     if (net->is_connected &&
-        difftime(now, net->last_message_time) >
-            net->connection_timeout) {
-        jsr_network_disconnect(net);
+        difftime(
+            now,
+            net->last_message_time
+        ) >
+        net->connection_timeout) {
+        printf(
+            "JSR: Connection timed out\n"
+        );
+
+        jsr_network_disconnect(
+            net
+        );
     }
 
     if (net->is_connected &&
-        difftime(now, net->last_ping) >
-            net->ping_interval &&
+        difftime(
+            now,
+            net->last_ping
+        ) >
+        net->ping_interval &&
         net->ws_connection != NULL) {
-        uint8_t ping = JSR_MSG_TYPE_PING;
+        uint8_t ping =
+            JSR_MSG_TYPE_PING;
 
         mg_ws_send(
             net->ws_connection,
@@ -502,16 +736,20 @@ void jsr_network_update(
             WEBSOCKET_OP_BINARY
         );
 
-        net->last_ping = now;
+        net->last_ping =
+            now;
     }
 
     if (net->is_connected &&
         net->pending_count > 0) {
-        int count = net->pending_count;
+        int count =
+            net->pending_count;
 
         net->pending_count = 0;
 
-        for (int i = 0; i < count; i++) {
+        for (int i = 0;
+             i < count;
+             i++) {
             jsr_network_send_message(
                 net,
                 net->pending_messages[i]
@@ -523,7 +761,8 @@ void jsr_network_update(
 bool jsr_network_is_connected(
     jsr_network *net
 ) {
-    return net != NULL && net->is_connected;
+    return net != NULL &&
+           net->is_connected;
 }
 
 int jsr_network_pending_count(
@@ -540,6 +779,7 @@ void jsr_network_request_sync(
     jsr_network *net
 ) {
     uint8_t buffer[256];
+
     size_t position = 0;
     size_t team_len;
     size_t username_len;
@@ -550,51 +790,76 @@ void jsr_network_request_sync(
         return;
     }
 
-    team_len = jsr_safe_strlen(
-        net->team_key,
-        sizeof(net->team_key) - 1
-    );
+    team_len =
+        jsr_safe_strlen(
+            net->team_key,
+            sizeof(net->team_key) - 1
+        );
 
-    username_len = jsr_safe_strlen(
-        net->username,
-        sizeof(net->username) - 1
-    );
+    username_len =
+        jsr_safe_strlen(
+            net->username,
+            sizeof(net->username) - 1
+        );
 
-    peer_len = jsr_safe_strlen(
-        net->peer_id,
-        sizeof(net->peer_id) - 1
-    );
+    peer_len =
+        jsr_safe_strlen(
+            net->peer_id,
+            sizeof(net->peer_id) - 1
+        );
 
-    if (team_len > 255 ||
+    /*
+     * The three lengths plus the message
+     * type must fit inside buffer.
+     */
+    if (team_len == 0 ||
+        username_len == 0 ||
+        peer_len == 0 ||
+        team_len > 255 ||
         username_len > 255 ||
-        peer_len > 255) {
+        peer_len > 255 ||
+        4 +
+        team_len +
+        username_len +
+        peer_len >
+        sizeof(buffer)) {
         return;
     }
 
-    buffer[position++] = JSR_MSG_TYPE_SYNC;
+    buffer[position++] =
+        JSR_MSG_TYPE_SYNC;
 
-    buffer[position++] = (uint8_t) team_len;
+    buffer[position++] =
+        (uint8_t) team_len;
+
     memcpy(
         buffer + position,
         net->team_key,
         team_len
     );
+
     position += team_len;
 
-    buffer[position++] = (uint8_t) username_len;
+    buffer[position++] =
+        (uint8_t) username_len;
+
     memcpy(
         buffer + position,
         net->username,
         username_len
     );
+
     position += username_len;
 
-    buffer[position++] = (uint8_t) peer_len;
+    buffer[position++] =
+        (uint8_t) peer_len;
+
     memcpy(
         buffer + position,
         net->peer_id,
         peer_len
     );
+
     position += peer_len;
 
     mg_ws_send(
@@ -602,6 +867,10 @@ void jsr_network_request_sync(
         buffer,
         position,
         WEBSOCKET_OP_BINARY
+    );
+
+    printf(
+        "JSR: Sent team sync\n"
     );
 }
 
@@ -614,7 +883,8 @@ void jsr_network_set_timeout(
         return;
     }
 
-    net->connection_timeout = timeout_seconds;
+    net->connection_timeout =
+        timeout_seconds;
 }
 
 void jsr_network_set_ping_interval(
@@ -626,7 +896,8 @@ void jsr_network_set_ping_interval(
         return;
     }
 
-    net->ping_interval = interval_seconds;
+    net->ping_interval =
+        interval_seconds;
 }
 
 const char *jsr_network_get_url(

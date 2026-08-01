@@ -1,6 +1,7 @@
 #include "game/loop.h"
 #include "game/bg_preview.h"
 #include "game/ntl_team.h"
+#include "game/global_chat.h"
 #include "ui/skin_editor.h"
 #include "ui/title_screen.h"
 #include "ui/settings.h"

@@ -3,16 +3,19 @@
 
 #include <thermite.h>
 
-/* Initialize the ZORO Global Chat system. */
+/* Initialize the ZORO Public Chat system. */
 void global_chat_init(tenv* env);
 
-/* Update the chat connection and receive messages. */
+/* Update the chat system every frame. */
 void global_chat_update(tenv* env);
 
-/* Draw the full Global Chat panel. */
+/* Draw the small chat button/HUD while playing. */
+void global_chat_draw(tenv* env);
+
+/* Draw the full Public Chat panel. */
 void global_chat_panel(tenv* env);
 
-/* Release Global Chat resources. */
+/* Release Public Chat resources. */
 void global_chat_destroy(tenv* env);
 
 #endif

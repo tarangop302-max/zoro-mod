@@ -2,15 +2,17 @@
 #include "game/bg_preview.h"
 #include "game/ntl_team.h"
 #include "game/global_chat.h"
+
 #include "ui/skin_editor.h"
 #include "ui/title_screen.h"
 #include "ui/settings.h"
 #include "ui/controls.h"
 #include "ui/key_buttons.h"
 #include "ui/viewport.h"
+
 #include "user.h"
 
-// JSR Team Chat
+// Existing JSR Team Chat
 #include "thermite/tchat.h"
 
 #ifdef ANDROID
@@ -26,147 +28,295 @@
 #endif
 
 #ifdef ANDROID
+
 #include <android/log.h>
-#define DLOG(fmt,...) do{char _b[256];snprintf(_b,sizeof(_b),fmt,##__VA_ARGS__);\
-    __android_log_print(ANDROID_LOG_ERROR,"vlither","%s",_b);}while(0)
+
+#define DLOG(fmt,...) \
+  do { \
+    char _b[256]; \
+    snprintf(_b, sizeof(_b), fmt, ##__VA_ARGS__); \
+    __android_log_print( \
+        ANDROID_LOG_ERROR, \
+        "vlither", \
+        "%s", \
+        _b \
+    ); \
+  } while (0)
+
 #else
-#define DLOG(fmt,...) do{}while(0)
+
+#define DLOG(fmt,...) do {} while (0)
+
 #endif
+
 
 void tinput(tenv* env) {
-  tuser_data* usr = env->usr;
-  user_settings* usrs = &usr->usrs;
 
-  if (twindow_closed(env->wnd)) {
-    env->config.running = false;
-    save_user_settings(usrs);
-  }
-
-#ifndef ANDROID
-  if (tkeyboard_key_pressed(env->kb, GLFW_KEY_F11)) {
-    twindow_toggle_fullscreen(env->wnd);
-  }
-#endif
-}
-
-void tlaunch(tenv* env) {
-  tuser_data* usr = env->usr;
-  user_settings* usrs = &usr->usrs;
-
-  srand(time(NULL));
-
-  memset(usrs, 0, sizeof(user_settings));
-  strcpy(usrs->ipv4, "148.113.20.151:444");
-  strcpy(usrs->nickname, "");
-
-  usrs->custom_skin = false;
-  usrs->default_skin = rand() % 9;
-  usrs->accessory = NO_ACCESSORY;
-
-  read_user_settings(usrs);
-
-  env->config.vsync = usrs->vsync;
-  env->config.fullscreen = false;
-  env->config.title = "Vlither";
-}
-
-void tinit(tenv* env) {
   tuser_data* usr = env->usr;
 
-  DLOG("tinit: imgui_init starting");
-  imgui_init(env);
-  DLOG("tinit: imgui_init done");
+  user_settings* usrs =
+      &usr->usrs;
 
-  DLOG("tinit: renderer_create starting");
-  env->usr->r = renderer_create(env);
-  DLOG(
-      "tinit: renderer_create done r=%p",
-      (void*)env->usr->r
-  );
+  if (
+      twindow_closed(
+          env->wnd
+      )
+  ) {
 
-  if (!env->usr->r) {
-    DLOG("tinit: renderer is NULL - bailing");
-    env->config.running = false;
-    return;
-  }
+    env->config.running =
+        false;
 
-  DLOG("tinit: ui_viewport_init");
-  ui_viewport_init(env);
-
-  DLOG("tinit: ui_title_screen_init");
-  ui_title_screen_init(env);
-
-  DLOG("tinit: ui_skin_editor_init");
-  ui_skin_editor_init(env);
-
-  DLOG("tinit: ui_settings_init");
-  ui_settings_init(env);
-
-  DLOG("tinit: ui_controls_init");
-  ui_controls_init(env);
-
-  DLOG("tinit: game_data_init");
-  game_data_init(env);
-
-  // ============================================================
-  // Create JSR Team Chat
-  // ============================================================
-
-  usr->tchat = tchat_create(
-      usr->usrs.nickname[0] != '\0'
-          ? usr->usrs.nickname
-          : "Player"
-  );
-
-  if (usr->tchat == NULL) {
-    DLOG("tinit: tchat_create FAILED");
-  } else {
-    DLOG(
-        "tinit: tchat_create OK ptr=%p",
-        (void*)usr->tchat
+    save_user_settings(
+        usrs
     );
   }
 
-  // ============================================================
+#ifndef ANDROID
 
-  ui_key_buttons_init(env);
-  ntl_team_init(env);
+  if (
+      tkeyboard_key_pressed(
+          env->kb,
+          GLFW_KEY_F11
+      )
+  ) {
 
-  DLOG("tinit: game_data_init done");
-  DLOG("tinit: complete");
+    twindow_toggle_fullscreen(
+        env->wnd
+    );
+  }
+
+#endif
 }
+
+
+void tlaunch(tenv* env) {
+
+  tuser_data* usr =
+      env->usr;
+
+  user_settings* usrs =
+      &usr->usrs;
+
+  srand(
+      time(NULL)
+  );
+
+  memset(
+      usrs,
+      0,
+      sizeof(user_settings)
+  );
+
+  strcpy(
+      usrs->ipv4,
+      "148.113.20.151:444"
+  );
+
+  strcpy(
+      usrs->nickname,
+      ""
+  );
+
+  usrs->custom_skin =
+      false;
+
+  usrs->default_skin =
+      rand() % 9;
+
+  usrs->accessory =
+      NO_ACCESSORY;
+
+  read_user_settings(
+      usrs
+  );
+
+  env->config.vsync =
+      usrs->vsync;
+
+  env->config.fullscreen =
+      false;
+
+  env->config.title =
+      "Vlither";
+}
+
+
+void tinit(tenv* env) {
+
+  tuser_data* usr =
+      env->usr;
+
+  DLOG(
+      "tinit: imgui_init starting"
+  );
+
+  imgui_init(
+      env
+  );
+
+  DLOG(
+      "tinit: imgui_init done"
+  );
+
+  DLOG(
+      "tinit: renderer_create starting"
+  );
+
+  usr->r =
+      renderer_create(
+          env
+      );
+
+  DLOG(
+      "tinit: renderer_create done r=%p",
+      (void*)usr->r
+  );
+
+  if (
+      usr->r == NULL
+  ) {
+
+    DLOG(
+        "tinit: renderer is NULL"
+    );
+
+    env->config.running =
+        false;
+
+    return;
+  }
+
+  ui_viewport_init(
+      env
+  );
+
+  ui_title_screen_init(
+      env
+  );
+
+  ui_skin_editor_init(
+      env
+  );
+
+  ui_settings_init(
+      env
+  );
+
+  ui_controls_init(
+      env
+  );
+
+  game_data_init(
+      env
+  );
+
+
+  // Existing JSR Team Chat
+
+  usr->tchat =
+      tchat_create(
+          usr->usrs.nickname[0]
+              != '\0'
+              ? usr->usrs.nickname
+              : "Player"
+      );
+
+  if (
+      usr->tchat == NULL
+  ) {
+
+    DLOG(
+        "tinit: tchat_create FAILED"
+    );
+
+  } else {
+
+    DLOG(
+        "tinit: tchat_create OK"
+    );
+  }
+
+
+  ui_key_buttons_init(
+      env
+  );
+
+  ntl_team_init(
+      env
+  );
+
+
+  // NEW PUBLIC GLOBAL CHAT
+
+  global_chat_init(
+      env
+  );
+
+
+  DLOG(
+      "tinit: complete"
+  );
+}
+
 
 void tdestroy(tenv* env) {
 
-  // ============================================================
-  // Destroy JSR Team Chat
-  // ============================================================
 
-  if (env->usr != NULL &&
-      env->usr->tchat != NULL) {
+  // Destroy existing JSR Team Chat
 
-    DLOG("tdestroy: destroying team chat");
+  if (
+      env->usr != NULL &&
+      env->usr->tchat != NULL
+  ) {
 
     tchat_destroy(
         env->usr->tchat
     );
 
-    env->usr->tchat = NULL;
+    env->usr->tchat =
+        NULL;
   }
 
-  // ============================================================
 
-  ui_key_buttons_destroy(env);
-  ntl_team_destroy(env);
+  ui_key_buttons_destroy(
+      env
+  );
 
-  game_data_destroy(env);
 
-  ui_controls_destroy(env);
-  ui_settings_destroy(env);
-  ui_skin_editor_destroy(env);
+  // Destroy new Global Chat
 
-  ui_title_screen_destroy(env);
-  ui_viewport_destroy(env);
+  global_chat_destroy(
+      env
+  );
+
+
+  ntl_team_destroy(
+      env
+  );
+
+  game_data_destroy(
+      env
+  );
+
+  ui_controls_destroy(
+      env
+  );
+
+  ui_settings_destroy(
+      env
+  );
+
+  ui_skin_editor_destroy(
+      env
+  );
+
+  ui_title_screen_destroy(
+      env
+  );
+
+  ui_viewport_destroy(
+      env
+  );
 
   renderer_destroy(
       env->usr->r,
@@ -176,52 +326,107 @@ void tdestroy(tenv* env) {
   imgui_destroy();
 }
 
-/* Draws the already-rendered game-world texture a few extra times, softly
-   offset and scaled with low alpha, on top of the sharp copy ui_viewport()
-   just drew — a cheap "poor man's blur" that needs no extra render passes
-   or shaders. Then dims/tints it so foreground panels stay readable.
-   `strength` of 1.0 = full blur+dim (Settings), lower values keep more of
-   the scene crisp (Controls, where the player needs to actually see where
-   things line up). */
+
+/*
+ * Background blur
+ */
+
 static void draw_bg_preview_blur(
     tenv* env,
     float strength
 ) {
-  tuser_data* usr = env->usr;
-  tcontext* ctx = env->ctx;
+
+  tuser_data* usr =
+      env->usr;
+
+  tcontext* ctx =
+      env->ctx;
 
   ImDrawList* dl =
       igGetBackgroundDrawList(
           igGetMainViewport()
       );
 
-  ImTextureRef tex = (ImTextureRef){
-      NULL,
-      (ImTextureID)
-          usr->viewport_widget
-              .scene[ctx->current_frame]
-  };
+  ImTextureRef tex =
+      (ImTextureRef) {
 
-  ImVec2 p0 = {0, 0};
+          NULL,
 
-  ImVec2 p1 = {
-      (float)ctx->size[0],
-      (float)ctx->size[1]
-  };
+          (ImTextureID)
+              usr->viewport_widget
+                  .scene[
+                      ctx->current_frame
+                  ]
+      };
+
+  ImVec2 p0 =
+      {0, 0};
+
+  ImVec2 p1 =
+      {
+          (float)
+              ctx->size[0],
+
+          (float)
+              ctx->size[1]
+      };
+
 
   static const struct {
+
     float ox;
+
     float oy;
+
     float scale;
+
     float alpha;
+
   } TAPS[] = {
-      {0.0025f, 0.0000f, 1.010f, 0.16f},
-      {-0.0025f, 0.0015f, 1.016f, 0.14f},
-      {0.0015f, -0.0025f, 1.022f, 0.12f},
-      {-0.0015f, -0.0020f, 1.028f, 0.10f},
-      {0.0030f, 0.0030f, 1.034f, 0.09f},
-      {-0.0030f, -0.0010f, 1.040f, 0.08f},
+
+      {
+          0.0025f,
+          0.0000f,
+          1.010f,
+          0.16f
+      },
+
+      {
+          -0.0025f,
+          0.0015f,
+          1.016f,
+          0.14f
+      },
+
+      {
+          0.0015f,
+          -0.0025f,
+          1.022f,
+          0.12f
+      },
+
+      {
+          -0.0015f,
+          -0.0020f,
+          1.028f,
+          0.10f
+      },
+
+      {
+          0.0030f,
+          0.0030f,
+          1.034f,
+          0.09f
+      },
+
+      {
+          -0.0030f,
+          -0.0010f,
+          1.040f,
+          0.08f
+      }
   };
+
 
   int num_taps =
       (int)(
@@ -233,6 +438,7 @@ static void draw_bg_preview_blur(
           0.999f
       );
 
+
   if (
       num_taps >
       (int)(
@@ -240,12 +446,14 @@ static void draw_bg_preview_blur(
           sizeof(TAPS[0])
       )
   ) {
+
     num_taps =
         (int)(
             sizeof(TAPS) /
             sizeof(TAPS[0])
         );
   }
+
 
   for (
       int i = 0;
@@ -259,32 +467,38 @@ static void draw_bg_preview_blur(
     float uv_hw =
         0.5f / sc;
 
-    ImVec2 uv0 = {
-        0.5f -
-        uv_hw +
-        TAPS[i].ox,
+    ImVec2 uv0 =
+        {
+            0.5f -
+            uv_hw +
+            TAPS[i].ox,
 
-        0.5f -
-        uv_hw +
-        TAPS[i].oy
-    };
+            0.5f -
+            uv_hw +
+            TAPS[i].oy
+        };
 
-    ImVec2 uv1 = {
-        0.5f +
-        uv_hw +
-        TAPS[i].ox,
+    ImVec2 uv1 =
+        {
+            0.5f +
+            uv_hw +
+            TAPS[i].ox,
 
-        0.5f +
-        uv_hw +
-        TAPS[i].oy
-    };
+            0.5f +
+            uv_hw +
+            TAPS[i].oy
+        };
 
     ImU32 col =
         igGetColorU32_Vec4(
-            (ImVec4){
+            (ImVec4) {
+
                 1,
+
                 1,
+
                 1,
+
                 TAPS[i].alpha *
                     strength
             }
@@ -301,16 +515,22 @@ static void draw_bg_preview_blur(
     );
   }
 
+
   ImU32 tint =
       igGetColorU32_Vec4(
-          (ImVec4){
+          (ImVec4) {
+
               0.03f,
+
               0.04f,
+
               0.05f,
+
               0.55f *
                   strength
           }
       );
+
 
   ImDrawList_AddRectFilled(
       dl,
@@ -322,33 +542,46 @@ static void draw_bg_preview_blur(
   );
 }
 
+
 void trender(tenv* env) {
-  tuser_data* usr = env->usr;
-  tcontext* ctx = env->ctx;
+
+  tuser_data* usr =
+      env->usr;
+
+  tcontext* ctx =
+      env->ctx;
 
   game_data* gdata =
       &usr->gdata;
 
-  // ============================================================
-  // Update JSR Team Chat every frame
-  // ============================================================
 
-  if (usr->tchat != NULL) {
+  // Existing JSR Team Chat update
+
+  if (
+      usr->tchat != NULL
+  ) {
+
     tchat_update(
         usr->tchat,
         1.0f / 60.0f
     );
   }
 
-  // ============================================================
 
-  if (!tcontext_begin(ctx)) {
+  if (
+      !tcontext_begin(
+          ctx
+      )
+  ) {
+
     return;
   }
+
 
 #ifdef ANDROID
 
   {
+
     extern bool g_panel_open;
 
     g_panel_open =
@@ -372,7 +605,10 @@ void trender(tenv* env) {
                 ->WantTextInput
         );
 
-    if (g_panel_open) {
+
+    if (
+        g_panel_open
+    ) {
 
       touch_state* t =
           &env->wnd->touch;
@@ -405,38 +641,51 @@ void trender(tenv* env) {
 
 #endif
 
-  if (usr->r) {
+
+  if (
+      usr->r
+  ) {
 
     renderer_render(
         usr->r,
         ctx,
-        (
-            vec4
-        ){
+
+        (vec4) {
+
             0.086f,
+
             0.109f,
+
             0.133f,
+
             1
         }
     );
+
 
     renderer_clear_instances(
         usr->r
     );
 
+
     tcontext_clear(
         ctx,
-        (
-            vec4
-        ){
+
+        (vec4) {
+
             0,
+
             0,
+
             0,
+
             1.0f
         }
     );
 
+
     imgui_prerender();
+
 
 #ifdef ANDROID
 
@@ -444,14 +693,18 @@ void trender(tenv* env) {
 
 #endif
 
-    ImGuiStyle* style =
-        igGetStyle();
 
-    ui_viewport(env);
+    ui_viewport(
+        env
+    );
+
 
     if (
-        bg_preview_visible(env) &&
-        usr->gdata.curr_screen ==
+        bg_preview_visible(
+            env
+        ) &&
+
+        gdata->curr_screen ==
             SETTINGS
     ) {
 
@@ -465,24 +718,34 @@ void trender(tenv* env) {
       );
     }
 
+
     igSetNextWindowPos(
-        igGetMainViewport()->Pos,
+        igGetMainViewport()
+            ->Pos,
+
         ImGuiCond_None,
-        (ImVec2){}
+
+        (ImVec2) {}
     );
 
+
     igSetNextWindowSize(
-        igGetMainViewport()->Size,
+        igGetMainViewport()
+            ->Size,
+
         ImGuiCond_None
     );
+
 
     igPushStyleVar_Float(
         ImGuiStyleVar_WindowBorderSize,
         0
     );
 
+
     igBegin(
         "##fullscreen_holder",
+
         NULL,
 
         ImGuiWindowFlags_NoBackground |
@@ -494,25 +757,45 @@ void trender(tenv* env) {
         ImGuiWindowFlags_NoScrollWithMouse
     );
 
-    igPopStyleVar(1);
 
-    bg_preview_update(env);
+    igPopStyleVar(
+        1
+    );
 
-    ntl_team_update(env);
+
+    bg_preview_update(
+        env
+    );
+
+
+    ntl_team_update(
+        env
+    );
+
+
+    // NEW PUBLIC GLOBAL CHAT UPDATE
+
+    global_chat_update(
+        env
+    );
+
 
     if (
-        usr->gdata.curr_screen ==
+        gdata->curr_screen ==
             PLAYING ||
 
-        usr->gdata.curr_screen ==
+        gdata->curr_screen ==
             TITLE_SCREEN
     ) {
 
-      ui_key_buttons(env);
+      ui_key_buttons(
+          env
+      );
     }
 
+
     if (
-        usr->gdata.curr_screen ==
+        gdata->curr_screen ==
             PLAYING
     ) {
 
@@ -521,46 +804,76 @@ void trender(tenv* env) {
       );
     }
 
+
     switch (
-        usr->gdata.curr_screen
+        gdata->curr_screen
     ) {
+
 
       case TITLE_SCREEN:
 
-        ui_title_screen(env);
+        ui_title_screen(
+            env
+        );
 
         break;
+
 
       case SKIN_EDITOR:
 
-        ui_skin_editor(env);
+        ui_skin_editor(
+            env
+        );
 
         break;
+
 
       case PLAYING:
 
-        game_loop(env);
+        game_loop(
+            env
+        );
 
-        ntl_team_draw(env);
+
+        ntl_team_draw(
+            env
+        );
+
+
+        // NEW PUBLIC GLOBAL CHAT
+
+        global_chat_draw(
+            env
+        );
+
 
         break;
+
 
       case SETTINGS:
 
-        ui_settings(env);
+        ui_settings(
+            env
+        );
 
         break;
+
 
       case NTL_PANEL:
 
-        ntl_team_panel(env);
+        ntl_team_panel(
+            env
+        );
 
         break;
+
 
       case CONTROLS:
 
         if (
-            !bg_preview_visible(env) &&
+            !bg_preview_visible(
+                env
+            ) &&
 
             (
                 gdata->conn ==
@@ -571,22 +884,31 @@ void trender(tenv* env) {
             )
         ) {
 
-          game_loop(env);
+          game_loop(
+              env
+          );
         }
 
-        ui_controls(env);
+
+        ui_controls(
+            env
+        );
 
         break;
     }
 
+
     igEnd();
+
 
     renderer_render_cursor(
         usr->r,
         ctx
     );
 
+
     igRender();
+
 
     imgui_render(
         ctx->frames[
@@ -595,14 +917,22 @@ void trender(tenv* env) {
     );
   }
 
-  tcontext_end(ctx);
+
+  tcontext_end(
+      ctx
+  );
 }
+
 
 void tresize(
     tenv* env
 ) {
-  ui_viewport_resize(env);
+
+  ui_viewport_resize(
+      env
+  );
 }
+
 
 #ifndef ANDROID
 

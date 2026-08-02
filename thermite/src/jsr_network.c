@@ -622,9 +622,15 @@ bool jsr_network_send_message(
     const char *message
 ) {
     size_t message_len;
+    size_t username_len;
 
+    /*
+     * Wire format for CHAT must match the parser
+     * in jsr_parse_message():
+     * [CHAT][username_len][username][message]
+     */
     uint8_t buffer[
-        1 + TCHAT_MESSAGE_MAX_LEN
+        2 + TCHAT_USERNAME_MAX + TCHAT_MESSAGE_MAX_LEN
     ];
 
     if (net == NULL ||
@@ -639,6 +645,16 @@ bool jsr_network_send_message(
         );
 
     if (message_len == 0) {
+        return false;
+    }
+
+    username_len =
+        jsr_safe_strlen(
+            net->username,
+            TCHAT_USERNAME_MAX - 1
+        );
+
+    if (username_len == 0) {
         return false;
     }
 
@@ -668,8 +684,17 @@ bool jsr_network_send_message(
     buffer[0] =
         JSR_MSG_TYPE_CHAT;
 
+    buffer[1] =
+        (uint8_t) username_len;
+
     memcpy(
-        buffer + 1,
+        buffer + 2,
+        net->username,
+        username_len
+    );
+
+    memcpy(
+        buffer + 2 + username_len,
         message,
         message_len
     );
@@ -677,7 +702,7 @@ bool jsr_network_send_message(
     mg_ws_send(
         net->ws_connection,
         buffer,
-        message_len + 1,
+        2 + username_len + message_len,
         WEBSOCKET_OP_BINARY
     );
 

@@ -1,5 +1,7 @@
 #include "global_chat.h"
 
+#include "../user.h"
+
 #include "thermite/tchat.h"
 #include "thermite/jsr_network.h"
 

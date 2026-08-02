@@ -386,6 +386,34 @@ void global_chat_panel(tenv* env) {
             "Public chat - no team key required"
         );
 
+        bool is_connected =
+            global_chat_net != NULL &&
+            jsr_network_is_connected(
+                global_chat_net
+            );
+
+        if (is_connected) {
+            igTextColored(
+                (ImVec4){
+                    0.3f,
+                    0.9f,
+                    0.3f,
+                    1.0f
+                },
+                "Connected to relay"
+            );
+        } else {
+            igTextColored(
+                (ImVec4){
+                    0.9f,
+                    0.3f,
+                    0.3f,
+                    1.0f
+                },
+                "Not connected"
+            );
+        }
+
         igSeparator();
 
         float input_height =

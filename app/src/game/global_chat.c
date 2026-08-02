@@ -363,8 +363,11 @@ void global_chat_panel(tenv* env) {
         float input_height =
             50.0f;
 
+        ImVec2 avail;
+        igGetContentRegionAvail(&avail);
+
         float message_area_height =
-            igGetContentRegionAvail().y -
+            avail.y -
             input_height;
 
         if (

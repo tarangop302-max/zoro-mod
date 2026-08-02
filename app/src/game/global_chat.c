@@ -8,16 +8,20 @@
 #include <string.h>
 
 
+/* =========================================================
+ * SETTINGS
+ * ========================================================= */
+
 #define GLOBAL_CHAT_MAX_MESSAGES 50
 #define GLOBAL_CHAT_NAME_LEN 32
 #define GLOBAL_CHAT_TEXT_LEN 160
 
-/*
- * All users of this APK automatically join
- * this same public chat room.
- */
 #define GLOBAL_CHAT_ROOM_KEY "GLOBAL01"
 
+
+/* =========================================================
+ * MESSAGE STRUCTURE
+ * ========================================================= */
 
 typedef struct {
     char name[GLOBAL_CHAT_NAME_LEN];
@@ -25,28 +29,46 @@ typedef struct {
 } global_chat_message;
 
 
-/* ---------------------------------------------------------
- * STATE
- * --------------------------------------------------------- */
+/* =========================================================
+ * GLOBAL STATE
+ * ========================================================= */
 
 static bool global_chat_initialized = false;
+
 static bool global_chat_open = false;
 
+
+/*
+ * These are kept for later network connection.
+ *
+ * They remain NULL in this test version so the
+ * game does not attempt to connect while loading.
+ */
 static tchat_system* global_chat_tchat = NULL;
+
 static jsr_network* global_chat_net = NULL;
 
+
+/* Stored chat messages. */
+
 static global_chat_message
-    global_chat_messages[GLOBAL_CHAT_MAX_MESSAGES];
+    global_chat_messages[
+        GLOBAL_CHAT_MAX_MESSAGES
+    ];
 
 static int global_chat_message_count = 0;
 
-static char
-    global_chat_input[GLOBAL_CHAT_TEXT_LEN] = "";
+
+/* Text typed into the chat input. */
+
+static char global_chat_input[
+    GLOBAL_CHAT_TEXT_LEN
+] = "";
 
 
-/* ---------------------------------------------------------
+/* =========================================================
  * ADD MESSAGE
- * --------------------------------------------------------- */
+ * ========================================================= */
 
 static void global_chat_add_message(
     const char* name,
@@ -60,10 +82,12 @@ static void global_chat_add_message(
         return;
     }
 
+
     /*
-     * Remove the oldest message when
-     * the message list is full.
+     * If the message list is full,
+     * remove the oldest message.
      */
+
     if (
         global_chat_message_count >=
         GLOBAL_CHAT_MAX_MESSAGES
@@ -71,18 +95,26 @@ static void global_chat_add_message(
         memmove(
             &global_chat_messages[0],
             &global_chat_messages[1],
-            sizeof(global_chat_message) *
-            (GLOBAL_CHAT_MAX_MESSAGES - 1)
+            sizeof(
+                global_chat_message
+            ) *
+            (
+                GLOBAL_CHAT_MAX_MESSAGES -
+                1
+            )
         );
 
         global_chat_message_count =
-            GLOBAL_CHAT_MAX_MESSAGES - 1;
+            GLOBAL_CHAT_MAX_MESSAGES -
+            1;
     }
+
 
     global_chat_message* message =
         &global_chat_messages[
             global_chat_message_count
         ];
+
 
     strncpy(
         message->name,
@@ -94,6 +126,7 @@ static void global_chat_add_message(
         GLOBAL_CHAT_NAME_LEN - 1
     ] = '\0';
 
+
     strncpy(
         message->text,
         text,
@@ -104,13 +137,14 @@ static void global_chat_add_message(
         GLOBAL_CHAT_TEXT_LEN - 1
     ] = '\0';
 
+
     global_chat_message_count++;
 }
 
 
-/* ---------------------------------------------------------
- * RECEIVE NETWORK MESSAGE
- * --------------------------------------------------------- */
+/* =========================================================
+ * NETWORK MESSAGE CALLBACK
+ * ========================================================= */
 
 static void global_chat_on_network_message(
     tchat_message* msg
@@ -121,6 +155,7 @@ static void global_chat_on_network_message(
         return;
     }
 
+
     global_chat_add_message(
         msg->username,
         msg->message
@@ -128,28 +163,48 @@ static void global_chat_on_network_message(
 }
 
 
-/* ---------------------------------------------------------
- * INITIALIZE
- * --------------------------------------------------------- */
+/* =========================================================
+ * INITIALIZATION
+ * ========================================================= */
 
 void global_chat_init(
     tenv* env
 ) {
+    /*
+     * IMPORTANT:
+     *
+     * This version does not create the
+     * network connection during Play.
+     *
+     * We are testing whether the old crash
+     * was caused by network initialization.
+     */
+
     global_chat_initialized = true;
 
     global_chat_open = false;
 
     global_chat_message_count = 0;
 
+
+    global_chat_tchat = NULL;
+
+    global_chat_net = NULL;
+
+
     memset(
         global_chat_input,
         0,
-        sizeof(global_chat_input)
+        sizeof(
+            global_chat_input
+        )
     );
 
+
     /*
-     * Messages shown when the chat opens.
+     * Test messages.
      */
+
     global_chat_add_message(
         "ZORO",
         "Welcome to Public Chat!"
@@ -157,106 +212,44 @@ void global_chat_init(
 
     global_chat_add_message(
         "ZORO",
-        "Everyone using this mod can chat here."
+        "Chat system is ready."
+    );
+
+    global_chat_add_message(
+        "ZORO",
+        "Network connection is disabled for testing."
     );
 
 
     /*
-     * Get the current player's nickname.
+     * Prevent unused-variable warnings.
      */
-    const char* nickname =
-        "Player";
 
-    if (
-        env != NULL &&
-        env->usr != NULL &&
-        env->usr->usrs.nickname[0] != '\0'
-    ) {
-        nickname =
-            env->usr->usrs.nickname;
-    }
-
-
-    /*
-     * Create local chat system.
-     */
-    global_chat_tchat =
-        tchat_create(nickname);
-
-    if (
-        global_chat_tchat == NULL
-    ) {
-        global_chat_add_message(
-            "ZORO",
-            "Chat system could not start."
-        );
-
-        return;
-    }
-
-
-    tchat_set_on_message_callback(
-        global_chat_tchat,
-        global_chat_on_network_message
-    );
-
-
-    /*
-     * Join the fixed public room.
-     */
-    tchat_join_team(
-        global_chat_tchat,
-        GLOBAL_CHAT_ROOM_KEY
-    );
-
-
-    /*
-     * Create network connection.
-     */
-    global_chat_net =
-        jsr_network_create(
-            "",
-            0
-        );
-
-    if (
-        global_chat_net == NULL
-    ) {
-        global_chat_add_message(
-            "ZORO",
-            "Network connection could not start."
-        );
-
-        return;
-    }
-
-
-    global_chat_net->chat =
-        global_chat_tchat;
-
-
-    jsr_network_connect(
-        global_chat_net,
-        GLOBAL_CHAT_ROOM_KEY,
-        nickname
-    );
+    (void)env;
 }
 
 
-/* ---------------------------------------------------------
+/* =========================================================
  * UPDATE
- * --------------------------------------------------------- */
+ * ========================================================= */
 
 void global_chat_update(
     tenv* env
 ) {
     (void)env;
 
+
     if (
         !global_chat_initialized
     ) {
         return;
     }
+
+
+    /*
+     * This does nothing while
+     * global_chat_net is NULL.
+     */
 
     if (
         global_chat_net != NULL
@@ -269,9 +262,9 @@ void global_chat_update(
 }
 
 
-/* ---------------------------------------------------------
- * DRAW CHAT BUTTON
- * --------------------------------------------------------- */
+/* =========================================================
+ * SMALL CHAT BUTTON
+ * ========================================================= */
 
 void global_chat_draw(
     tenv* env
@@ -283,73 +276,95 @@ void global_chat_draw(
     }
 
 
-    /*
-     * IMPORTANT:
-     *
-     * The button is placed directly inside
-     * the current ImGui window instead of
-     * creating another transparent window.
-     *
-     * This makes Android touch input work
-     * more reliably.
-     */
     ImGuiViewport* viewport =
         igGetMainViewport();
 
 
-    ImVec2 button_position = {
-        viewport->WorkPos.x + 12.0f,
-        viewport->WorkPos.y + 105.0f
+    /*
+     * Position:
+     * left side below ping/FPS.
+     */
+
+    ImVec2 button_pos = {
+        viewport->WorkPos.x +
+        12.0f,
+
+        viewport->WorkPos.y +
+        135.0f
     };
 
 
-    /*
-     * Save the current cursor position.
-     */
-    ImVec2 old_cursor;
-
-    igGetCursorScreenPos(
-        &old_cursor
+    igSetNextWindowPos(
+        button_pos,
+        ImGuiCond_Always,
+        (
+            ImVec2
+        ){
+            0.0f,
+            0.0f
+        }
     );
 
 
-    /*
-     * Move cursor to the chat button.
-     */
-    igSetCursorScreenPos(
-        button_position
+    igSetNextWindowSize(
+        (
+            ImVec2
+        ){
+            135.0f,
+            54.0f
+        },
+        ImGuiCond_Always
     );
 
 
-    /*
-     * Small button shown at the left side.
-     */
+    igSetNextWindowBgAlpha(
+        0.0f
+    );
+
+
+    ImGuiWindowFlags
+        button_flags =
+
+        ImGuiWindowFlags_NoTitleBar |
+
+        ImGuiWindowFlags_NoResize |
+
+        ImGuiWindowFlags_NoMove |
+
+        ImGuiWindowFlags_NoScrollbar |
+
+        ImGuiWindowFlags_NoSavedSettings |
+
+        ImGuiWindowFlags_NoBackground;
+
+
     if (
-        igButton(
-            "[ CHAT ]",
-            (ImVec2){
-                120.0f,
-                42.0f
-            }
+        igBegin(
+            "##zoro_chat_button_window",
+            NULL,
+            button_flags
         )
     ) {
-        global_chat_open =
-            !global_chat_open;
+        if (
+            igButton(
+                "[ CHAT ]",
+                (
+                    ImVec2
+                ){
+                    125.0f,
+                    44.0f
+                }
+            )
+        ) {
+            global_chat_open =
+                true;
+        }
     }
 
 
-    /*
-     * Restore cursor so other game UI
-     * is not moved.
-     */
-    igSetCursorScreenPos(
-        old_cursor
-    );
+    igEnd();
 
 
-    /*
-     * Draw chat panel.
-     */
     if (
         global_chat_open
     ) {
@@ -360,9 +375,9 @@ void global_chat_draw(
 }
 
 
-/* ---------------------------------------------------------
- * DRAW CHAT PANEL
- * --------------------------------------------------------- */
+/* =========================================================
+ * CHAT PANEL
+ * ========================================================= */
 
 void global_chat_panel(
     tenv* env
@@ -379,44 +394,49 @@ void global_chat_panel(
 
 
     /*
-     * Panel size.
+     * Panel dimensions.
      */
+
     float panel_width =
         viewport->WorkSize.x *
-        0.48f;
+        0.50f;
+
 
     float panel_height =
         viewport->WorkSize.y *
-        0.68f;
+        0.66f;
 
 
-    /*
-     * Keep panel usable on different
-     * screen sizes.
-     */
     if (
-        panel_width < 420.0f
+        panel_width <
+        470.0f
     ) {
         panel_width =
-            420.0f;
+            470.0f;
     }
 
+
     if (
-        panel_width > 650.0f
+        panel_width >
+        650.0f
     ) {
         panel_width =
             650.0f;
     }
 
-    if (
-        panel_height < 360.0f
-    ) {
-        panel_height =
-            360.0f;
-    }
 
     if (
-        panel_height > 620.0f
+        panel_height <
+        390.0f
+    ) {
+        panel_height =
+            390.0f;
+    }
+
+
+    if (
+        panel_height >
+        620.0f
     ) {
         panel_height =
             620.0f;
@@ -424,23 +444,30 @@ void global_chat_panel(
 
 
     /*
-     * Place panel near the center-left.
+     * Center-left position.
      */
-    ImVec2 panel_position = {
+
+    ImVec2 panel_pos = {
+
         viewport->WorkPos.x +
+
         viewport->WorkSize.x *
-        0.16f,
+        0.18f,
+
 
         viewport->WorkPos.y +
+
         viewport->WorkSize.y *
-        0.15f
+        0.16f
     };
 
 
     igSetNextWindowPos(
-        panel_position,
+        panel_pos,
         ImGuiCond_Always,
-        (ImVec2){
+        (
+            ImVec2
+        ){
             0.0f,
             0.0f
         }
@@ -448,7 +475,9 @@ void global_chat_panel(
 
 
     igSetNextWindowSize(
-        (ImVec2){
+        (
+            ImVec2
+        ){
             panel_width,
             panel_height
         },
@@ -456,15 +485,8 @@ void global_chat_panel(
     );
 
 
-    /*
-     * Dark panel.
-     */
-    igSetNextWindowBgAlpha(
-        0.94f
-    );
-
-
-    ImGuiWindowFlags panel_flags =
+    ImGuiWindowFlags
+        panel_flags =
 
         ImGuiWindowFlags_NoTitleBar |
 
@@ -477,34 +499,35 @@ void global_chat_panel(
 
     if (
         igBegin(
-            "##zoro_public_chat",
+            "##zoro_public_chat_panel",
             NULL,
             panel_flags
         )
     ) {
 
 
-        /* -----------------------------------------
+        /* ================================
          * HEADER
-         * ----------------------------------------- */
+         * ================================ */
 
         igTextColored(
-            (ImVec4){
-                0.30f,
+            (
+                ImVec4
+            ){
+                0.35f,
                 0.65f,
-                1.00f,
-                1.00f
+                1.0f,
+                1.0f
             },
+
             "ZORO PUBLIC CHAT"
         );
 
 
-        /*
-         * Minimize button.
-         */
         igSameLine(
             panel_width -
-            65.0f,
+            58.0f,
+
             0.0f
         );
 
@@ -512,8 +535,10 @@ void global_chat_panel(
         if (
             igButton(
                 "-",
-                (ImVec2){
-                    42.0f,
+                (
+                    ImVec2
+                ){
+                    40.0f,
                     30.0f
                 }
             )
@@ -526,41 +551,48 @@ void global_chat_panel(
         igSeparator();
 
 
-        /* -----------------------------------------
+        /* ================================
          * MESSAGE AREA
-         * ----------------------------------------- */
+         * ================================ */
 
         ImVec2 available;
+
 
         igGetContentRegionAvail(
             &available
         );
 
 
-        float message_area_height =
+        float message_height =
 
             available.y -
 
-            60.0f;
+            62.0f;
 
 
         if (
-            message_area_height <
+            message_height <
             100.0f
         ) {
-            message_area_height =
+            message_height =
                 100.0f;
         }
 
 
         igBeginChild_Str(
             "##zoro_chat_messages",
-            (ImVec2){
+
+            (
+                ImVec2
+            ){
                 0.0f,
-                message_area_height
+                message_height
             },
-            true,
-            ImGuiWindowFlags_AlwaysVerticalScrollbar
+
+            false,
+
+            ImGuiWindowFlags_
+            AlwaysVerticalScrollbar
         );
 
 
@@ -575,20 +607,23 @@ void global_chat_panel(
             global_chat_message*
                 message =
 
-                &global_chat_messages[i];
+                &global_chat_messages[
+                    i
+                ];
 
 
             ImVec4 name_color = {
-                0.45f,
+
+                0.35f,
+
                 0.75f,
-                1.00f,
-                1.00f
+
+                1.0f,
+
+                1.0f
             };
 
 
-            /*
-             * ZORO messages are green.
-             */
             if (
                 strcmp(
                     message->name,
@@ -596,18 +631,22 @@ void global_chat_panel(
                 ) == 0
             ) {
                 name_color =
-                    (ImVec4){
+                    (
+                        ImVec4
+                    ){
                         0.35f,
-                        0.90f,
-                        0.45f,
-                        1.00f
+                        0.85f,
+                        0.40f,
+                        1.0f
                     };
             }
 
 
             igTextColored(
                 name_color,
+
                 "%s:",
+
                 message->name
             );
 
@@ -620,6 +659,7 @@ void global_chat_panel(
 
             igTextWrapped(
                 "%s",
+
                 message->text
             );
 
@@ -628,28 +668,20 @@ void global_chat_panel(
         }
 
 
-        /*
-         * Keep newest messages visible.
-         */
-        if (
-            global_chat_message_count >
-            0
-        ) {
-            igSetScrollHereY(
-                1.0f
-            );
-        }
+        igSetScrollHereY(
+            1.0f
+        );
 
 
         igEndChild();
 
 
-        /* -----------------------------------------
+        /* ================================
          * INPUT
-         * ----------------------------------------- */
+         * ================================ */
 
         float send_width =
-            90.0f;
+            95.0f;
 
 
         float input_width =
@@ -658,7 +690,7 @@ void global_chat_panel(
 
             send_width -
 
-            48.0f;
+            45.0f;
 
 
         if (
@@ -689,7 +721,8 @@ void global_chat_panel(
                     global_chat_input
                 ),
 
-                ImGuiInputTextFlags_EnterReturnsTrue,
+                ImGuiInputTextFlags_
+                EnterReturnsTrue,
 
                 NULL,
 
@@ -709,27 +742,34 @@ void global_chat_panel(
         bool send_clicked =
 
             igButton(
+
                 "SEND",
-                (ImVec2){
+
+                (
+                    ImVec2
+                ){
                     send_width,
                     38.0f
                 }
             );
 
 
-        /* -----------------------------------------
-         * SEND MESSAGE
-         * ----------------------------------------- */
+        /* ================================
+         * LOCAL SEND
+         * ================================ */
 
         if (
             submitted ||
+
             send_clicked
         ) {
             if (
                 global_chat_input[0]
                 != '\0'
             ) {
-                const char* nickname =
+                const char*
+                    nickname =
+
                     "Player";
 
 
@@ -752,23 +792,29 @@ void global_chat_panel(
 
 
                 /*
-                 * Show message immediately.
+                 * Add locally.
                  */
+
                 global_chat_add_message(
                     nickname,
+
                     global_chat_input
                 );
 
 
                 /*
-                 * Send to the public room.
+                 * Network send only if
+                 * a network is available.
                  */
+
                 if (
-                    global_chat_net !=
-                    NULL
+                    global_chat_net
+                    != NULL
                 ) {
                     jsr_network_send_message(
+
                         global_chat_net,
+
                         global_chat_input
                     );
                 }
@@ -776,7 +822,9 @@ void global_chat_panel(
 
                 memset(
                     global_chat_input,
+
                     0,
+
                     sizeof(
                         global_chat_input
                     )
@@ -790,9 +838,9 @@ void global_chat_panel(
 }
 
 
-/* ---------------------------------------------------------
+/* =========================================================
  * DESTROY
- * --------------------------------------------------------- */
+ * ========================================================= */
 
 void global_chat_destroy(
     tenv* env
@@ -803,8 +851,10 @@ void global_chat_destroy(
     global_chat_initialized =
         false;
 
+
     global_chat_open =
         false;
+
 
     global_chat_message_count =
         0;
@@ -812,7 +862,9 @@ void global_chat_destroy(
 
     memset(
         global_chat_input,
+
         0,
+
         sizeof(
             global_chat_input
         )
@@ -826,6 +878,7 @@ void global_chat_destroy(
             global_chat_net
         );
 
+
         global_chat_net =
             NULL;
     }
@@ -837,6 +890,7 @@ void global_chat_destroy(
         tchat_destroy(
             global_chat_tchat
         );
+
 
         global_chat_tchat =
             NULL;

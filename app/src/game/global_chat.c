@@ -1,10 +1,21 @@
 #include "global_chat.h"
 
+#include "thermite/tchat.h"
+#include "thermite/jsr_network.h"
+
 #include <string.h>
 
 #define GLOBAL_CHAT_MAX_MESSAGES 50
 #define GLOBAL_CHAT_NAME_LEN 32
 #define GLOBAL_CHAT_TEXT_LEN 160
+
+/*
+ * Fixed 8-char alphanumeric "room key" shared by every
+ * player. This lets us reuse the existing team-based JSR
+ * relay protocol for a single public room that nobody has
+ * to type a key to join.
+ */
+#define GLOBAL_CHAT_ROOM_KEY "GLOBAL01"
 
 typedef struct {
     char name[GLOBAL_CHAT_NAME_LEN];
@@ -13,6 +24,10 @@ typedef struct {
 
 static bool global_chat_initialized = false;
 static bool global_chat_open = false;
+
+/* Networking state for the public/global room. */
+static tchat_system* global_chat_tchat = NULL;
+static jsr_network* global_chat_net = NULL;
 
 static global_chat_message
     global_chat_messages[GLOBAL_CHAT_MAX_MESSAGES];
@@ -76,9 +91,27 @@ static void global_chat_add_message(
     global_chat_message_count++;
 }
 
-void global_chat_init(tenv* env) {
-    (void)env;
+/*
+ * Called by the JSR network layer whenever another
+ * player's message arrives from the relay. Our own
+ * messages are filtered out before this fires (see
+ * jsr_add_chat_message's username check), so we don't
+ * need to de-duplicate here.
+ */
+static void global_chat_on_network_message(
+    tchat_message* msg
+) {
+    if (msg == NULL) {
+        return;
+    }
 
+    global_chat_add_message(
+        msg->username,
+        msg->message
+    );
+}
+
+void global_chat_init(tenv* env) {
     global_chat_initialized = true;
     global_chat_open = false;
 
@@ -99,6 +132,61 @@ void global_chat_init(tenv* env) {
         "ZORO",
         "Everyone using this mod can chat here."
     );
+
+    /* Figure out the nickname to chat under. */
+    const char* nickname = "Player";
+
+    if (
+        env != NULL &&
+        env->usr != NULL &&
+        env->usr->usrs.nickname[0] != '\0'
+    ) {
+        nickname = env->usr->usrs.nickname;
+    }
+
+    /* Local chat-state object (message/member bookkeeping). */
+    global_chat_tchat = tchat_create(nickname);
+
+    if (global_chat_tchat == NULL) {
+        global_chat_add_message(
+            "ZORO",
+            "Could not start chat system."
+        );
+
+        return;
+    }
+
+    tchat_set_on_message_callback(
+        global_chat_tchat,
+        global_chat_on_network_message
+    );
+
+    /* Join the shared public room locally. */
+    tchat_join_team(
+        global_chat_tchat,
+        GLOBAL_CHAT_ROOM_KEY
+    );
+
+    /* Network relay client (host/port args are unused; the
+     * relay always points at the Railway deployment). */
+    global_chat_net = jsr_network_create("", 0);
+
+    if (global_chat_net == NULL) {
+        global_chat_add_message(
+            "ZORO",
+            "Could not start network connection."
+        );
+
+        return;
+    }
+
+    global_chat_net->chat = global_chat_tchat;
+
+    jsr_network_connect(
+        global_chat_net,
+        GLOBAL_CHAT_ROOM_KEY,
+        nickname
+    );
 }
 
 void global_chat_update(tenv* env) {
@@ -108,10 +196,13 @@ void global_chat_update(tenv* env) {
         return;
     }
 
-    /*
-     * The online server connection will be added here.
-     * The current version only creates the complete UI.
-     */
+    if (global_chat_net != NULL) {
+        /* Process WebSocket events; must run every frame. */
+        jsr_network_update(
+            global_chat_net,
+            1.0f / 60.0f
+        );
+    }
 }
 
 void global_chat_draw(tenv* env) {
@@ -376,10 +467,19 @@ void global_chat_panel(tenv* env) {
                         "Player";
                 }
 
+                /* Show it immediately for the sender. */
                 global_chat_add_message(
                     nickname,
                     global_chat_input
                 );
+
+                /* Relay it to everyone else. */
+                if (global_chat_net != NULL) {
+                    jsr_network_send_message(
+                        global_chat_net,
+                        global_chat_input
+                    );
+                }
 
                 memset(
                     global_chat_input,
@@ -417,4 +517,14 @@ void global_chat_destroy(tenv* env) {
         0,
         sizeof(global_chat_input)
     );
+
+    if (global_chat_net != NULL) {
+        jsr_network_destroy(global_chat_net);
+        global_chat_net = NULL;
+    }
+
+    if (global_chat_tchat != NULL) {
+        tchat_destroy(global_chat_tchat);
+        global_chat_tchat = NULL;
+    }
 }

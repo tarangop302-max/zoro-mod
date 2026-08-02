@@ -39,6 +39,8 @@ static size_t jsr_safe_strlen(
     return length;
 }
 
+static void jsr_network_send_join(jsr_network *net);
+
 static void jsr_generate_peer_id(
     char *peer_id,
     size_t size
@@ -254,13 +256,67 @@ static void jsr_parse_message(
             message_len
         );
     }
-    else if (message_type ==
-             JSR_MSG_TYPE_PONG) {
+    else if (
+        message_type == 6
+    ) {
+        /*
+         * The deployed relay's actual PONG byte is 6, not
+         * this client's own JSR_MSG_TYPE_PONG (8).
+         */
         net->last_ping =
             time(NULL);
 
         net->last_message_time =
             time(NULL);
+    }
+    else if (
+        message_type == 2 ||
+        message_type == 3
+    ) {
+        /*
+         * The deployed relay's "user joined" (2) / "user
+         * left" (3) notices: [type][name_len][name].
+         * Surface them as a system chat line.
+         */
+        size_t name_len;
+        char text[TCHAT_MESSAGE_MAX_LEN];
+        int written;
+
+        if (data_len < 2) {
+            return;
+        }
+
+        name_len =
+            (uint8_t) data[1];
+
+        if (name_len == 0 ||
+            name_len > data_len - 2) {
+            return;
+        }
+
+        written =
+            snprintf(
+                text,
+                sizeof(text),
+                "%.*s %s public chat",
+                (int) name_len,
+                data + 2,
+                message_type == 2 ?
+                    "joined" : "left"
+            );
+
+        if (written > 0) {
+            jsr_add_chat_message(
+                net,
+                "[SYSTEM]",
+                8,
+                text,
+                (size_t) written <
+                    sizeof(text) ?
+                    (size_t) written :
+                    sizeof(text) - 1
+            );
+        }
     }
     else if (message_type ==
              JSR_MSG_TYPE_ERROR) {
@@ -336,10 +392,11 @@ static void jsr_websocket_handler(
         }
 
         /*
-         * Tell the Railway server our team,
-         * username and peer ID.
+         * Register our username with the relay so it can
+         * tag our outgoing CHAT messages. Without this the
+         * server silently drops every message we send.
          */
-        jsr_network_request_sync(net);
+        jsr_network_send_join(net);
     }
     else if (event ==
              MG_EV_WS_MSG) {
@@ -469,7 +526,7 @@ jsr_network *jsr_network_create(
     snprintf(
         net->relay_url,
         sizeof(net->relay_url),
-        "wss://%s/jsr",
+        "wss://%s/global",
         net->relay_host
     );
 
@@ -625,12 +682,15 @@ bool jsr_network_send_message(
     size_t username_len;
 
     /*
-     * Wire format for CHAT must match the parser
-     * in jsr_parse_message():
-     * [CHAT][username_len][username][message]
+     * Wire format expected by the deployed relay for
+     * client -> server CHAT is just [CHAT][message] --
+     * the server tags the sender's username itself based
+     * on the JOIN handshake, and re-broadcasts messages as
+     * [CHAT][username_len][username][message] (see
+     * jsr_parse_message()).
      */
     uint8_t buffer[
-        2 + TCHAT_USERNAME_MAX + TCHAT_MESSAGE_MAX_LEN
+        1 + TCHAT_MESSAGE_MAX_LEN
     ];
 
     if (net == NULL ||
@@ -684,17 +744,8 @@ bool jsr_network_send_message(
     buffer[0] =
         JSR_MSG_TYPE_CHAT;
 
-    buffer[1] =
-        (uint8_t) username_len;
-
     memcpy(
-        buffer + 2,
-        net->username,
-        username_len
-    );
-
-    memcpy(
-        buffer + 2 + username_len,
+        buffer + 1,
         message,
         message_len
     );
@@ -702,7 +753,7 @@ bool jsr_network_send_message(
     mg_ws_send(
         net->ws_connection,
         buffer,
-        2 + username_len + message_len,
+        1 + message_len,
         WEBSOCKET_OP_BINARY
     );
 
@@ -751,8 +802,13 @@ void jsr_network_update(
         ) >
         net->ping_interval &&
         net->ws_connection != NULL) {
-        uint8_t ping =
-            JSR_MSG_TYPE_PING;
+        /*
+         * The deployed relay expects client PING as raw
+         * byte 4 (it replies with byte 6), which does not
+         * match this client's own JSR_MSG_TYPE_PING (7)/
+         * JSR_MSG_TYPE_PONG (8) enum values.
+         */
+        uint8_t ping = 4;
 
         mg_ws_send(
             net->ws_connection,
@@ -798,6 +854,57 @@ int jsr_network_pending_count(
     }
 
     return net->pending_count;
+}
+
+/*
+ * The deployed relay (jsr-relay-server) is a flat global
+ * room with no team/peer concept. Its JOIN wire format is:
+ * [5][username_len][username]
+ * This is what actually registers ws.username server-side;
+ * without it every CHAT message we send gets silently
+ * dropped by the server.
+ */
+static void jsr_network_send_join(
+    jsr_network *net
+) {
+    uint8_t buffer[2 + TCHAT_USERNAME_MAX];
+    size_t username_len;
+
+    if (net == NULL ||
+        net->ws_connection == NULL) {
+        return;
+    }
+
+    username_len =
+        jsr_safe_strlen(
+            net->username,
+            TCHAT_USERNAME_MAX - 1
+        );
+
+    if (username_len == 0) {
+        return;
+    }
+
+    buffer[0] = 5;
+    buffer[1] = (uint8_t) username_len;
+
+    memcpy(
+        buffer + 2,
+        net->username,
+        username_len
+    );
+
+    mg_ws_send(
+        net->ws_connection,
+        buffer,
+        2 + username_len,
+        WEBSOCKET_OP_BINARY
+    );
+
+    printf(
+        "JSR: Sent join as %s\n",
+        net->username
+    );
 }
 
 void jsr_network_request_sync(

@@ -314,21 +314,21 @@ void global_chat_panel(tenv* env) {
         igGetMainViewport();
 
     float default_width =
-        viewport->WorkSize.x * 0.82f;
+        viewport->WorkSize.x * 0.5f;
 
     float default_height =
-        viewport->WorkSize.y * 0.72f;
+        viewport->WorkSize.y * 0.55f;
 
     if (
-        default_width > 700.0f
+        default_width > 480.0f
     ) {
-        default_width = 700.0f;
+        default_width = 480.0f;
     }
 
     if (
-        default_height > 650.0f
+        default_height > 420.0f
     ) {
-        default_height = 650.0f;
+        default_height = 420.0f;
     }
 
     ImVec2 default_pos = {
@@ -346,11 +346,11 @@ void global_chat_panel(tenv* env) {
     };
 
     /*
-     * Only place the window the first time it appears.
-     * After that ImGui remembers wherever the player
-     * dragged it to (by its title bar), making this a
-     * real floating panel instead of one that snaps back
-     * to center every frame.
+     * Only place/size the window the first time it
+     * appears. After that ImGui remembers wherever the
+     * player dragged or resized it to, making this a real
+     * floating panel instead of one that snaps back to a
+     * fixed spot every frame.
      */
     igSetNextWindowPos(
         default_pos,
@@ -366,11 +366,19 @@ void global_chat_panel(tenv* env) {
         ImGuiCond_FirstUseEver
     );
 
+    /*
+     * Mostly see-through background -- text and widgets
+     * still draw at full opacity, only the window's fill
+     * behind them is faded.
+     */
+    igSetNextWindowBgAlpha(
+        0.1f
+    );
+
     bool open = true;
 
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoSavedSettings;
 
     if (

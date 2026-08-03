@@ -313,59 +313,57 @@ void global_chat_panel(tenv* env) {
     ImGuiViewport* viewport =
         igGetMainViewport();
 
-    float panel_width =
+    float default_width =
         viewport->WorkSize.x * 0.82f;
 
-    float panel_height =
+    float default_height =
         viewport->WorkSize.y * 0.72f;
 
     if (
-        panel_width > 700.0f
+        default_width > 700.0f
     ) {
-        panel_width = 700.0f;
+        default_width = 700.0f;
     }
 
     if (
-        panel_height > 650.0f
+        default_height > 650.0f
     ) {
-        panel_height = 650.0f;
+        default_height = 650.0f;
     }
 
-    ImVec2 panel_pos = {
+    ImVec2 default_pos = {
         viewport->WorkPos.x +
             (
                 viewport->WorkSize.x -
-                panel_width
+                default_width
             ) * 0.5f,
 
         viewport->WorkPos.y +
             (
                 viewport->WorkSize.y -
-                panel_height
+                default_height
             ) * 0.5f
     };
 
-#ifdef ANDROID
-    android_ui_capture_rect(
-        panel_pos.x,
-        panel_pos.y,
-        panel_pos.x + panel_width,
-        panel_pos.y + panel_height
-    );
-#endif
-
+    /*
+     * Only place the window the first time it appears.
+     * After that ImGui remembers wherever the player
+     * dragged it to (by its title bar), making this a
+     * real floating panel instead of one that snaps back
+     * to center every frame.
+     */
     igSetNextWindowPos(
-        panel_pos,
-        ImGuiCond_Always,
+        default_pos,
+        ImGuiCond_FirstUseEver,
         (ImVec2){0.0f, 0.0f}
     );
 
     igSetNextWindowSize(
         (ImVec2){
-            panel_width,
-            panel_height
+            default_width,
+            default_height
         },
-        ImGuiCond_Always
+        ImGuiCond_FirstUseEver
     );
 
     bool open = true;
@@ -382,6 +380,28 @@ void global_chat_panel(tenv* env) {
             flags
         )
     ) {
+        ImVec2 live_pos;
+        ImVec2 live_size;
+
+        igGetWindowPos(&live_pos);
+        igGetWindowSize(&live_size);
+
+#ifdef ANDROID
+        /*
+         * Register touch capture using the window's ACTUAL
+         * current position/size (post-igBegin), not a
+         * precomputed guess -- this is what lets the
+         * capture rect follow the panel wherever it gets
+         * dragged to, including the title bar drag itself.
+         */
+        android_ui_capture_rect(
+            live_pos.x,
+            live_pos.y,
+            live_pos.x + live_size.x,
+            live_pos.y + live_size.y
+        );
+#endif
+
         igText(
             "Public chat - no team key required"
         );
@@ -477,7 +497,7 @@ void global_chat_panel(tenv* env) {
         igEndChild();
 
         igPushItemWidth(
-            panel_width - 115.0f
+            live_size.x - 115.0f
         );
 
         bool submitted =

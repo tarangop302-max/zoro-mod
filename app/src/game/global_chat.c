@@ -10,6 +10,7 @@
 #endif
 
 #include <string.h>
+#include <math.h>
 
 #define GLOBAL_CHAT_MAX_MESSAGES 50
 #define GLOBAL_CHAT_NAME_LEN 32
@@ -218,39 +219,40 @@ void global_chat_draw(tenv* env) {
         return;
     }
 
-    ImGuiViewport* viewport =
-        igGetMainViewport();
+    static bool button_pos_set = false;
+    static ImVec2 button_pos;
+
+    static bool press_active = false;
+    static bool press_dragged = false;
 
     ImVec2 button_size = {
         125.0f,
         48.0f
     };
 
-    ImVec2 button_pos = {
-        viewport->WorkPos.x +
-            viewport->WorkSize.x -
-            button_size.x -
-            18.0f,
+    if (!button_pos_set) {
+        ImGuiViewport* viewport =
+            igGetMainViewport();
 
-        viewport->WorkPos.y +
-            18.0f
-    };
+        button_pos.x =
+            viewport->WorkPos.x +
+                viewport->WorkSize.x -
+                button_size.x -
+                18.0f;
 
-#ifdef ANDROID
+        button_pos.y =
+            viewport->WorkPos.y +
+                18.0f;
+
+        button_pos_set = true;
+    }
+
     /*
-     * Without this, Android routes any touch over this
-     * button straight to the movement joystick instead of
-     * to ImGui, since touches are only forwarded to ImGui
-     * when they land inside a registered UI rect.
+     * We own this window's position entirely (it starts
+     * where the button last was and only moves when the
+     * player drags it below), so it's safe to force it
+     * every frame.
      */
-    android_ui_capture_rect(
-        button_pos.x,
-        button_pos.y,
-        button_pos.x + button_size.x,
-        button_pos.y + button_size.y
-    );
-#endif
-
     igSetNextWindowPos(
         button_pos,
         ImGuiCond_Always,
@@ -280,15 +282,67 @@ void global_chat_draw(tenv* env) {
             flags
         )
     ) {
-        if (
+#ifdef ANDROID
+        /*
+         * Live position/size, so touch capture follows the
+         * button wherever it gets dragged to.
+         */
+        ImVec2 live_pos;
+        ImVec2 live_size;
+
+        igGetWindowPos(&live_pos);
+        igGetWindowSize(&live_size);
+
+        android_ui_capture_rect(
+            live_pos.x,
+            live_pos.y,
+            live_pos.x + live_size.x,
+            live_pos.y + live_size.y
+        );
+#endif
+
+        bool clicked =
             igButton(
                 "PUBLIC CHAT",
                 (ImVec2){
                     108.0f,
                     32.0f
                 }
-            )
-        ) {
+            );
+
+        bool active =
+            igIsItemActive();
+
+        ImGuiIO* io =
+            igGetIO_Nil();
+
+        if (active) {
+            if (!press_active) {
+                press_active = true;
+                press_dragged = false;
+            }
+
+            if (
+                fabsf(io->MouseDelta.x) > 0.5f ||
+                fabsf(io->MouseDelta.y) > 0.5f
+            ) {
+                button_pos.x +=
+                    io->MouseDelta.x;
+
+                button_pos.y +=
+                    io->MouseDelta.y;
+
+                press_dragged = true;
+            }
+        } else {
+            press_active = false;
+        }
+
+        /*
+         * Only treat it as a tap (open/close the panel) if
+         * the press didn't turn into a drag.
+         */
+        if (clicked && !press_dragged) {
             global_chat_open =
                 !global_chat_open;
         }

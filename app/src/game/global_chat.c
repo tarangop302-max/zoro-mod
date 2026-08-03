@@ -10,7 +10,6 @@
 #endif
 
 #include <string.h>
-#include <math.h>
 
 #define GLOBAL_CHAT_MAX_MESSAGES 50
 #define GLOBAL_CHAT_NAME_LEN 32
@@ -42,6 +41,11 @@ static global_chat_message
 static int global_chat_message_count = 0;
 
 static char global_chat_input[GLOBAL_CHAT_TEXT_LEN] = "";
+
+static void global_chat_panel_contents(
+    tenv* env,
+    ImVec2 live_size
+);
 
 static void global_chat_add_message(
     const char* name,
@@ -213,153 +217,6 @@ void global_chat_update(tenv* env) {
 }
 
 void global_chat_draw(tenv* env) {
-    (void)env;
-
-    if (!global_chat_initialized) {
-        return;
-    }
-
-    static bool button_pos_set = false;
-    static ImVec2 button_pos;
-
-    static bool press_active = false;
-    static bool press_dragged = false;
-
-    ImVec2 button_size = {
-        125.0f,
-        48.0f
-    };
-
-    if (!button_pos_set) {
-        ImGuiViewport* viewport =
-            igGetMainViewport();
-
-        button_pos.x =
-            viewport->WorkPos.x +
-                viewport->WorkSize.x -
-                button_size.x -
-                18.0f;
-
-        button_pos.y =
-            viewport->WorkPos.y +
-                18.0f;
-
-        button_pos_set = true;
-    }
-
-    /*
-     * We own this window's position entirely (it starts
-     * where the button last was and only moves when the
-     * player drags it below), so it's safe to force it
-     * every frame.
-     */
-    igSetNextWindowPos(
-        button_pos,
-        ImGuiCond_Always,
-        (ImVec2){0.0f, 0.0f}
-    );
-
-    igSetNextWindowSize(
-        button_size,
-        ImGuiCond_Always
-    );
-
-    igSetNextWindowBgAlpha(
-        0.85f
-    );
-
-    ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoSavedSettings;
-
-    if (
-        igBegin(
-            "##zoro_global_chat_button",
-            NULL,
-            flags
-        )
-    ) {
-#ifdef ANDROID
-        /*
-         * Live position/size, so touch capture follows the
-         * button wherever it gets dragged to.
-         */
-        ImVec2 live_pos;
-        ImVec2 live_size;
-
-        igGetWindowPos(&live_pos);
-        igGetWindowSize(&live_size);
-
-        android_ui_capture_rect(
-            live_pos.x,
-            live_pos.y,
-            live_pos.x + live_size.x,
-            live_pos.y + live_size.y
-        );
-#endif
-
-        bool clicked =
-            igButton(
-                "PUBLIC CHAT",
-                (ImVec2){
-                    108.0f,
-                    32.0f
-                }
-            );
-
-        bool active =
-            igIsItemActive();
-
-        ImGuiIO* io =
-            igGetIO_Nil();
-
-        if (active) {
-            if (!press_active) {
-                press_active = true;
-                press_dragged = false;
-            }
-
-            if (
-                fabsf(io->MouseDelta.x) > 0.5f ||
-                fabsf(io->MouseDelta.y) > 0.5f
-            ) {
-                button_pos.x +=
-                    io->MouseDelta.x;
-
-                button_pos.y +=
-                    io->MouseDelta.y;
-
-                press_dragged = true;
-            }
-        } else {
-            press_active = false;
-        }
-
-        /*
-         * Only treat it as a tap (open/close the panel) if
-         * the press didn't turn into a drag.
-         */
-        if (clicked && !press_dragged) {
-            global_chat_open =
-                !global_chat_open;
-        }
-    }
-
-    igEnd();
-
-    if (
-        global_chat_open
-    ) {
-        global_chat_panel(
-            env
-        );
-    }
-}
-
-void global_chat_panel(tenv* env) {
     if (!global_chat_initialized) {
         return;
     }
@@ -367,44 +224,54 @@ void global_chat_panel(tenv* env) {
     ImGuiViewport* viewport =
         igGetMainViewport();
 
-    float default_width =
+    /*
+     * One window, one persistent ID ("##zoro_chat_window"),
+     * used for both the small collapsed button and the
+     * full expanded chat box. Because the ID never changes,
+     * ImGui keeps the same position across the transition --
+     * so dragging it (by its title bar, which already works
+     * reliably, unlike a hand-rolled per-widget drag) moves
+     * the "button" and the chat box together as one thing.
+     */
+    const char* title =
+        global_chat_open ?
+            "ZORO PUBLIC CHAT##zoro_chat_window" :
+            "PUBLIC CHAT##zoro_chat_window";
+
+    ImVec2 collapsed_size = {
+        150.0f,
+        74.0f
+    };
+
+    float expanded_width =
         viewport->WorkSize.x * 0.5f;
 
-    float default_height =
+    float expanded_height =
         viewport->WorkSize.y * 0.55f;
 
-    if (
-        default_width > 480.0f
-    ) {
-        default_width = 480.0f;
+    if (expanded_width > 480.0f) {
+        expanded_width = 480.0f;
     }
 
-    if (
-        default_height > 420.0f
-    ) {
-        default_height = 420.0f;
+    if (expanded_height > 420.0f) {
+        expanded_height = 420.0f;
     }
 
     ImVec2 default_pos = {
         viewport->WorkPos.x +
-            (
-                viewport->WorkSize.x -
-                default_width
-            ) * 0.5f,
+            viewport->WorkSize.x -
+            collapsed_size.x -
+            18.0f,
 
         viewport->WorkPos.y +
-            (
-                viewport->WorkSize.y -
-                default_height
-            ) * 0.5f
+            18.0f
     };
 
     /*
-     * Only place/size the window the first time it
-     * appears. After that ImGui remembers wherever the
-     * player dragged or resized it to, making this a real
-     * floating panel instead of one that snaps back to a
-     * fixed spot every frame.
+     * Only ever sets the position once, the very first time
+     * this window appears (collapsed, top-right corner).
+     * From then on the player's own dragging owns it, in
+     * either state.
      */
     igSetNextWindowPos(
         default_pos,
@@ -412,21 +279,39 @@ void global_chat_panel(tenv* env) {
         (ImVec2){0.0f, 0.0f}
     );
 
-    igSetNextWindowSize(
-        (ImVec2){
-            default_width,
-            default_height
-        },
-        ImGuiCond_FirstUseEver
-    );
+    static bool was_open = false;
+    bool just_opened =
+        global_chat_open && !was_open;
 
-    /*
-     * Mostly see-through background -- text and widgets
-     * still draw at full opacity, only the window's fill
-     * behind them is faded.
-     */
+    if (!global_chat_open) {
+        /*
+         * Collapsed size is fixed and can't be resized, so
+         * it's safe to force it every frame.
+         */
+        igSetNextWindowSize(
+            collapsed_size,
+            ImGuiCond_Always
+        );
+    } else if (just_opened) {
+        /*
+         * Only force the expanded default size on the exact
+         * frame we switch into expanded mode -- after that,
+         * leave it alone so the player's own resizing (via
+         * the corner grip) sticks.
+         */
+        igSetNextWindowSize(
+            (ImVec2){
+                expanded_width,
+                expanded_height
+            },
+            ImGuiCond_Always
+        );
+    }
+
+    was_open = global_chat_open;
+
     igSetNextWindowBgAlpha(
-        0.1f
+        global_chat_open ? 0.1f : 0.85f
     );
 
     bool open = true;
@@ -435,10 +320,16 @@ void global_chat_panel(tenv* env) {
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoSavedSettings;
 
+    if (!global_chat_open) {
+        flags |=
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoScrollbar;
+    }
+
     if (
         igBegin(
-            "ZORO PUBLIC CHAT",
-            &open,
+            title,
+            global_chat_open ? &open : NULL,
             flags
         )
     ) {
@@ -450,11 +341,9 @@ void global_chat_panel(tenv* env) {
 
 #ifdef ANDROID
         /*
-         * Register touch capture using the window's ACTUAL
-         * current position/size (post-igBegin), not a
-         * precomputed guess -- this is what lets the
-         * capture rect follow the panel wherever it gets
-         * dragged to, including the title bar drag itself.
+         * Live position/size so touch capture follows this
+         * window wherever it gets dragged to, in either
+         * state.
          */
         android_ui_capture_rect(
             live_pos.x,
@@ -464,182 +353,208 @@ void global_chat_panel(tenv* env) {
         );
 #endif
 
-        igText(
-            "Public chat - no team key required"
-        );
-
-        bool is_connected =
-            global_chat_net != NULL &&
-            jsr_network_is_connected(
-                global_chat_net
-            );
-
-        if (is_connected) {
-            igTextColored(
-                (ImVec4){
-                    0.3f,
-                    0.9f,
-                    0.3f,
-                    1.0f
-                },
-                "Connected to relay"
-            );
-        } else {
-            igTextColored(
-                (ImVec4){
-                    0.9f,
-                    0.3f,
-                    0.3f,
-                    1.0f
-                },
-                "Not connected"
-            );
-        }
-
-        igSeparator();
-
-        float input_height =
-            50.0f;
-
-        ImVec2 avail;
-        igGetContentRegionAvail(&avail);
-
-        float message_area_height =
-            avail.y -
-            input_height;
-
-        if (
-            message_area_height <
-            80.0f
-        ) {
-            message_area_height =
-                80.0f;
-        }
-
-        igBeginChild_Str(
-            "##global_chat_messages",
-            (ImVec2){
-                0.0f,
-                message_area_height
-            },
-            true,
-            ImGuiWindowFlags_AlwaysVerticalScrollbar
-        );
-
-        for (
-            int i = 0;
-            i < global_chat_message_count;
-            i++
-        ) {
-            global_chat_message* message =
-                &global_chat_messages[i];
-
-            igTextColored(
-                (ImVec4){
-                    0.25f,
-                    0.75f,
-                    1.0f,
-                    1.0f
-                },
-                "%s:",
-                message->name
-            );
-
-            igSameLine(
-                0.0f,
-                7.0f
-            );
-
-            igTextWrapped(
-                "%s",
-                message->text
-            );
-        }
-
-        igEndChild();
-
-        igPushItemWidth(
-            live_size.x - 115.0f
-        );
-
-        bool submitted =
-            igInputText(
-                "##global_chat_input",
-                global_chat_input,
-                sizeof(global_chat_input),
-                ImGuiInputTextFlags_EnterReturnsTrue,
-                NULL,
-                NULL
-            );
-
-        igPopItemWidth();
-
-        igSameLine(
-            0.0f,
-            8.0f
-        );
-
-        bool send_clicked =
-            igButton(
-                "SEND",
-                (ImVec2){
-                    80.0f,
-                    0.0f
-                }
-            );
-
-        if (
-            submitted ||
-            send_clicked
-        ) {
+        if (!global_chat_open) {
             if (
-                global_chat_input[0] !=
-                '\0'
+                igButton(
+                    "Open",
+                    (ImVec2){
+                        -1.0f,
+                        0.0f
+                    }
+                )
             ) {
-                const char* nickname =
-                    env->usr
-                        ->usrs
-                        .nickname;
-
-                if (
-                    nickname == NULL ||
-                    nickname[0] ==
-                    '\0'
-                ) {
-                    nickname =
-                        "Player";
-                }
-
-                /* Show it immediately for the sender. */
-                global_chat_add_message(
-                    nickname,
-                    global_chat_input
-                );
-
-                /* Relay it to everyone else. */
-                if (global_chat_net != NULL) {
-                    jsr_network_send_message(
-                        global_chat_net,
-                        global_chat_input
-                    );
-                }
-
-                memset(
-                    global_chat_input,
-                    0,
-                    sizeof(
-                        global_chat_input
-                    )
-                );
+                global_chat_open = true;
             }
+        } else {
+            global_chat_panel_contents(
+                env,
+                live_size
+            );
         }
     }
 
     igEnd();
 
-    if (!open) {
-        global_chat_open =
-            false;
+    if (
+        global_chat_open &&
+        !open
+    ) {
+        global_chat_open = false;
+    }
+}
+
+static void global_chat_panel_contents(
+    tenv* env,
+    ImVec2 live_size
+) {
+    igText(
+        "Public chat - no team key required"
+    );
+
+    bool is_connected =
+        global_chat_net != NULL &&
+        jsr_network_is_connected(
+            global_chat_net
+        );
+
+    if (is_connected) {
+        igTextColored(
+            (ImVec4){
+                0.3f,
+                0.9f,
+                0.3f,
+                1.0f
+            },
+            "Connected to relay"
+        );
+    } else {
+        igTextColored(
+            (ImVec4){
+                0.9f,
+                0.3f,
+                0.3f,
+                1.0f
+            },
+            "Not connected"
+        );
+    }
+
+    igSeparator();
+
+    float input_height =
+        50.0f;
+
+    ImVec2 avail;
+    igGetContentRegionAvail(&avail);
+
+    float message_area_height =
+        avail.y -
+        input_height;
+
+    if (
+        message_area_height <
+        80.0f
+    ) {
+        message_area_height =
+            80.0f;
+    }
+
+    igBeginChild_Str(
+        "##global_chat_messages",
+        (ImVec2){
+            0.0f,
+            message_area_height
+        },
+        true,
+        ImGuiWindowFlags_AlwaysVerticalScrollbar
+    );
+
+    for (
+        int i = 0;
+        i < global_chat_message_count;
+        i++
+    ) {
+        global_chat_message* message =
+            &global_chat_messages[i];
+
+        igTextColored(
+            (ImVec4){
+                0.25f,
+                0.75f,
+                1.0f,
+                1.0f
+            },
+            "%s:",
+            message->name
+        );
+
+        igSameLine(
+            0.0f,
+            7.0f
+        );
+
+        igTextWrapped(
+            "%s",
+            message->text
+        );
+    }
+
+    igEndChild();
+
+    igPushItemWidth(
+        live_size.x - 115.0f
+    );
+
+    bool submitted =
+        igInputText(
+            "##global_chat_input",
+            global_chat_input,
+            sizeof(global_chat_input),
+            ImGuiInputTextFlags_EnterReturnsTrue,
+            NULL,
+            NULL
+        );
+
+    igPopItemWidth();
+
+    igSameLine(
+        0.0f,
+        8.0f
+    );
+
+    bool send_clicked =
+        igButton(
+            "SEND",
+            (ImVec2){
+                80.0f,
+                0.0f
+            }
+        );
+
+    if (
+        submitted ||
+        send_clicked
+    ) {
+        if (
+            global_chat_input[0] !=
+            '\0'
+        ) {
+            const char* nickname =
+                env->usr
+                    ->usrs
+                    .nickname;
+
+            if (
+                nickname == NULL ||
+                nickname[0] ==
+                '\0'
+            ) {
+                nickname =
+                    "Player";
+            }
+
+            /* Show it immediately for the sender. */
+            global_chat_add_message(
+                nickname,
+                global_chat_input
+            );
+
+            /* Relay it to everyone else. */
+            if (global_chat_net != NULL) {
+                jsr_network_send_message(
+                    global_chat_net,
+                    global_chat_input
+                );
+            }
+
+            memset(
+                global_chat_input,
+                0,
+                sizeof(
+                    global_chat_input
+                )
+            );
+        }
     }
 }
 

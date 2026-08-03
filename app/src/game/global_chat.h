@@ -9,11 +9,9 @@ void global_chat_init(tenv* env);
 /* Update the chat system every frame. */
 void global_chat_update(tenv* env);
 
-/* Draw the small chat button/HUD while playing. */
+/* Draw the Public Chat window (button when collapsed,
+ * full chat box when expanded). */
 void global_chat_draw(tenv* env);
-
-/* Draw the full Public Chat panel. */
-void global_chat_panel(tenv* env);
 
 /* Release Public Chat resources. */
 void global_chat_destroy(tenv* env);

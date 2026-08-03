@@ -366,6 +366,29 @@ static void jsr_websocket_handler(
         );
     }
     else if (event ==
+             MG_EV_CONNECT) {
+        /*
+         * Railway only accepts TLS on port 443. Without
+         * this, mongoose silently falls back to plaintext
+         * for wss:// connections (see the "user did not
+         * call mg_tls_init()" checks in mongoose.c), and
+         * the handshake against Railway's TLS-only edge
+         * fails every time.
+         */
+        struct mg_tls_opts tls_opts = {
+            .skip_verification = 1
+        };
+
+        mg_tls_init(
+            connection,
+            &tls_opts
+        );
+
+        printf(
+            "JSR: TLS handshake started\n"
+        );
+    }
+    else if (event ==
              MG_EV_WS_OPEN) {
         printf(
             "JSR: Connected to Railway relay\n"

@@ -73,6 +73,45 @@ void ui_overlay(tenv* env) {
     ImGuiStyle* style = igGetStyle();
     float frame_height = igGetFrameHeight();
 
+    /* Keep the minimap usable on every device resolution. The configured
+       pixel size is treated as a preference and capped against the current
+       shorter screen edge so it cannot cover most of a small display. */
+    float mm_max = fminf((float)ctx->size[0], (float)ctx->size[1]) * 0.46f;
+    float mm_min = fminf(72.0f, mm_max);
+    float mm_size = fminf((float)usrs->minimap_size, mm_max);
+    if (mm_size < mm_min) mm_size = mm_min;
+
+    /*
+     * The player stats block (nickname/IP/ping/FPS/timer) and the
+     * heading/zoom readout both now live below the minimap, so its
+     * default position needs to reserve room for all of that, not
+     * just one line.
+     */
+    float mm_bottom_reserve = frame_height * 7.0f;
+
+    float mm_x;
+    float mm_y;
+    if (usrs->minimap_pos_custom) {
+      mm_x = usrs->minimap_rel_x * ctx->size[0] - mm_size * 0.5f;
+      mm_y = usrs->minimap_rel_y * ctx->size[1] - mm_size * 0.5f;
+      float max_x = ctx->size[0] - mm_size - style->WindowPadding.x;
+      float max_y = ctx->size[1] - mm_size - style->WindowPadding.y;
+      mm_x = fmaxf(style->WindowPadding.x, fminf(mm_x, max_x));
+      mm_y = fmaxf(style->WindowPadding.y, fminf(mm_y, max_y));
+    } else {
+      mm_x = ctx->size[0] - mm_size - style->WindowPadding.x;
+      mm_y = ctx->size[1] - mm_size - style->WindowPadding.y -
+             mm_bottom_reserve;
+    }
+
+    /*
+     * Draw the player stats block (nickname/IP/ping/FPS/
+     * timer) below the minimap instead of the top-left
+     * corner.
+     */
+    igSetCursorPosX(mm_x);
+    igSetCursorPosY(mm_y + mm_size + style->WindowPadding.y);
+
     igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
                usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
     float line_height = igGetCursorPosY();
@@ -81,6 +120,7 @@ void ui_overlay(tenv* env) {
     igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->nickname);
     line_height = igGetCursorPosY() - line_height;
 
+    igSetCursorPosX(mm_x);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ueaec");
     igSameLine(0, -1);
     igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->ipv4);
@@ -94,6 +134,7 @@ void ui_overlay(tenv* env) {
     vec3 ic_col;
     glm_vec3_lerp((vec3){1, 0.5f, 0.5f}, (vec3){1, 1, 1}, lag_norm, ic_col);
 
+    igSetCursorPosX(mm_x);
     igTextColored(
         (ImVec4){ic_col[0], ic_col[1], ic_col[2], glm_lerp(0.8, 0.3, lag_norm)},
         "\ue91b");
@@ -102,10 +143,12 @@ void ui_overlay(tenv* env) {
         (ImVec4){ping_col[0], ping_col[1], ping_col[2], 0.6 * lag_norm},
         "%d ms", gdata->data.ping);
 
+    igSetCursorPosX(mm_x);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue99c");
     igSameLine(0, -1);
     igTextColored((ImVec4){1, 1, 1, 0.5}, "%d FPS", gdata->data.fps);
 
+    igSetCursorPosX(mm_x);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue952");
     igSameLine(0, -1);
 
@@ -211,28 +254,6 @@ void ui_overlay(tenv* env) {
       }
     }
 
-    /* Keep the minimap usable on every device resolution. The configured
-       pixel size is treated as a preference and capped against the current
-       shorter screen edge so it cannot cover most of a small display. */
-    float mm_max = fminf((float)ctx->size[0], (float)ctx->size[1]) * 0.46f;
-    float mm_min = fminf(72.0f, mm_max);
-    float mm_size = fminf((float)usrs->minimap_size, mm_max);
-    if (mm_size < mm_min) mm_size = mm_min;
-
-    float mm_x;
-    float mm_y;
-    if (usrs->minimap_pos_custom) {
-      mm_x = usrs->minimap_rel_x * ctx->size[0] - mm_size * 0.5f;
-      mm_y = usrs->minimap_rel_y * ctx->size[1] - mm_size * 0.5f;
-      float max_x = ctx->size[0] - mm_size - style->WindowPadding.x;
-      float max_y = ctx->size[1] - mm_size - style->WindowPadding.y;
-      mm_x = fmaxf(style->WindowPadding.x, fminf(mm_x, max_x));
-      mm_y = fmaxf(style->WindowPadding.y, fminf(mm_y, max_y));
-    } else {
-      mm_x = ctx->size[0] - mm_size - style->WindowPadding.x;
-      mm_y = ctx->size[1] - mm_size - style->WindowPadding.y - line_height;
-    }
-
 
 #ifdef ANDROID
     /* Direct minimap editing. The hit rectangle is registered for the next
@@ -329,7 +350,10 @@ void ui_overlay(tenv* env) {
     igCalcTextSize(&lctxtsz, "--360° 100%", NULL, false, -1);
 
     float label_x = mm_x + mm_size * 0.5f - lctxtsz.x * 0.5f;
-    float label_y = mm_y + mm_size + 2.0f;
+    float stats_block_height = line_height * 6.0f;
+    float label_y =
+        mm_y + mm_size + style->WindowPadding.y +
+        stats_block_height + 2.0f;
     if (label_y + line_height > ctx->size[1] - style->WindowPadding.y)
       label_y = mm_y - line_height;
     label_x = fmaxf(style->WindowPadding.x,

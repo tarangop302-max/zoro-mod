@@ -243,72 +243,45 @@ void global_chat_draw(tenv* env) {
         74.0f
     };
 
-    float expanded_width =
-        viewport->WorkSize.x * 0.5f;
+    /*
+     * Matches the size the panel was manually placed at:
+     * a compact box in the top-left corner.
+     */
+    ImVec2 expanded_size = {
+        480.0f,
+        420.0f
+    };
 
-    float expanded_height =
-        viewport->WorkSize.y * 0.55f;
-
-    if (expanded_width > 480.0f) {
-        expanded_width = 480.0f;
+    if (expanded_size.x > viewport->WorkSize.x - 36.0f) {
+        expanded_size.x = viewport->WorkSize.x - 36.0f;
     }
 
-    if (expanded_height > 420.0f) {
-        expanded_height = 420.0f;
+    if (expanded_size.y > viewport->WorkSize.y - 36.0f) {
+        expanded_size.y = viewport->WorkSize.y - 36.0f;
     }
 
-    ImVec2 default_pos = {
-        viewport->WorkPos.x +
-            viewport->WorkSize.x -
-            collapsed_size.x -
-            18.0f,
-
-        viewport->WorkPos.y +
-            18.0f
+    ImVec2 fixed_pos = {
+        viewport->WorkPos.x + 18.0f,
+        viewport->WorkPos.y + 18.0f
     };
 
     /*
-     * Only ever sets the position once, the very first time
-     * this window appears (collapsed, top-right corner).
-     * From then on the player's own dragging owns it, in
-     * either state.
+     * Position and size are forced every frame (no
+     * FirstUseEver here, no drag) -- the window is pinned
+     * to the top-left corner permanently.
      */
     igSetNextWindowPos(
-        default_pos,
-        ImGuiCond_FirstUseEver,
+        fixed_pos,
+        ImGuiCond_Always,
         (ImVec2){0.0f, 0.0f}
     );
 
-    static bool was_open = false;
-    bool just_opened =
-        global_chat_open && !was_open;
-
-    if (!global_chat_open) {
-        /*
-         * Collapsed size is fixed and can't be resized, so
-         * it's safe to force it every frame.
-         */
-        igSetNextWindowSize(
+    igSetNextWindowSize(
+        global_chat_open ?
+            expanded_size :
             collapsed_size,
-            ImGuiCond_Always
-        );
-    } else if (just_opened) {
-        /*
-         * Only force the expanded default size on the exact
-         * frame we switch into expanded mode -- after that,
-         * leave it alone so the player's own resizing (via
-         * the corner grip) sticks.
-         */
-        igSetNextWindowSize(
-            (ImVec2){
-                expanded_width,
-                expanded_height
-            },
-            ImGuiCond_Always
-        );
-    }
-
-    was_open = global_chat_open;
+        ImGuiCond_Always
+    );
 
     igSetNextWindowBgAlpha(
         global_chat_open ? 0.1f : 0.85f
@@ -318,11 +291,12 @@ void global_chat_draw(tenv* env) {
 
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoSavedSettings;
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoResize;
 
     if (!global_chat_open) {
         flags |=
-            ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoScrollbar;
     }
 

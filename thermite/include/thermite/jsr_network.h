@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,6 +71,11 @@ typedef struct jsr_network {
     char pending_messages[10][256];
     int pending_count;
 
+    // Online player roster (usernames currently in the
+    // room, tracked from JOIN/LEAVE notices).
+    char roster[64][32];
+    int roster_count;
+
     // Chat system connected to this network.
     tchat_system *chat;
 
@@ -119,6 +125,22 @@ bool jsr_network_is_connected(
 // Get the number of queued messages.
 int jsr_network_pending_count(
     jsr_network *net
+);
+
+// Number of players currently tracked as online in the
+// room (from JOIN/LEAVE notices sent by the relay).
+int jsr_network_roster_count(
+    jsr_network *net
+);
+
+// Copy the username at the given roster index (0 to
+// jsr_network_roster_count()-1) into out_name. Returns
+// false if the index is out of range.
+bool jsr_network_roster_name(
+    jsr_network *net,
+    int index,
+    char *out_name,
+    size_t out_size
 );
 
 // Send the team synchronization request.

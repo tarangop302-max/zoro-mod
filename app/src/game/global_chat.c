@@ -30,6 +30,7 @@ typedef struct {
 
 static bool global_chat_initialized = false;
 static bool global_chat_open = false;
+static bool global_chat_players_open = false;
 
 /* Networking state for the public/global room. */
 static tchat_system* global_chat_tchat = NULL;
@@ -355,6 +356,110 @@ void global_chat_draw(tenv* env) {
     ) {
         global_chat_open = false;
     }
+
+    if (
+        global_chat_open &&
+        global_chat_players_open
+    ) {
+        ImVec2 players_pos = {
+            fixed_pos.x,
+            fixed_pos.y +
+                expanded_size.y +
+                8.0f
+        };
+
+        ImVec2 players_size = {
+            expanded_size.x,
+            180.0f
+        };
+
+        igSetNextWindowPos(
+            players_pos,
+            ImGuiCond_Always,
+            (ImVec2){0.0f, 0.0f}
+        );
+
+        igSetNextWindowSize(
+            players_size,
+            ImGuiCond_Always
+        );
+
+        igSetNextWindowBgAlpha(
+            0.1f
+        );
+
+        ImGuiWindowFlags players_flags =
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize;
+
+        if (
+            igBegin(
+                "Online Players##zoro_chat_players",
+                NULL,
+                players_flags
+            )
+        ) {
+#ifdef ANDROID
+            ImVec2 pl_pos;
+            ImVec2 pl_size;
+
+            igGetWindowPos(&pl_pos);
+            igGetWindowSize(&pl_size);
+
+            android_ui_capture_rect(
+                pl_pos.x,
+                pl_pos.y,
+                pl_pos.x + pl_size.x,
+                pl_pos.y + pl_size.y
+            );
+#endif
+
+            int roster_count =
+                global_chat_net != NULL ?
+                    jsr_network_roster_count(
+                        global_chat_net
+                    ) :
+                    0;
+
+            if (roster_count == 0) {
+                igTextDisabled(
+                    "No players online."
+                );
+            } else {
+                for (
+                    int i = 0;
+                    i < roster_count;
+                    i++
+                ) {
+                    char name[32];
+
+                    if (
+                        jsr_network_roster_name(
+                            global_chat_net,
+                            i,
+                            name,
+                            sizeof(name)
+                        )
+                    ) {
+                        igTextColored(
+                            (ImVec4){
+                                0.25f,
+                                0.75f,
+                                1.0f,
+                                1.0f
+                            },
+                            "%s",
+                            name
+                        );
+                    }
+                }
+            }
+        }
+
+        igEnd();
+    }
 }
 
 static void global_chat_panel_contents(
@@ -391,6 +496,39 @@ static void global_chat_panel_contents(
             },
             "Not connected"
         );
+    }
+
+    igSameLine(
+        0.0f,
+        10.0f
+    );
+
+    int online_count =
+        global_chat_net != NULL ?
+            jsr_network_roster_count(
+                global_chat_net
+            ) :
+            0;
+
+    igTextDisabled(
+        "%d online",
+        online_count
+    );
+
+    igSameLine(
+        0.0f,
+        10.0f
+    );
+
+    if (
+        igSmallButton(
+            global_chat_players_open ?
+                "Hide players" :
+                "Show players"
+        )
+    ) {
+        global_chat_players_open =
+            !global_chat_players_open;
     }
 
     igSeparator();

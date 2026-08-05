@@ -186,6 +186,93 @@ static void jsr_add_chat_message(
 }
 
 // ============================================================================
+// Online roster tracking
+// ============================================================================
+
+#define JSR_ROSTER_MAX 64
+
+static int jsr_roster_find(
+    jsr_network *net,
+    const char *name,
+    size_t name_len
+) {
+    int i;
+
+    for (i = 0; i < net->roster_count; i++) {
+        if (
+            jsr_safe_strlen(
+                net->roster[i],
+                sizeof(net->roster[i]) - 1
+            ) == name_len &&
+            strncmp(
+                net->roster[i],
+                name,
+                name_len
+            ) == 0
+        ) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static void jsr_roster_add(
+    jsr_network *net,
+    const char *name,
+    size_t name_len
+) {
+    if (name_len == 0 ||
+        name_len >= sizeof(net->roster[0])) {
+        return;
+    }
+
+    if (
+        jsr_roster_find(net, name, name_len) >= 0
+    ) {
+        /* Already tracked -- avoid duplicates. */
+        return;
+    }
+
+    if (net->roster_count >= JSR_ROSTER_MAX) {
+        return;
+    }
+
+    memcpy(
+        net->roster[net->roster_count],
+        name,
+        name_len
+    );
+
+    net->roster[net->roster_count][name_len] =
+        '\0';
+
+    net->roster_count++;
+}
+
+static void jsr_roster_remove(
+    jsr_network *net,
+    const char *name,
+    size_t name_len
+) {
+    int index =
+        jsr_roster_find(net, name, name_len);
+
+    if (index < 0) {
+        return;
+    }
+
+    memmove(
+        &net->roster[index],
+        &net->roster[index + 1],
+        sizeof(net->roster[0]) *
+            (net->roster_count - index - 1)
+    );
+
+    net->roster_count--;
+}
+
+// ============================================================================
 // Message parser
 // ============================================================================
 
@@ -292,6 +379,20 @@ static void jsr_parse_message(
         if (name_len == 0 ||
             name_len > data_len - 2) {
             return;
+        }
+
+        if (message_type == 2) {
+            jsr_roster_add(
+                net,
+                data + 2,
+                name_len
+            );
+        } else {
+            jsr_roster_remove(
+                net,
+                data + 2,
+                name_len
+            );
         }
 
         written =
@@ -646,6 +747,19 @@ bool jsr_network_connect(
         sizeof(net->username) - 1
     ] = '\0';
 
+    /*
+     * The relay only tells us about OTHER users joining --
+     * we have to add ourselves to the roster locally.
+     */
+    jsr_roster_add(
+        net,
+        net->username,
+        jsr_safe_strlen(
+            net->username,
+            sizeof(net->username) - 1
+        )
+    );
+
     printf(
         "JSR: Connecting to %s\n",
         net->relay_url
@@ -877,6 +991,41 @@ int jsr_network_pending_count(
     }
 
     return net->pending_count;
+}
+
+int jsr_network_roster_count(
+    jsr_network *net
+) {
+    if (net == NULL) {
+        return 0;
+    }
+
+    return net->roster_count;
+}
+
+bool jsr_network_roster_name(
+    jsr_network *net,
+    int index,
+    char *out_name,
+    size_t out_size
+) {
+    if (net == NULL ||
+        out_name == NULL ||
+        out_size == 0 ||
+        index < 0 ||
+        index >= net->roster_count) {
+        return false;
+    }
+
+    strncpy(
+        out_name,
+        net->roster[index],
+        out_size - 1
+    );
+
+    out_name[out_size - 1] = '\0';
+
+    return true;
 }
 
 /*

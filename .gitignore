@@ -4,6 +4,13 @@ android/local.properties
 *.keystore
 *.jks
 
+# Exception: this is a fixed DEBUG-only key (not a real
+# secret) committed on purpose so every CI build signs with
+# the same certificate -- otherwise each build gets Gradle's
+# auto-generated ephemeral key and installs can't update
+# in-place over the previous build.
+!android/app/debug.keystore
+
 # ── Android / Gradle build outputs ──────────────────────────────────────
 android/.gradle/
 android/build/

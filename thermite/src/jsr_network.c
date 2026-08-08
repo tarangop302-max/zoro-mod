@@ -273,6 +273,118 @@ static void jsr_roster_remove(
 }
 
 // ============================================================================
+// Location tracking
+// ============================================================================
+
+#define JSR_LOCATION_MAX 64
+
+static int jsr_location_find(
+    jsr_network *net,
+    const char *name,
+    size_t name_len
+) {
+    int i;
+
+    for (i = 0; i < net->location_count; i++) {
+        if (
+            jsr_safe_strlen(
+                net->locations[i].username,
+                sizeof(net->locations[i].username) - 1
+            ) == name_len &&
+            strncmp(
+                net->locations[i].username,
+                name,
+                name_len
+            ) == 0
+        ) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static void jsr_location_set(
+    jsr_network *net,
+    const char *name,
+    size_t name_len,
+    const char *server_ip,
+    size_t server_ip_len,
+    float x,
+    float y
+) {
+    int index;
+
+    if (name_len == 0 ||
+        name_len >= sizeof(net->locations[0].username)) {
+        return;
+    }
+
+    if (
+        server_ip_len >=
+        sizeof(net->locations[0].server_ip)
+    ) {
+        server_ip_len =
+            sizeof(net->locations[0].server_ip) - 1;
+    }
+
+    index =
+        jsr_location_find(net, name, name_len);
+
+    if (index < 0) {
+        if (net->location_count >= JSR_LOCATION_MAX) {
+            return;
+        }
+
+        index = net->location_count;
+        net->location_count++;
+
+        memcpy(
+            net->locations[index].username,
+            name,
+            name_len
+        );
+
+        net->locations[index].username[name_len] =
+            '\0';
+    }
+
+    memcpy(
+        net->locations[index].server_ip,
+        server_ip,
+        server_ip_len
+    );
+
+    net->locations[index].server_ip[server_ip_len] =
+        '\0';
+
+    net->locations[index].x = x;
+    net->locations[index].y = y;
+}
+
+static void jsr_location_remove(
+    jsr_network *net,
+    const char *name,
+    size_t name_len
+) {
+    int index =
+        jsr_location_find(net, name, name_len);
+
+    if (index < 0) {
+        return;
+    }
+
+    memmove(
+        &net->locations[index],
+        &net->locations[index + 1],
+        sizeof(net->locations[0]) *
+            (net->location_count - index - 1)
+    );
+
+    net->location_count--;
+}
+
+// ============================================================================
 // Message parser
 // ============================================================================
 
@@ -393,6 +505,12 @@ static void jsr_parse_message(
                 data + 2,
                 name_len
             );
+
+            jsr_location_remove(
+                net,
+                data + 2,
+                name_len
+            );
         }
 
         written =
@@ -416,6 +534,89 @@ static void jsr_parse_message(
                     sizeof(text) ?
                     (size_t) written :
                     sizeof(text) - 1
+            );
+        }
+    }
+    else if (message_type == 7) {
+        /*
+         * LOCATION broadcast, relayed by the server as:
+         * [7][username_len][username][x:f32][y:f32]
+         * [server_ip_len][server_ip]
+         */
+        size_t offset;
+        size_t name_len;
+        float x;
+        float y;
+        size_t srv_len;
+
+        offset = 1;
+
+        if (data_len < offset + 1) {
+            return;
+        }
+
+        name_len =
+            (uint8_t) data[offset];
+        offset += 1;
+
+        if (data_len < offset + name_len) {
+            return;
+        }
+
+        const char *name = data + offset;
+        offset += name_len;
+
+        if (data_len < offset + 8) {
+            return;
+        }
+
+        memcpy(&x, data + offset, 4);
+        offset += 4;
+
+        memcpy(&y, data + offset, 4);
+        offset += 4;
+
+        if (data_len < offset + 1) {
+            return;
+        }
+
+        srv_len =
+            (uint8_t) data[offset];
+        offset += 1;
+
+        if (data_len < offset + srv_len) {
+            return;
+        }
+
+        const char *srv = data + offset;
+
+        bool is_self =
+            jsr_safe_strlen(
+                net->username,
+                sizeof(net->username) - 1
+            ) == name_len &&
+            strncmp(
+                net->username,
+                name,
+                name_len
+            ) == 0;
+
+        if (
+            name_len > 0 &&
+            !is_self
+        ) {
+            /*
+             * Only track OTHER players' positions -- we
+             * already know our own.
+             */
+            jsr_location_set(
+                net,
+                name,
+                name_len,
+                srv,
+                srv_len,
+                x,
+                y
             );
         }
     }
@@ -1024,6 +1225,117 @@ bool jsr_network_roster_name(
     );
 
     out_name[out_size - 1] = '\0';
+
+    return true;
+}
+
+bool jsr_network_send_location(
+    jsr_network *net,
+    float x,
+    float y,
+    const char *server_ip
+) {
+    uint8_t buffer[1 + 4 + 4 + 1 + 64];
+    size_t srv_len;
+    size_t offset;
+
+    if (net == NULL ||
+        server_ip == NULL ||
+        !net->is_connected ||
+        net->ws_connection == NULL) {
+        return false;
+    }
+
+    srv_len =
+        jsr_safe_strlen(
+            server_ip,
+            64 - 1
+        );
+
+    buffer[0] = 7;
+    offset = 1;
+
+    memcpy(buffer + offset, &x, 4);
+    offset += 4;
+
+    memcpy(buffer + offset, &y, 4);
+    offset += 4;
+
+    buffer[offset] = (uint8_t) srv_len;
+    offset += 1;
+
+    memcpy(
+        buffer + offset,
+        server_ip,
+        srv_len
+    );
+    offset += srv_len;
+
+    mg_ws_send(
+        net->ws_connection,
+        buffer,
+        offset,
+        WEBSOCKET_OP_BINARY
+    );
+
+    return true;
+}
+
+int jsr_network_location_count(
+    jsr_network *net
+) {
+    if (net == NULL) {
+        return 0;
+    }
+
+    return net->location_count;
+}
+
+bool jsr_network_get_location(
+    jsr_network *net,
+    int index,
+    char *out_username,
+    size_t username_size,
+    char *out_server_ip,
+    size_t server_ip_size,
+    float *out_x,
+    float *out_y
+) {
+    if (net == NULL ||
+        index < 0 ||
+        index >= net->location_count) {
+        return false;
+    }
+
+    if (out_username != NULL &&
+        username_size > 0) {
+        strncpy(
+            out_username,
+            net->locations[index].username,
+            username_size - 1
+        );
+
+        out_username[username_size - 1] = '\0';
+    }
+
+    if (out_server_ip != NULL &&
+        server_ip_size > 0) {
+        strncpy(
+            out_server_ip,
+            net->locations[index].server_ip,
+            server_ip_size - 1
+        );
+
+        out_server_ip[server_ip_size - 1] = '\0';
+    }
+
+    if (out_x != NULL) {
+        *out_x = net->locations[index].x;
+    }
+
+    if (out_y != NULL) {
+        *out_y = net->locations[index].y;
+    }
 
     return true;
 }

@@ -840,13 +840,6 @@ void trender(tenv* env) {
         );
 
 
-        // NEW PUBLIC GLOBAL CHAT
-
-        global_chat_draw(
-            env
-        );
-
-
         break;
 
 
@@ -896,6 +889,15 @@ void trender(tenv* env) {
 
         break;
     }
+
+
+    // NEW PUBLIC GLOBAL CHAT
+    // Drawn on every screen (not just PLAYING) so it stays
+    // usable while sitting in the lobby too.
+
+    global_chat_draw(
+        env
+    );
 
 
     igEnd();

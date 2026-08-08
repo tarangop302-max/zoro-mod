@@ -598,6 +598,16 @@ static void global_chat_panel_contents(
             80.0f;
     }
 
+    igPushStyleVar_Float(
+        ImGuiStyleVar_ScrollbarSize,
+        22.0f
+    );
+
+    igPushStyleVar_Float(
+        ImGuiStyleVar_GrabMinSize,
+        40.0f
+    );
+
     igBeginChild_Str(
         "##global_chat_messages",
         (ImVec2){
@@ -633,11 +643,6 @@ static void global_chat_panel_contents(
             message->name
         );
 
-        igSameLine(
-            0.0f,
-            7.0f
-        );
-
         igTextWrapped(
             "%s",
             message->text
@@ -665,6 +670,8 @@ static void global_chat_panel_contents(
         global_chat_message_count;
 
     igEndChild();
+
+    igPopStyleVar(2);
 
     igPushItemWidth(
         live_size.x - 115.0f

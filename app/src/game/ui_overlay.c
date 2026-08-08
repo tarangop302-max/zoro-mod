@@ -13,6 +13,7 @@
 #include "user_settings.h"
 #include "sbot.h"
 #include "ntl_team.h"
+#include "global_chat.h"
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
 #endif
@@ -343,6 +344,7 @@ void ui_overlay(tenv* env) {
     usr->r->global.minimap_opacity = 1;
 
     ntl_team_draw_minimap(env, mm_x, mm_y, mm_size);
+    global_chat_draw_minimap_markers(env, mm_x, mm_y, mm_size);
 
     igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
                usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);

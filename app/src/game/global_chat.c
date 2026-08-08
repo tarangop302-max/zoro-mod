@@ -10,6 +10,7 @@
 #endif
 
 #include <string.h>
+#include <math.h>
 
 #define GLOBAL_CHAT_MAX_MESSAGES 50
 #define GLOBAL_CHAT_NAME_LEN 32
@@ -202,8 +203,6 @@ void global_chat_init(tenv* env) {
 }
 
 void global_chat_update(tenv* env) {
-    (void)env;
-
     if (!global_chat_initialized) {
         return;
     }
@@ -214,6 +213,54 @@ void global_chat_update(tenv* env) {
             global_chat_net,
             1.0f / 60.0f
         );
+    }
+
+    /*
+     * Broadcast our own position roughly twice a second
+     * while actually playing, so other Public Chat players
+     * on the same game server can see us on their minimap.
+     */
+    static float location_timer = 0.0f;
+    location_timer += 1.0f / 60.0f;
+
+    if (
+        location_timer >= 0.5f &&
+        global_chat_net != NULL &&
+        jsr_network_is_connected(global_chat_net) &&
+        env != NULL &&
+        env->usr != NULL
+    ) {
+        location_timer = 0.0f;
+
+        game_data* gdata = &env->usr->gdata;
+
+        if (
+            gdata->curr_screen == PLAYING &&
+            gdata->conn == CONNECTED
+        ) {
+            int snakes_len =
+                tdarray_length(gdata->data.snakes);
+
+            for (
+                int i = 0;
+                i < snakes_len;
+                i++
+            ) {
+                snake* s =
+                    gdata->data.snakes + i;
+
+                if (s->id == gdata->data.snake_id) {
+                    jsr_network_send_location(
+                        global_chat_net,
+                        s->xx + s->fx,
+                        s->yy + s->fy,
+                        env->usr->usrs.ipv4
+                    );
+
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -667,6 +714,127 @@ static void global_chat_panel_contents(
                 )
             );
         }
+    }
+}
+
+/*
+ * Draws a dot for every other Public Chat player who is on
+ * the SAME game server as us (positions from different
+ * servers aren't in the same coordinate space, so they
+ * can't be meaningfully compared). Meant to be called
+ * right after ntl_team_draw_minimap() with the exact same
+ * x/y/size, so the dots line up on the same circle.
+ */
+void global_chat_draw_minimap_markers(
+    tenv* env,
+    float x,
+    float y,
+    float size
+) {
+    if (
+        env == NULL ||
+        env->usr == NULL ||
+        size <= 0.0f ||
+        global_chat_net == NULL
+    ) {
+        return;
+    }
+
+    tuser_data* u = env->usr;
+    game_data* g = &u->gdata;
+
+    if (
+        g->conn != CONNECTED ||
+        g->data.grd <= 0.0f
+    ) {
+        return;
+    }
+
+    ImDrawList* dl = igGetWindowDrawList();
+
+    if (dl == NULL) {
+        return;
+    }
+
+    float radius = size * 0.5f;
+    float map_radius = radius * 0.90f;
+    ImVec2 center = {
+        x + radius,
+        y + radius
+    };
+
+    ImU32 col =
+        igColorConvertFloat4ToU32(
+            (ImVec4){
+                1.0f,
+                0.85f,
+                0.2f,
+                1.0f
+            }
+        );
+
+    int count =
+        jsr_network_location_count(
+            global_chat_net
+        );
+
+    for (
+        int i = 0;
+        i < count;
+        i++
+    ) {
+        char srv[64];
+        float lx;
+        float ly;
+
+        if (
+            !jsr_network_get_location(
+                global_chat_net,
+                i,
+                NULL,
+                0,
+                srv,
+                sizeof(srv),
+                &lx,
+                &ly
+            )
+        ) {
+            continue;
+        }
+
+        if (
+            strcmp(srv, u->usrs.ipv4) != 0
+        ) {
+            /* Different game server -- not comparable. */
+            continue;
+        }
+
+        float rx =
+            (lx - g->data.grd) / g->data.flux_grd;
+
+        float ry =
+            (ly - g->data.grd) / g->data.flux_grd;
+
+        float dist =
+            sqrtf(rx * rx + ry * ry);
+
+        if (dist > 1.0f) {
+            rx /= dist;
+            ry /= dist;
+        }
+
+        ImVec2 p = {
+            center.x + rx * map_radius,
+            center.y + ry * map_radius
+        };
+
+        ImDrawList_AddCircleFilled(
+            dl,
+            p,
+            4.0f,
+            col,
+            12
+        );
     }
 }
 

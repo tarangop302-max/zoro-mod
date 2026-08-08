@@ -608,6 +608,12 @@ static void global_chat_panel_contents(
         ImGuiWindowFlags_AlwaysVerticalScrollbar
     );
 
+    static int last_seen_message_count = 0;
+
+    bool was_at_bottom =
+        igGetScrollY() >=
+        igGetScrollMaxY() - 1.0f;
+
     for (
         int i = 0;
         i < global_chat_message_count;
@@ -637,6 +643,26 @@ static void global_chat_panel_contents(
             message->text
         );
     }
+
+    if (
+        global_chat_message_count !=
+            last_seen_message_count &&
+        (
+            was_at_bottom ||
+            last_seen_message_count == 0
+        )
+    ) {
+        /*
+         * Only auto-scroll if the player was already at (or
+         * near) the bottom -- if they scrolled up to read
+         * older messages, a new one arriving shouldn't yank
+         * them back down.
+         */
+        igSetScrollHereY(1.0f);
+    }
+
+    last_seen_message_count =
+        global_chat_message_count;
 
     igEndChild();
 

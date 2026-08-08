@@ -13,6 +13,16 @@ void global_chat_update(tenv* env);
  * full chat box when expanded). */
 void global_chat_draw(tenv* env);
 
+/* Draw a dot on the minimap for every Public Chat player
+ * on the same game server as us. Call this right after
+ * ntl_team_draw_minimap() with the same x/y/size. */
+void global_chat_draw_minimap_markers(
+    tenv* env,
+    float x,
+    float y,
+    float size
+);
+
 /* Release Public Chat resources. */
 void global_chat_destroy(tenv* env);
 

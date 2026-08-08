@@ -15,6 +15,20 @@ android {
         versionName "2.5.7"
     }
 
+    signingConfigs {
+        debug {
+            // A fixed, committed keystore -- NOT Gradle's
+            // auto-generated one. Every CI build signs with
+            // this same key, so new builds can be installed
+            // as an UPDATE over the old app instead of
+            // forcing an uninstall (which wipes settings).
+            storeFile file("debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
@@ -24,8 +38,7 @@ android {
         }
 
         debug {
-            // Uses Gradle's automatic debug signing key.
-            // No custom keystore or GitHub secrets are needed.
+            signingConfig signingConfigs.debug
         }
     }
 

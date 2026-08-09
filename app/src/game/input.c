@@ -32,9 +32,23 @@ void input(tenv* env) {
       xm = gdata->bot.output.xm;
       ym = gdata->bot.output.ym;
     } else {
-      if (twindow_key_down(env->wnd, GLFW_KEY_LEFT))
+      bool key_left = twindow_key_down(env->wnd, GLFW_KEY_LEFT);
+      bool key_right = twindow_key_down(env->wnd, GLFW_KEY_RIGHT);
+
+      /* Turn the head every rendered frame (same treatment mouse control
+       * already gets via atan2f below), instead of only once per 150ms
+       * network-send batch. This is what makes keyboard turning feel as
+       * instant/smooth as mouse turning. */
+      if (key_left && !key_right)
+        me->eang -=
+            gdata->data.mamu * gdata->data.vfr * me->scang * me->spang;
+      else if (key_right && !key_left)
+        me->eang +=
+            gdata->data.mamu * gdata->data.vfr * me->scang * me->spang;
+
+      if (key_left)
         gdata->data.kd_l_frb += gdata->data.vfrb;
-      if (twindow_key_down(env->wnd, GLFW_KEY_RIGHT))
+      if (key_right)
         gdata->data.kd_r_frb += gdata->data.vfrb;
 
       if (gdata->data.kd_l_frb > 0 || gdata->data.kd_r_frb > 0)
@@ -50,18 +64,18 @@ void input(tenv* env) {
               gdata->data.kd_r_frb -= gdata->data.kd_l_frb;
               gdata->data.kd_l_frb = 0;
             }
+          /* eang is no longer updated here -- it's handled per-frame above.
+           * This block now only reports the turn to the server. */
           if (gdata->data.kd_l_frb > 0) {
             int v = gdata->data.kd_l_frb;
             if (v > 127) v = 127;
             gdata->data.kd_l_frb -= v;
-            me->eang -= gdata->data.mamu * v * me->scang * me->spang;
             mg_ws_send(connection, (uint8_t[]){252, (uint8_t)v}, 2,
                        WEBSOCKET_OP_BINARY);
           } else if (gdata->data.kd_r_frb > 0) {
             int v = gdata->data.kd_r_frb;
             if (v > 127) v = 127;
             gdata->data.kd_r_frb -= v;
-            me->eang += gdata->data.mamu * v * me->scang * me->spang;
             v += 128;
             mg_ws_send(connection, (uint8_t[]){252, (uint8_t)v}, 2,
                        WEBSOCKET_OP_BINARY);
@@ -273,3 +287,4 @@ void input(tenv* env) {
   gameplay_mode* mode = usrs->modes + usrs->hotkeys[HOTKEY_ASSIST].active;
   if (mode->show_crosshair) igSetMouseCursor(ImGuiMouseCursor_None);
 }
+

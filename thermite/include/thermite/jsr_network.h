@@ -83,6 +83,12 @@ typedef struct jsr_network {
     // Online player roster (usernames currently in the
     // room, tracked from JOIN/LEAVE notices).
     char roster[64][32];
+
+    // The clan owner's label for whichever access key each
+    // roster entry is using (index-parallel with roster).
+    // Empty string if unknown (e.g. our own entry).
+    char roster_owner[64][32];
+
     int roster_count;
 
     // Last known in-game position of each player who has
@@ -171,6 +177,16 @@ int jsr_network_roster_count(
 // jsr_network_roster_count()-1) into out_name. Returns
 // false if the index is out of range.
 bool jsr_network_roster_name(
+    jsr_network *net,
+    int index,
+    char *out_name,
+    size_t out_size
+);
+
+// Copy the clan owner's label for the given roster index's
+// access key into out_name. Empty string if unknown. Returns
+// false if the index is out of range.
+bool jsr_network_roster_owner(
     jsr_network *net,
     int index,
     char *out_name,

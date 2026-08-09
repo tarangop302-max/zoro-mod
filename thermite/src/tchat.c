@@ -180,7 +180,8 @@ static bool connect_to_relay(
     if (!jsr_network_connect(
             network,
             chat->team_key,
-            chat->local_username
+            chat->local_username,
+            ""
         )) {
         add_system_message(
             chat,

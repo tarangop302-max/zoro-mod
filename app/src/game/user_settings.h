@@ -168,6 +168,10 @@ typedef struct user_settings {
      stable so nickname changes update the existing player instead of creating
      a nameless/new entry. */
   char ntl_client_id[9];
+
+  /* ZORO Public Chat access key, assigned by the clan owner.
+     Entered once, saved here so it doesn't need retyping. */
+  char public_chat_key[96];
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

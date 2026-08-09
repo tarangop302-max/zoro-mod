@@ -190,6 +190,7 @@ void user_settings_default(user_settings* usr_settings) {
   memset(usr_settings->ntl_team_profiles, 0,
          sizeof usr_settings->ntl_team_profiles);
   usr_settings->ntl_client_id[0] = '\0';
+  usr_settings->public_chat_key[0] = '\0';
 }
 
 void write_default_settings(user_settings* usr_settings) {
@@ -250,9 +251,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v23_prefix = offsetof(user_settings, transparent_skin_opacity);
   size_t v24_prefix = offsetof(user_settings, ntl_chat_minimized);
   size_t v25_prefix = offsetof(user_settings, ntl_client_id);
+  size_t v26_prefix = offsetof(user_settings, public_chat_key);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v26_prefix)
+    /* A file saved before the public chat key field existed ends at
+       v26_prefix, possibly followed only by compiler tail padding. Do not
+       copy that padding into the new key field. */
+    bytes_to_read = v26_prefix;
   else if ((size_t)file_size >= v25_prefix)
     /* v2.5 ended at v25_prefix, followed only by compiler tail padding. Do not
        copy that padding into the new persistent NTL client ID. */

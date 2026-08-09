@@ -1,16 +1,9 @@
 #include "global_chat.h"
 
-#include "../user.h"
-
 #include "thermite/tchat.h"
 #include "thermite/jsr_network.h"
 
-#ifdef ANDROID
-#include "../android_glfw_shim.h"
-#endif
-
 #include <string.h>
-#include <math.h>
 
 #define GLOBAL_CHAT_MAX_MESSAGES 50
 #define GLOBAL_CHAT_NAME_LEN 32
@@ -31,7 +24,6 @@ typedef struct {
 
 static bool global_chat_initialized = false;
 static bool global_chat_open = false;
-static bool global_chat_players_open = false;
 
 /* Networking state for the public/global room. */
 static tchat_system* global_chat_tchat = NULL;
@@ -43,11 +35,6 @@ static global_chat_message
 static int global_chat_message_count = 0;
 
 static char global_chat_input[GLOBAL_CHAT_TEXT_LEN] = "";
-
-static void global_chat_panel_contents(
-    tenv* env,
-    ImVec2 live_size
-);
 
 static void global_chat_add_message(
     const char* name,
@@ -203,6 +190,8 @@ void global_chat_init(tenv* env) {
 }
 
 void global_chat_update(tenv* env) {
+    (void)env;
+
     if (!global_chat_initialized) {
         return;
     }
@@ -214,57 +203,11 @@ void global_chat_update(tenv* env) {
             1.0f / 60.0f
         );
     }
-
-    /*
-     * Broadcast our own position roughly twice a second
-     * while actually playing, so other Public Chat players
-     * on the same game server can see us on their minimap.
-     */
-    static float location_timer = 0.0f;
-    location_timer += 1.0f / 60.0f;
-
-    if (
-        location_timer >= 0.5f &&
-        global_chat_net != NULL &&
-        jsr_network_is_connected(global_chat_net) &&
-        env != NULL &&
-        env->usr != NULL
-    ) {
-        location_timer = 0.0f;
-
-        game_data* gdata = &env->usr->gdata;
-
-        if (
-            gdata->curr_screen == PLAYING &&
-            gdata->conn == CONNECTED
-        ) {
-            int snakes_len =
-                tdarray_length(gdata->data.snakes);
-
-            for (
-                int i = 0;
-                i < snakes_len;
-                i++
-            ) {
-                snake* s =
-                    gdata->data.snakes + i;
-
-                if (s->id == gdata->data.snake_id) {
-                    jsr_network_send_location(
-                        global_chat_net,
-                        s->xx + s->fx,
-                        s->yy + s->fy,
-                        env->usr->usrs.ipv4
-                    );
-
-                    break;
-                }
-            }
-        }
-    }
 }
 
 void global_chat_draw(tenv* env) {
+    (void)env;
+
     if (!global_chat_initialized) {
         return;
     }
@@ -272,602 +215,288 @@ void global_chat_draw(tenv* env) {
     ImGuiViewport* viewport =
         igGetMainViewport();
 
-    /*
-     * One window, one persistent ID ("##zoro_chat_window"),
-     * used for both the small collapsed button and the
-     * full expanded chat box. Because the ID never changes,
-     * ImGui keeps the same position across the transition --
-     * so dragging it (by its title bar, which already works
-     * reliably, unlike a hand-rolled per-widget drag) moves
-     * the "button" and the chat box together as one thing.
-     */
-    const char* title =
-        global_chat_open ?
-            "ZORO PUBLIC CHAT##zoro_chat_window" :
-            "PUBLIC CHAT##zoro_chat_window";
-
-    ImVec2 collapsed_size = {
-        150.0f,
-        74.0f
+    ImVec2 button_size = {
+        125.0f,
+        48.0f
     };
 
-    /*
-     * Matches the size the panel was manually placed at:
-     * a compact box in the top-left corner.
-     */
-    ImVec2 expanded_size = {
-        480.0f,
-        420.0f
+    ImVec2 button_pos = {
+        viewport->WorkPos.x +
+            viewport->WorkSize.x -
+            button_size.x -
+            18.0f,
+
+        viewport->WorkPos.y +
+            18.0f
     };
 
-    if (expanded_size.x > viewport->WorkSize.x - 36.0f) {
-        expanded_size.x = viewport->WorkSize.x - 36.0f;
-    }
-
-    if (expanded_size.y > viewport->WorkSize.y - 36.0f) {
-        expanded_size.y = viewport->WorkSize.y - 36.0f;
-    }
-
-    ImVec2 fixed_pos = {
-        viewport->WorkPos.x + 18.0f,
-        viewport->WorkPos.y + 18.0f
-    };
-
-    /*
-     * Position and size are forced every frame (no
-     * FirstUseEver here, no drag) -- the window is pinned
-     * to the top-left corner permanently.
-     */
     igSetNextWindowPos(
-        fixed_pos,
+        button_pos,
         ImGuiCond_Always,
         (ImVec2){0.0f, 0.0f}
     );
 
     igSetNextWindowSize(
-        global_chat_open ?
-            expanded_size :
-            collapsed_size,
+        button_size,
         ImGuiCond_Always
     );
 
     igSetNextWindowBgAlpha(
-        global_chat_open ? 0.1f : 0.85f
+        0.85f
     );
 
-    bool open = true;
-
     ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoResize;
-
-    if (!global_chat_open) {
-        flags |=
-            ImGuiWindowFlags_NoScrollbar;
-    }
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoSavedSettings;
 
     if (
         igBegin(
-            title,
-            global_chat_open ? &open : NULL,
+            "##zoro_global_chat_button",
+            NULL,
             flags
         )
     ) {
-        ImVec2 live_pos;
-        ImVec2 live_size;
-
-        igGetWindowPos(&live_pos);
-        igGetWindowSize(&live_size);
-
-#ifdef ANDROID
-        /*
-         * Live position/size so touch capture follows this
-         * window wherever it gets dragged to, in either
-         * state.
-         */
-        android_ui_capture_rect(
-            live_pos.x,
-            live_pos.y,
-            live_pos.x + live_size.x,
-            live_pos.y + live_size.y
-        );
-#endif
-
-        if (!global_chat_open) {
-            if (
-                igButton(
-                    "Open",
-                    (ImVec2){
-                        -1.0f,
-                        0.0f
-                    }
-                )
-            ) {
-                global_chat_open = true;
-            }
-        } else {
-            global_chat_panel_contents(
-                env,
-                live_size
-            );
+        if (
+            igButton(
+                "PUBLIC CHAT",
+                (ImVec2){
+                    108.0f,
+                    32.0f
+                }
+            )
+        ) {
+            global_chat_open =
+                !global_chat_open;
         }
     }
 
     igEnd();
 
     if (
-        global_chat_open &&
-        !open
+        global_chat_open
     ) {
-        global_chat_open = false;
-    }
-
-    if (
-        global_chat_open &&
-        global_chat_players_open
-    ) {
-        ImVec2 players_pos = {
-            fixed_pos.x,
-            fixed_pos.y +
-                expanded_size.y +
-                8.0f
-        };
-
-        ImVec2 players_size = {
-            expanded_size.x,
-            180.0f
-        };
-
-        igSetNextWindowPos(
-            players_pos,
-            ImGuiCond_Always,
-            (ImVec2){0.0f, 0.0f}
+        global_chat_panel(
+            env
         );
-
-        igSetNextWindowSize(
-            players_size,
-            ImGuiCond_Always
-        );
-
-        igSetNextWindowBgAlpha(
-            0.1f
-        );
-
-        ImGuiWindowFlags players_flags =
-            ImGuiWindowFlags_NoCollapse |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoResize;
-
-        if (
-            igBegin(
-                "Online Players##zoro_chat_players",
-                NULL,
-                players_flags
-            )
-        ) {
-#ifdef ANDROID
-            ImVec2 pl_pos;
-            ImVec2 pl_size;
-
-            igGetWindowPos(&pl_pos);
-            igGetWindowSize(&pl_size);
-
-            android_ui_capture_rect(
-                pl_pos.x,
-                pl_pos.y,
-                pl_pos.x + pl_size.x,
-                pl_pos.y + pl_size.y
-            );
-#endif
-
-            int roster_count =
-                global_chat_net != NULL ?
-                    jsr_network_roster_count(
-                        global_chat_net
-                    ) :
-                    0;
-
-            if (roster_count == 0) {
-                igTextDisabled(
-                    "No players online."
-                );
-            } else {
-                for (
-                    int i = 0;
-                    i < roster_count;
-                    i++
-                ) {
-                    char name[32];
-
-                    if (
-                        jsr_network_roster_name(
-                            global_chat_net,
-                            i,
-                            name,
-                            sizeof(name)
-                        )
-                    ) {
-                        igTextColored(
-                            (ImVec4){
-                                0.25f,
-                                0.75f,
-                                1.0f,
-                                1.0f
-                            },
-                            "%s",
-                            name
-                        );
-                    }
-                }
-            }
-        }
-
-        igEnd();
     }
 }
 
-static void global_chat_panel_contents(
-    tenv* env,
-    ImVec2 live_size
-) {
-    igText(
-        "Public chat - no team key required"
-    );
-
-    bool is_connected =
-        global_chat_net != NULL &&
-        jsr_network_is_connected(
-            global_chat_net
-        );
-
-    if (is_connected) {
-        igTextColored(
-            (ImVec4){
-                0.3f,
-                0.9f,
-                0.3f,
-                1.0f
-            },
-            "Connected to relay"
-        );
-    } else {
-        igTextColored(
-            (ImVec4){
-                0.9f,
-                0.3f,
-                0.3f,
-                1.0f
-            },
-            "Not connected"
-        );
-    }
-
-    igSameLine(
-        0.0f,
-        10.0f
-    );
-
-    int online_count =
-        global_chat_net != NULL ?
-            jsr_network_roster_count(
-                global_chat_net
-            ) :
-            0;
-
-    igTextDisabled(
-        "%d online",
-        online_count
-    );
-
-    igSameLine(
-        0.0f,
-        10.0f
-    );
-
-    if (
-        igSmallButton(
-            global_chat_players_open ?
-                "Hide players" :
-                "Show players"
-        )
-    ) {
-        global_chat_players_open =
-            !global_chat_players_open;
-    }
-
-    igSeparator();
-
-    float input_height =
-        50.0f;
-
-    ImVec2 avail;
-    igGetContentRegionAvail(&avail);
-
-    float message_area_height =
-        avail.y -
-        input_height;
-
-    if (
-        message_area_height <
-        80.0f
-    ) {
-        message_area_height =
-            80.0f;
-    }
-
-    igPushStyleVar_Float(
-        ImGuiStyleVar_ScrollbarSize,
-        22.0f
-    );
-
-    igPushStyleVar_Float(
-        ImGuiStyleVar_GrabMinSize,
-        40.0f
-    );
-
-    igBeginChild_Str(
-        "##global_chat_messages",
-        (ImVec2){
-            0.0f,
-            message_area_height
-        },
-        true,
-        ImGuiWindowFlags_AlwaysVerticalScrollbar
-    );
-
-    static int last_seen_message_count = 0;
-
-    bool was_at_bottom =
-        igGetScrollY() >=
-        igGetScrollMaxY() - 1.0f;
-
-    for (
-        int i = 0;
-        i < global_chat_message_count;
-        i++
-    ) {
-        global_chat_message* message =
-            &global_chat_messages[i];
-
-        igTextColored(
-            (ImVec4){
-                0.25f,
-                0.75f,
-                1.0f,
-                1.0f
-            },
-            "%s:",
-            message->name
-        );
-
-        igTextWrapped(
-            "%s",
-            message->text
-        );
-    }
-
-    if (
-        global_chat_message_count !=
-            last_seen_message_count &&
-        (
-            was_at_bottom ||
-            last_seen_message_count == 0
-        )
-    ) {
-        /*
-         * Only auto-scroll if the player was already at (or
-         * near) the bottom -- if they scrolled up to read
-         * older messages, a new one arriving shouldn't yank
-         * them back down.
-         */
-        igSetScrollHereY(1.0f);
-    }
-
-    last_seen_message_count =
-        global_chat_message_count;
-
-    igEndChild();
-
-    igPopStyleVar(2);
-
-    igPushItemWidth(
-        live_size.x - 115.0f
-    );
-
-    bool submitted =
-        igInputText(
-            "##global_chat_input",
-            global_chat_input,
-            sizeof(global_chat_input),
-            ImGuiInputTextFlags_EnterReturnsTrue,
-            NULL,
-            NULL
-        );
-
-    igPopItemWidth();
-
-    igSameLine(
-        0.0f,
-        8.0f
-    );
-
-    bool send_clicked =
-        igButton(
-            "SEND",
-            (ImVec2){
-                80.0f,
-                0.0f
-            }
-        );
-
-    if (
-        submitted ||
-        send_clicked
-    ) {
-        if (
-            global_chat_input[0] !=
-            '\0'
-        ) {
-            const char* nickname =
-                env->usr
-                    ->usrs
-                    .nickname;
-
-            if (
-                nickname == NULL ||
-                nickname[0] ==
-                '\0'
-            ) {
-                nickname =
-                    "Player";
-            }
-
-            /* Show it immediately for the sender. */
-            global_chat_add_message(
-                nickname,
-                global_chat_input
-            );
-
-            /* Relay it to everyone else. */
-            if (global_chat_net != NULL) {
-                jsr_network_send_message(
-                    global_chat_net,
-                    global_chat_input
-                );
-            }
-
-            memset(
-                global_chat_input,
-                0,
-                sizeof(
-                    global_chat_input
-                )
-            );
-        }
-    }
-}
-
-/*
- * Draws a dot for every other Public Chat player who is on
- * the SAME game server as us (positions from different
- * servers aren't in the same coordinate space, so they
- * can't be meaningfully compared). Meant to be called
- * right after ntl_team_draw_minimap() with the exact same
- * x/y/size, so the dots line up on the same circle.
- */
-void global_chat_draw_minimap_markers(
-    tenv* env,
-    float x,
-    float y,
-    float size
-) {
-    if (
-        env == NULL ||
-        env->usr == NULL ||
-        size <= 0.0f ||
-        global_chat_net == NULL
-    ) {
+void global_chat_panel(tenv* env) {
+    if (!global_chat_initialized) {
         return;
     }
 
-    tuser_data* u = env->usr;
-    game_data* g = &u->gdata;
+    ImGuiViewport* viewport =
+        igGetMainViewport();
+
+    float panel_width =
+        viewport->WorkSize.x * 0.82f;
+
+    float panel_height =
+        viewport->WorkSize.y * 0.72f;
 
     if (
-        g->conn != CONNECTED ||
-        g->data.grd <= 0.0f
+        panel_width > 700.0f
     ) {
-        return;
+        panel_width = 700.0f;
     }
 
-    ImDrawList* dl = igGetWindowDrawList();
-
-    if (dl == NULL) {
-        return;
+    if (
+        panel_height > 650.0f
+    ) {
+        panel_height = 650.0f;
     }
 
-    float radius = size * 0.5f;
-    float map_radius = radius * 0.90f;
-    ImVec2 center = {
-        x + radius,
-        y + radius
+    ImVec2 panel_pos = {
+        viewport->WorkPos.x +
+            (
+                viewport->WorkSize.x -
+                panel_width
+            ) * 0.5f,
+
+        viewport->WorkPos.y +
+            (
+                viewport->WorkSize.y -
+                panel_height
+            ) * 0.5f
     };
 
-    ImU32 col =
-        igColorConvertFloat4ToU32(
-            (ImVec4){
-                1.0f,
-                0.85f,
-                0.2f,
-                1.0f
-            }
-        );
+    igSetNextWindowPos(
+        panel_pos,
+        ImGuiCond_Always,
+        (ImVec2){0.0f, 0.0f}
+    );
 
-    int count =
-        jsr_network_location_count(
-            global_chat_net
-        );
+    igSetNextWindowSize(
+        (ImVec2){
+            panel_width,
+            panel_height
+        },
+        ImGuiCond_Always
+    );
 
-    for (
-        int i = 0;
-        i < count;
-        i++
+    bool open = true;
+
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoSavedSettings;
+
+    if (
+        igBegin(
+            "ZORO PUBLIC CHAT",
+            &open,
+            flags
+        )
     ) {
-        char srv[64];
-        float lx;
-        float ly;
-
-        if (
-            !jsr_network_get_location(
-                global_chat_net,
-                i,
-                NULL,
-                0,
-                srv,
-                sizeof(srv),
-                &lx,
-                &ly
-            )
-        ) {
-            continue;
-        }
-
-        if (
-            strcmp(srv, u->usrs.ipv4) != 0
-        ) {
-            /* Different game server -- not comparable. */
-            continue;
-        }
-
-        float rx =
-            (lx - g->data.grd) / g->data.flux_grd;
-
-        float ry =
-            (ly - g->data.grd) / g->data.flux_grd;
-
-        float dist =
-            sqrtf(rx * rx + ry * ry);
-
-        if (dist > 1.0f) {
-            rx /= dist;
-            ry /= dist;
-        }
-
-        ImVec2 p = {
-            center.x + rx * map_radius,
-            center.y + ry * map_radius
-        };
-
-        ImDrawList_AddCircleFilled(
-            dl,
-            p,
-            4.0f,
-            col,
-            12
+        igText(
+            "Public chat - no team key required"
         );
+
+        igSeparator();
+
+        float input_height =
+            50.0f;
+
+        float message_area_height =
+            igGetContentRegionAvail().y -
+            input_height;
+
+        if (
+            message_area_height <
+            80.0f
+        ) {
+            message_area_height =
+                80.0f;
+        }
+
+        igBeginChild_Str(
+            "##global_chat_messages",
+            (ImVec2){
+                0.0f,
+                message_area_height
+            },
+            true,
+            ImGuiWindowFlags_AlwaysVerticalScrollbar
+        );
+
+        for (
+            int i = 0;
+            i < global_chat_message_count;
+            i++
+        ) {
+            global_chat_message* message =
+                &global_chat_messages[i];
+
+            igTextColored(
+                (ImVec4){
+                    0.25f,
+                    0.75f,
+                    1.0f,
+                    1.0f
+                },
+                "%s:",
+                message->name
+            );
+
+            igSameLine(
+                0.0f,
+                7.0f
+            );
+
+            igTextWrapped(
+                "%s",
+                message->text
+            );
+        }
+
+        igEndChild();
+
+        igPushItemWidth(
+            panel_width - 115.0f
+        );
+
+        bool submitted =
+            igInputText(
+                "##global_chat_input",
+                global_chat_input,
+                sizeof(global_chat_input),
+                ImGuiInputTextFlags_EnterReturnsTrue,
+                NULL,
+                NULL
+            );
+
+        igPopItemWidth();
+
+        igSameLine(
+            0.0f,
+            8.0f
+        );
+
+        bool send_clicked =
+            igButton(
+                "SEND",
+                (ImVec2){
+                    80.0f,
+                    0.0f
+                }
+            );
+
+        if (
+            submitted ||
+            send_clicked
+        ) {
+            if (
+                global_chat_input[0] !=
+                '\0'
+            ) {
+                const char* nickname =
+                    env->usr
+                        ->usrs
+                        .nickname;
+
+                if (
+                    nickname == NULL ||
+                    nickname[0] ==
+                    '\0'
+                ) {
+                    nickname =
+                        "Player";
+                }
+
+                /* Show it immediately for the sender. */
+                global_chat_add_message(
+                    nickname,
+                    global_chat_input
+                );
+
+                /* Relay it to everyone else. */
+                if (global_chat_net != NULL) {
+                    jsr_network_send_message(
+                        global_chat_net,
+                        global_chat_input
+                    );
+                }
+
+                memset(
+                    global_chat_input,
+                    0,
+                    sizeof(
+                        global_chat_input
+                    )
+                );
+            }
+        }
+    }
+
+    igEnd();
+
+    if (!open) {
+        global_chat_open =
+            false;
     }
 }
 

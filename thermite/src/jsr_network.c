@@ -39,8 +39,6 @@ static size_t jsr_safe_strlen(
     return length;
 }
 
-static void jsr_network_send_join(jsr_network *net);
-
 static void jsr_generate_peer_id(
     char *peer_id,
     size_t size
@@ -186,205 +184,6 @@ static void jsr_add_chat_message(
 }
 
 // ============================================================================
-// Online roster tracking
-// ============================================================================
-
-#define JSR_ROSTER_MAX 64
-
-static int jsr_roster_find(
-    jsr_network *net,
-    const char *name,
-    size_t name_len
-) {
-    int i;
-
-    for (i = 0; i < net->roster_count; i++) {
-        if (
-            jsr_safe_strlen(
-                net->roster[i],
-                sizeof(net->roster[i]) - 1
-            ) == name_len &&
-            strncmp(
-                net->roster[i],
-                name,
-                name_len
-            ) == 0
-        ) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-static void jsr_roster_add(
-    jsr_network *net,
-    const char *name,
-    size_t name_len
-) {
-    if (name_len == 0 ||
-        name_len >= sizeof(net->roster[0])) {
-        return;
-    }
-
-    if (
-        jsr_roster_find(net, name, name_len) >= 0
-    ) {
-        /* Already tracked -- avoid duplicates. */
-        return;
-    }
-
-    if (net->roster_count >= JSR_ROSTER_MAX) {
-        return;
-    }
-
-    memcpy(
-        net->roster[net->roster_count],
-        name,
-        name_len
-    );
-
-    net->roster[net->roster_count][name_len] =
-        '\0';
-
-    net->roster_count++;
-}
-
-static void jsr_roster_remove(
-    jsr_network *net,
-    const char *name,
-    size_t name_len
-) {
-    int index =
-        jsr_roster_find(net, name, name_len);
-
-    if (index < 0) {
-        return;
-    }
-
-    memmove(
-        &net->roster[index],
-        &net->roster[index + 1],
-        sizeof(net->roster[0]) *
-            (net->roster_count - index - 1)
-    );
-
-    net->roster_count--;
-}
-
-// ============================================================================
-// Location tracking
-// ============================================================================
-
-#define JSR_LOCATION_MAX 64
-
-static int jsr_location_find(
-    jsr_network *net,
-    const char *name,
-    size_t name_len
-) {
-    int i;
-
-    for (i = 0; i < net->location_count; i++) {
-        if (
-            jsr_safe_strlen(
-                net->locations[i].username,
-                sizeof(net->locations[i].username) - 1
-            ) == name_len &&
-            strncmp(
-                net->locations[i].username,
-                name,
-                name_len
-            ) == 0
-        ) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-static void jsr_location_set(
-    jsr_network *net,
-    const char *name,
-    size_t name_len,
-    const char *server_ip,
-    size_t server_ip_len,
-    float x,
-    float y
-) {
-    int index;
-
-    if (name_len == 0 ||
-        name_len >= sizeof(net->locations[0].username)) {
-        return;
-    }
-
-    if (
-        server_ip_len >=
-        sizeof(net->locations[0].server_ip)
-    ) {
-        server_ip_len =
-            sizeof(net->locations[0].server_ip) - 1;
-    }
-
-    index =
-        jsr_location_find(net, name, name_len);
-
-    if (index < 0) {
-        if (net->location_count >= JSR_LOCATION_MAX) {
-            return;
-        }
-
-        index = net->location_count;
-        net->location_count++;
-
-        memcpy(
-            net->locations[index].username,
-            name,
-            name_len
-        );
-
-        net->locations[index].username[name_len] =
-            '\0';
-    }
-
-    memcpy(
-        net->locations[index].server_ip,
-        server_ip,
-        server_ip_len
-    );
-
-    net->locations[index].server_ip[server_ip_len] =
-        '\0';
-
-    net->locations[index].x = x;
-    net->locations[index].y = y;
-}
-
-static void jsr_location_remove(
-    jsr_network *net,
-    const char *name,
-    size_t name_len
-) {
-    int index =
-        jsr_location_find(net, name, name_len);
-
-    if (index < 0) {
-        return;
-    }
-
-    memmove(
-        &net->locations[index],
-        &net->locations[index + 1],
-        sizeof(net->locations[0]) *
-            (net->location_count - index - 1)
-    );
-
-    net->location_count--;
-}
-
-// ============================================================================
 // Message parser
 // ============================================================================
 
@@ -455,170 +254,13 @@ static void jsr_parse_message(
             message_len
         );
     }
-    else if (
-        message_type == 6
-    ) {
-        /*
-         * The deployed relay's actual PONG byte is 6, not
-         * this client's own JSR_MSG_TYPE_PONG (8).
-         */
+    else if (message_type ==
+             JSR_MSG_TYPE_PONG) {
         net->last_ping =
             time(NULL);
 
         net->last_message_time =
             time(NULL);
-    }
-    else if (
-        message_type == 2 ||
-        message_type == 3
-    ) {
-        /*
-         * The deployed relay's "user joined" (2) / "user
-         * left" (3) notices: [type][name_len][name].
-         * Surface them as a system chat line.
-         */
-        size_t name_len;
-        char text[TCHAT_MESSAGE_MAX_LEN];
-        int written;
-
-        if (data_len < 2) {
-            return;
-        }
-
-        name_len =
-            (uint8_t) data[1];
-
-        if (name_len == 0 ||
-            name_len > data_len - 2) {
-            return;
-        }
-
-        if (message_type == 2) {
-            jsr_roster_add(
-                net,
-                data + 2,
-                name_len
-            );
-        } else {
-            jsr_roster_remove(
-                net,
-                data + 2,
-                name_len
-            );
-
-            jsr_location_remove(
-                net,
-                data + 2,
-                name_len
-            );
-        }
-
-        written =
-            snprintf(
-                text,
-                sizeof(text),
-                "%.*s %s public chat",
-                (int) name_len,
-                data + 2,
-                message_type == 2 ?
-                    "joined" : "left"
-            );
-
-        if (written > 0) {
-            jsr_add_chat_message(
-                net,
-                "[SYSTEM]",
-                8,
-                text,
-                (size_t) written <
-                    sizeof(text) ?
-                    (size_t) written :
-                    sizeof(text) - 1
-            );
-        }
-    }
-    else if (message_type == 7) {
-        /*
-         * LOCATION broadcast, relayed by the server as:
-         * [7][username_len][username][x:f32][y:f32]
-         * [server_ip_len][server_ip]
-         */
-        size_t offset;
-        size_t name_len;
-        float x;
-        float y;
-        size_t srv_len;
-
-        offset = 1;
-
-        if (data_len < offset + 1) {
-            return;
-        }
-
-        name_len =
-            (uint8_t) data[offset];
-        offset += 1;
-
-        if (data_len < offset + name_len) {
-            return;
-        }
-
-        const char *name = data + offset;
-        offset += name_len;
-
-        if (data_len < offset + 8) {
-            return;
-        }
-
-        memcpy(&x, data + offset, 4);
-        offset += 4;
-
-        memcpy(&y, data + offset, 4);
-        offset += 4;
-
-        if (data_len < offset + 1) {
-            return;
-        }
-
-        srv_len =
-            (uint8_t) data[offset];
-        offset += 1;
-
-        if (data_len < offset + srv_len) {
-            return;
-        }
-
-        const char *srv = data + offset;
-
-        bool is_self =
-            jsr_safe_strlen(
-                net->username,
-                sizeof(net->username) - 1
-            ) == name_len &&
-            strncmp(
-                net->username,
-                name,
-                name_len
-            ) == 0;
-
-        if (
-            name_len > 0 &&
-            !is_self
-        ) {
-            /*
-             * Only track OTHER players' positions -- we
-             * already know our own.
-             */
-            jsr_location_set(
-                net,
-                name,
-                name_len,
-                srv,
-                srv_len,
-                x,
-                y
-            );
-        }
     }
     else if (message_type ==
              JSR_MSG_TYPE_ERROR) {
@@ -668,29 +310,6 @@ static void jsr_websocket_handler(
         );
     }
     else if (event ==
-             MG_EV_CONNECT) {
-        /*
-         * Railway only accepts TLS on port 443. Without
-         * this, mongoose silently falls back to plaintext
-         * for wss:// connections (see the "user did not
-         * call mg_tls_init()" checks in mongoose.c), and
-         * the handshake against Railway's TLS-only edge
-         * fails every time.
-         */
-        struct mg_tls_opts tls_opts = {
-            .skip_verification = 1
-        };
-
-        mg_tls_init(
-            connection,
-            &tls_opts
-        );
-
-        printf(
-            "JSR: TLS handshake started\n"
-        );
-    }
-    else if (event ==
              MG_EV_WS_OPEN) {
         printf(
             "JSR: Connected to Railway relay\n"
@@ -717,11 +336,10 @@ static void jsr_websocket_handler(
         }
 
         /*
-         * Register our username with the relay so it can
-         * tag our outgoing CHAT messages. Without this the
-         * server silently drops every message we send.
+         * Tell the Railway server our team,
+         * username and peer ID.
          */
-        jsr_network_send_join(net);
+        jsr_network_request_sync(net);
     }
     else if (event ==
              MG_EV_WS_MSG) {
@@ -851,7 +469,7 @@ jsr_network *jsr_network_create(
     snprintf(
         net->relay_url,
         sizeof(net->relay_url),
-        "wss://%s/global",
+        "wss://%s/jsr",
         net->relay_host
     );
 
@@ -948,19 +566,6 @@ bool jsr_network_connect(
         sizeof(net->username) - 1
     ] = '\0';
 
-    /*
-     * The relay only tells us about OTHER users joining --
-     * we have to add ourselves to the roster locally.
-     */
-    jsr_roster_add(
-        net,
-        net->username,
-        jsr_safe_strlen(
-            net->username,
-            sizeof(net->username) - 1
-        )
-    );
-
     printf(
         "JSR: Connecting to %s\n",
         net->relay_url
@@ -1020,15 +625,12 @@ bool jsr_network_send_message(
     size_t username_len;
 
     /*
-     * Wire format expected by the deployed relay for
-     * client -> server CHAT is just [CHAT][message] --
-     * the server tags the sender's username itself based
-     * on the JOIN handshake, and re-broadcasts messages as
-     * [CHAT][username_len][username][message] (see
-     * jsr_parse_message()).
+     * Wire format for CHAT must match the parser
+     * in jsr_parse_message():
+     * [CHAT][username_len][username][message]
      */
     uint8_t buffer[
-        1 + TCHAT_MESSAGE_MAX_LEN
+        2 + TCHAT_USERNAME_MAX + TCHAT_MESSAGE_MAX_LEN
     ];
 
     if (net == NULL ||
@@ -1082,8 +684,17 @@ bool jsr_network_send_message(
     buffer[0] =
         JSR_MSG_TYPE_CHAT;
 
+    buffer[1] =
+        (uint8_t) username_len;
+
     memcpy(
-        buffer + 1,
+        buffer + 2,
+        net->username,
+        username_len
+    );
+
+    memcpy(
+        buffer + 2 + username_len,
         message,
         message_len
     );
@@ -1091,7 +702,7 @@ bool jsr_network_send_message(
     mg_ws_send(
         net->ws_connection,
         buffer,
-        1 + message_len,
+        2 + username_len + message_len,
         WEBSOCKET_OP_BINARY
     );
 
@@ -1140,13 +751,8 @@ void jsr_network_update(
         ) >
         net->ping_interval &&
         net->ws_connection != NULL) {
-        /*
-         * The deployed relay expects client PING as raw
-         * byte 4 (it replies with byte 6), which does not
-         * match this client's own JSR_MSG_TYPE_PING (7)/
-         * JSR_MSG_TYPE_PONG (8) enum values.
-         */
-        uint8_t ping = 4;
+        uint8_t ping =
+            JSR_MSG_TYPE_PING;
 
         mg_ws_send(
             net->ws_connection,
@@ -1192,203 +798,6 @@ int jsr_network_pending_count(
     }
 
     return net->pending_count;
-}
-
-int jsr_network_roster_count(
-    jsr_network *net
-) {
-    if (net == NULL) {
-        return 0;
-    }
-
-    return net->roster_count;
-}
-
-bool jsr_network_roster_name(
-    jsr_network *net,
-    int index,
-    char *out_name,
-    size_t out_size
-) {
-    if (net == NULL ||
-        out_name == NULL ||
-        out_size == 0 ||
-        index < 0 ||
-        index >= net->roster_count) {
-        return false;
-    }
-
-    strncpy(
-        out_name,
-        net->roster[index],
-        out_size - 1
-    );
-
-    out_name[out_size - 1] = '\0';
-
-    return true;
-}
-
-bool jsr_network_send_location(
-    jsr_network *net,
-    float x,
-    float y,
-    const char *server_ip
-) {
-    uint8_t buffer[1 + 4 + 4 + 1 + 64];
-    size_t srv_len;
-    size_t offset;
-
-    if (net == NULL ||
-        server_ip == NULL ||
-        !net->is_connected ||
-        net->ws_connection == NULL) {
-        return false;
-    }
-
-    srv_len =
-        jsr_safe_strlen(
-            server_ip,
-            64 - 1
-        );
-
-    buffer[0] = 7;
-    offset = 1;
-
-    memcpy(buffer + offset, &x, 4);
-    offset += 4;
-
-    memcpy(buffer + offset, &y, 4);
-    offset += 4;
-
-    buffer[offset] = (uint8_t) srv_len;
-    offset += 1;
-
-    memcpy(
-        buffer + offset,
-        server_ip,
-        srv_len
-    );
-    offset += srv_len;
-
-    mg_ws_send(
-        net->ws_connection,
-        buffer,
-        offset,
-        WEBSOCKET_OP_BINARY
-    );
-
-    return true;
-}
-
-int jsr_network_location_count(
-    jsr_network *net
-) {
-    if (net == NULL) {
-        return 0;
-    }
-
-    return net->location_count;
-}
-
-bool jsr_network_get_location(
-    jsr_network *net,
-    int index,
-    char *out_username,
-    size_t username_size,
-    char *out_server_ip,
-    size_t server_ip_size,
-    float *out_x,
-    float *out_y
-) {
-    if (net == NULL ||
-        index < 0 ||
-        index >= net->location_count) {
-        return false;
-    }
-
-    if (out_username != NULL &&
-        username_size > 0) {
-        strncpy(
-            out_username,
-            net->locations[index].username,
-            username_size - 1
-        );
-
-        out_username[username_size - 1] = '\0';
-    }
-
-    if (out_server_ip != NULL &&
-        server_ip_size > 0) {
-        strncpy(
-            out_server_ip,
-            net->locations[index].server_ip,
-            server_ip_size - 1
-        );
-
-        out_server_ip[server_ip_size - 1] = '\0';
-    }
-
-    if (out_x != NULL) {
-        *out_x = net->locations[index].x;
-    }
-
-    if (out_y != NULL) {
-        *out_y = net->locations[index].y;
-    }
-
-    return true;
-}
-
-/*
- * The deployed relay (jsr-relay-server) is a flat global
- * room with no team/peer concept. Its JOIN wire format is:
- * [5][username_len][username]
- * This is what actually registers ws.username server-side;
- * without it every CHAT message we send gets silently
- * dropped by the server.
- */
-static void jsr_network_send_join(
-    jsr_network *net
-) {
-    uint8_t buffer[2 + TCHAT_USERNAME_MAX];
-    size_t username_len;
-
-    if (net == NULL ||
-        net->ws_connection == NULL) {
-        return;
-    }
-
-    username_len =
-        jsr_safe_strlen(
-            net->username,
-            TCHAT_USERNAME_MAX - 1
-        );
-
-    if (username_len == 0) {
-        return;
-    }
-
-    buffer[0] = 5;
-    buffer[1] = (uint8_t) username_len;
-
-    memcpy(
-        buffer + 2,
-        net->username,
-        username_len
-    );
-
-    mg_ws_send(
-        net->ws_connection,
-        buffer,
-        2 + username_len,
-        WEBSOCKET_OP_BINARY
-    );
-
-    printf(
-        "JSR: Sent join as %s\n",
-        net->username
-    );
 }
 
 void jsr_network_request_sync(

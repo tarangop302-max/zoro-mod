@@ -47,6 +47,15 @@ typedef struct jsr_network {
     char team_key[9];
     char username[32];
 
+    // Access key required by the relay to join. Set once,
+    // used on every (re)connect attempt.
+    char auth_key[96];
+
+    // True once the relay has rejected our access key. The
+    // caller should stop attempting to connect with this
+    // key and prompt for a new one (see last_error).
+    bool auth_rejected;
+
     // Relay information.
     char relay_url[256];
     char relay_host[128];
@@ -76,6 +85,18 @@ typedef struct jsr_network {
     char roster[64][32];
     int roster_count;
 
+    // Last known in-game position of each player who has
+    // broadcast one (only meaningful for players on the
+    // same slither.io server -- callers must filter by
+    // server_ip themselves before drawing).
+    struct {
+        char username[32];
+        char server_ip[64];
+        float x;
+        float y;
+    } locations[64];
+    int location_count;
+
     // Chat system connected to this network.
     tchat_system *chat;
 
@@ -96,7 +117,20 @@ void jsr_network_destroy(
 bool jsr_network_connect(
     jsr_network *net,
     const char *team_key,
-    const char *username
+    const char *username,
+    const char *auth_key
+);
+
+// True once the relay has rejected our access key on the
+// most recent connection attempt.
+bool jsr_network_is_auth_rejected(
+    jsr_network *net
+);
+
+// Human-readable reason for the last rejection/error, if
+// any (empty string if none).
+const char *jsr_network_get_last_error(
+    jsr_network *net
 );
 
 // Disconnect from the relay.
@@ -141,6 +175,39 @@ bool jsr_network_roster_name(
     int index,
     char *out_name,
     size_t out_size
+);
+
+// Broadcast our current in-game position. server_ip
+// identifies which game server we're playing on, so
+// receivers can tell whether a position is meaningful to
+// them (positions only make sense between players on the
+// same game server).
+bool jsr_network_send_location(
+    jsr_network *net,
+    float x,
+    float y,
+    const char *server_ip
+);
+
+// Number of other players whose last known position we
+// have.
+int jsr_network_location_count(
+    jsr_network *net
+);
+
+// Read the location entry at the given index (0 to
+// jsr_network_location_count()-1). Any out_* pointer may
+// be NULL if that field isn't needed. Returns false if the
+// index is out of range.
+bool jsr_network_get_location(
+    jsr_network *net,
+    int index,
+    char *out_username,
+    size_t username_size,
+    char *out_server_ip,
+    size_t server_ip_size,
+    float *out_x,
+    float *out_y
 );
 
 // Send the team synchronization request.

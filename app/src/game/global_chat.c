@@ -1,4 +1,5 @@
 #include "global_chat.h"
+#include "../user.h"
 
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include "cimgui/cimgui.h"
@@ -191,7 +192,8 @@ void global_chat_init(tenv* env) {
     jsr_network_connect(
         global_chat_net,
         GLOBAL_CHAT_ROOM_KEY,
-        nickname
+        nickname,
+        env->usr->usrs.public_chat_key
     );
 }
 
@@ -367,8 +369,11 @@ static void global_chat_panel(tenv* env) {
         float input_height =
             50.0f;
 
+        ImVec2 content_region = {0.0f, 0.0f};
+        igGetContentRegionAvail(&content_region);
+
         float message_area_height =
-            igGetContentRegionAvail().y -
+            content_region.y -
             input_height;
 
         if (

@@ -26,6 +26,7 @@
 
 typedef struct {
     char name[GLOBAL_CHAT_NAME_LEN];
+    char owner[GLOBAL_CHAT_NAME_LEN];
     char text[GLOBAL_CHAT_TEXT_LEN];
 } global_chat_message;
 
@@ -55,6 +56,7 @@ static void global_chat_try_connect(
 
 static void global_chat_add_message(
     const char* name,
+    const char* owner,
     const char* text
 ) {
     if (
@@ -95,6 +97,20 @@ static void global_chat_add_message(
         GLOBAL_CHAT_NAME_LEN - 1
     ] = '\0';
 
+    if (owner != NULL) {
+        strncpy(
+            message->owner,
+            owner,
+            GLOBAL_CHAT_NAME_LEN - 1
+        );
+
+        message->owner[
+            GLOBAL_CHAT_NAME_LEN - 1
+        ] = '\0';
+    } else {
+        message->owner[0] = '\0';
+    }
+
     strncpy(
         message->text,
         text,
@@ -106,6 +122,63 @@ static void global_chat_add_message(
     ] = '\0';
 
     global_chat_message_count++;
+}
+
+/*
+ * Looks up the clan owner's label for whichever access key
+ * the given username is currently connected with. Empty
+ * string if not found (e.g. they've since disconnected).
+ */
+static void global_chat_find_owner(
+    const char* username,
+    char* out,
+    size_t out_size
+) {
+    out[0] = '\0';
+
+    if (
+        global_chat_net == NULL ||
+        username == NULL
+    ) {
+        return;
+    }
+
+    int count =
+        jsr_network_roster_count(
+            global_chat_net
+        );
+
+    for (
+        int i = 0;
+        i < count;
+        i++
+    ) {
+        char name[32];
+
+        if (
+            !jsr_network_roster_name(
+                global_chat_net,
+                i,
+                name,
+                sizeof(name)
+            )
+        ) {
+            continue;
+        }
+
+        if (
+            strcmp(name, username) == 0
+        ) {
+            jsr_network_roster_owner(
+                global_chat_net,
+                i,
+                out,
+                out_size
+            );
+
+            return;
+        }
+    }
 }
 
 /*
@@ -122,8 +195,17 @@ static void global_chat_on_network_message(
         return;
     }
 
+    char owner[32];
+
+    global_chat_find_owner(
+        msg->username,
+        owner,
+        sizeof(owner)
+    );
+
     global_chat_add_message(
         msg->username,
+        owner,
         msg->message
     );
 }
@@ -142,11 +224,13 @@ void global_chat_init(tenv* env) {
 
     global_chat_add_message(
         "ZORO",
+        NULL,
         "Welcome to Public Chat!"
     );
 
     global_chat_add_message(
         "ZORO",
+        NULL,
         "Everyone using this mod can chat here."
     );
 
@@ -167,6 +251,7 @@ void global_chat_init(tenv* env) {
     if (global_chat_tchat == NULL) {
         global_chat_add_message(
             "ZORO",
+            NULL,
             "Could not start chat system."
         );
 
@@ -191,6 +276,7 @@ void global_chat_init(tenv* env) {
     if (global_chat_net == NULL) {
         global_chat_add_message(
             "ZORO",
+            NULL,
             "Could not start network connection."
         );
 
@@ -521,26 +607,56 @@ void global_chat_draw(tenv* env) {
                     i++
                 ) {
                     char name[32];
+                    char owner[32];
 
                     if (
-                        jsr_network_roster_name(
+                        !jsr_network_roster_name(
                             global_chat_net,
                             i,
                             name,
                             sizeof(name)
                         )
                     ) {
+                        continue;
+                    }
+
+                    owner[0] = '\0';
+
+                    jsr_network_roster_owner(
+                        global_chat_net,
+                        i,
+                        owner,
+                        sizeof(owner)
+                    );
+
+                    if (owner[0] != '\0') {
                         igTextColored(
                             (ImVec4){
-                                0.25f,
-                                0.75f,
-                                1.0f,
+                                0.95f,
+                                0.3f,
+                                0.3f,
                                 1.0f
                             },
                             "%s",
-                            name
+                            owner
+                        );
+
+                        igSameLine(
+                            0.0f,
+                            6.0f
                         );
                     }
+
+                    igTextColored(
+                        (ImVec4){
+                            0.25f,
+                            0.75f,
+                            1.0f,
+                            1.0f
+                        },
+                        "%s",
+                        name
+                    );
                 }
             }
         }
@@ -774,6 +890,24 @@ static void global_chat_panel_contents(
         global_chat_message* message =
             &global_chat_messages[i];
 
+        if (message->owner[0] != '\0') {
+            igTextColored(
+                (ImVec4){
+                    0.95f,
+                    0.3f,
+                    0.3f,
+                    1.0f
+                },
+                "%s",
+                message->owner
+            );
+
+            igSameLine(
+                0.0f,
+                6.0f
+            );
+        }
+
         igTextColored(
             (ImVec4){
                 0.25f,
@@ -870,6 +1004,7 @@ static void global_chat_panel_contents(
             /* Show it immediately for the sender. */
             global_chat_add_message(
                 nickname,
+                NULL,
                 global_chat_input
             );
 

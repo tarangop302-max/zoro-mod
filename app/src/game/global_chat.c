@@ -1,5 +1,9 @@
 #include "global_chat.h"
 
+#define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
+#include "cimgui/cimgui.h"
+#include "cimgui/cimgui_impl.h"
+
 #include "thermite/tchat.h"
 #include "thermite/jsr_network.h"
 
@@ -35,6 +39,8 @@ static global_chat_message
 static int global_chat_message_count = 0;
 
 static char global_chat_input[GLOBAL_CHAT_TEXT_LEN] = "";
+
+static void global_chat_panel(tenv* env);
 
 static void global_chat_add_message(
     const char* name,
@@ -284,7 +290,7 @@ void global_chat_draw(tenv* env) {
     }
 }
 
-void global_chat_panel(tenv* env) {
+static void global_chat_panel(tenv* env) {
     if (!global_chat_initialized) {
         return;
     }

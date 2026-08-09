@@ -220,7 +220,9 @@ static int jsr_roster_find(
 static void jsr_roster_add(
     jsr_network *net,
     const char *name,
-    size_t name_len
+    size_t name_len,
+    const char *owner_name,
+    size_t owner_len
 ) {
     if (name_len == 0 ||
         name_len >= sizeof(net->roster[0])) {
@@ -247,6 +249,28 @@ static void jsr_roster_add(
     net->roster[net->roster_count][name_len] =
         '\0';
 
+    if (owner_name != NULL) {
+        if (owner_len >=
+            sizeof(net->roster_owner[0])) {
+            owner_len =
+                sizeof(net->roster_owner[0]) - 1;
+        }
+
+        memcpy(
+            net->roster_owner[net->roster_count],
+            owner_name,
+            owner_len
+        );
+
+        net->roster_owner[
+            net->roster_count
+        ][owner_len] = '\0';
+    } else {
+        net->roster_owner[
+            net->roster_count
+        ][0] = '\0';
+    }
+
     net->roster_count++;
 }
 
@@ -266,6 +290,13 @@ static void jsr_roster_remove(
         &net->roster[index],
         &net->roster[index + 1],
         sizeof(net->roster[0]) *
+            (net->roster_count - index - 1)
+    );
+
+    memmove(
+        &net->roster_owner[index],
+        &net->roster_owner[index + 1],
+        sizeof(net->roster_owner[0]) *
             (net->roster_count - index - 1)
     );
 
@@ -474,10 +505,12 @@ static void jsr_parse_message(
     ) {
         /*
          * The deployed relay's "user joined" (2) / "user
-         * left" (3) notices: [type][name_len][name].
-         * Surface them as a system chat line.
+         * left" (3) notices:
+         * [type][name_len][name][owner_len][owner]
          */
         size_t name_len;
+        size_t owner_offset;
+        size_t owner_len;
         char text[TCHAT_MESSAGE_MAX_LEN];
         int written;
 
@@ -493,11 +526,30 @@ static void jsr_parse_message(
             return;
         }
 
+        owner_offset = 2 + name_len;
+        owner_len = 0;
+
+        if (owner_offset < data_len) {
+            owner_len =
+                (uint8_t) data[owner_offset];
+
+            if (
+                owner_offset + 1 + owner_len >
+                data_len
+            ) {
+                owner_len = 0;
+            }
+        }
+
         if (message_type == 2) {
             jsr_roster_add(
                 net,
                 data + 2,
-                name_len
+                name_len,
+                owner_len > 0 ?
+                    data + owner_offset + 1 :
+                    NULL,
+                owner_len
             );
         } else {
             jsr_roster_remove(
@@ -995,7 +1047,9 @@ bool jsr_network_connect(
         jsr_safe_strlen(
             net->username,
             sizeof(net->username) - 1
-        )
+        ),
+        NULL,
+        0
     );
 
     printf(
@@ -1275,6 +1329,31 @@ bool jsr_network_roster_name(
     strncpy(
         out_name,
         net->roster[index],
+        out_size - 1
+    );
+
+    out_name[out_size - 1] = '\0';
+
+    return true;
+}
+
+bool jsr_network_roster_owner(
+    jsr_network *net,
+    int index,
+    char *out_name,
+    size_t out_size
+) {
+    if (net == NULL ||
+        out_name == NULL ||
+        out_size == 0 ||
+        index < 0 ||
+        index >= net->roster_count) {
+        return false;
+    }
+
+    strncpy(
+        out_name,
+        net->roster_owner[index],
         out_size - 1
     );
 

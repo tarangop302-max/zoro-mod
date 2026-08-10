@@ -229,7 +229,7 @@ void ui_title_screen(tenv* env) {
     usr->gdata.curr_screen = CONTROLS;
   }
   igSameLine(0, -1);
-  if (igButton("NTL Chat",
+  if (igButton("TEAM CHAT",
                (ImVec2){logo_size / 2 - style->ItemSpacing.x / 2})) {
     usr->gdata.curr_screen = NTL_PANEL;
   }

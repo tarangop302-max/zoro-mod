@@ -1,6 +1,8 @@
 #include "ntl_team.h"
 #include "../user.h"
 #include "../external/mongoose.h"
+#include "global_chat.h"
+#include "thermite/jsr_network.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -923,7 +925,7 @@ static const char *ntl_clean_name(const char *name) {
   return name[0] ? name : "Player";
 }
 
-static void ntl_draw_marker(ImDrawList *dl, ImVec2 p, float radius,
+void ntl_draw_marker(ImDrawList *dl, ImVec2 p, float radius,
                             int shape, ImU32 fill) {
   ImU32 border = IM_COL32(0, 0, 0, 210);
   float border_radius = radius + 1.4f;
@@ -1020,41 +1022,6 @@ void ntl_team_draw_minimap(tenv *env, float x, float y, float size) {
         us->own_marker_color[0], us->own_marker_color[1],
         us->own_marker_color[2], us->own_marker_color[3]});
     ntl_draw_marker(dl, p, us->own_marker_size, us->own_marker_shape, col);
-  }
-
-  if (!us->ntl_enabled || !us->ntl_show_teammates || !ntl_feed_is_fresh())
-    return;
-
-  ImU32 team_col = igColorConvertFloat4ToU32((ImVec4){
-      us->ntl_marker_color[0], us->ntl_marker_color[1],
-      us->ntl_marker_color[2], us->ntl_marker_color[3]});
-  int local_sid = local ? local->id : -1;
-
-  for (int i = 0; i < S.count; ++i) {
-    ntl_member *m = &S.members[i];
-    if (!same_server(m->srv, us->ipv4) || m->sid == local_sid) continue;
-    if (!isfinite(m->x) || !isfinite(m->y) || (m->x == 0.0f && m->y == 0.0f))
-      continue;
-
-    float rx = (m->x - g->data.grd) / g->data.flux_grd;
-    float ry = (m->y - g->data.grd) / g->data.flux_grd;
-    float dist = sqrtf(rx * rx + ry * ry);
-    if (dist > 1.0f) { rx /= dist; ry /= dist; }
-    ImVec2 p = {center.x + rx * map_radius, center.y + ry * map_radius};
-    ntl_draw_marker(dl, p, us->ntl_marker_size, us->ntl_marker_shape, team_col);
-
-    if (us->ntl_marker_labels) {
-      const char *name = ntl_clean_name(m->nick);
-      igPushFont(u->imgui_data.mono_font[FONT_SIZE_SMALL],
-                 u->imgui_data.mono_font[FONT_SIZE_SMALL]->LegacySize);
-      ImVec2 text_size;
-      igCalcTextSize(&text_size, name, NULL, false, -1.0f);
-      ImVec2 text_pos = {p.x - text_size.x * 0.5f,
-                         p.y + us->ntl_marker_size + 2.0f};
-      ImDrawList_AddText_Vec2(dl, text_pos, IM_COL32(255, 255, 255, 225),
-                              name, NULL);
-      igPopFont();
-    }
   }
 }
 
@@ -1354,218 +1321,65 @@ void ntl_team_panel(tenv *env) {
   float footer_h = igGetFrameHeight() * 1.8f + style->ItemSpacing.y * 2.0f;
   float body_h = avail.y - footer_h - igGetFrameHeight() - style->ItemSpacing.y * 2.0f;
   if (body_h < 260) body_h = 260;
-  bool wide = avail.x >= 760.0f;
-  float left_w = wide ? avail.x * 0.40f : avail.x;
-  float right_w = wide ? avail.x - left_w - style->ItemSpacing.x : avail.x;
 
-  igBeginChild_Str("##ntl_setup", (ImVec2){left_w, wide ? body_h : body_h * 0.48f},
+  igBeginChild_Str("##ntl_team_and_chat",
+                   (ImVec2){avail.x, body_h},
                    ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
-  igSeparatorText("Chat connection");
-  igCheckbox("Enable NTL chat", &us->ntl_enabled);
-  igCheckbox("Show in-game chat", &S.chat_open);
-  igCheckbox("Minimize in-game chat", &us->ntl_chat_minimized);
-  igCheckbox("Show player list", &S.players_open);
 
-  igSpacing();
-  igSeparatorText("Saved teams");
-  const char *profile_preview = "Select saved team";
-  if (us->ntl_active_team_profile >= 0 &&
-      us->ntl_active_team_profile < us->ntl_team_profile_count)
-    profile_preview = us->ntl_team_profiles[us->ntl_active_team_profile].name;
-  igSetNextItemWidth(-1);
-  if (igBeginCombo("##ntl_saved_team", profile_preview, ImGuiComboFlags_None)) {
-    for (int i = 0; i < us->ntl_team_profile_count; ++i) {
-      bool selected = i == us->ntl_active_team_profile;
-      if (igSelectable_Bool(us->ntl_team_profiles[i].name, selected,
-                            ImGuiSelectableFlags_None, (ImVec2){0, 0})) {
-        ntl_load_profile(us, i);
-        us->ntl_enabled = true;
-        save_user_settings(us);
-      }
-      if (selected) igSetItemDefaultFocus();
-    }
-    igEndCombo();
-  }
-  igSetNextItemWidth(-1);
-  igInputTextWithHint("##ntl_profile_name", "Team name (required to save)",
-                      S.profile_name, sizeof S.profile_name,
-                      ImGuiInputTextFlags_None, NULL, NULL);
-  igSetNextItemWidth(-1);
-  igInputTextWithHint("##ntl_tid", "NTL Team ID", us->ntl_team_id,
-                      sizeof(us->ntl_team_id), ImGuiInputTextFlags_None, NULL, NULL);
-  igSetNextItemWidth(-1);
-  igInputTextWithHint("##ntl_auth", "NTL Auth Key", us->ntl_auth_key,
-                      sizeof(us->ntl_auth_key), ImGuiInputTextFlags_Password, NULL, NULL);
-  igTextWrapped("Enter your NTL Team ID and Auth Key to use chat, teammate positions, and the player list.");
-  igTextDisabled("NTL name: %s", us->nickname[0] ? us->nickname : "Vlither");
-  igTextDisabled("A saved-team profile is created only when Team name is not empty.");
-  igTextDisabled("Saved teams: %d/%d", us->ntl_team_profile_count,
-                 MAX_NTL_TEAM_PROFILES);
-  igSpacing();
-  if (igButton("Save team", (ImVec2){150, 0})) {
-    if (ntl_normalize_profile_name(S.profile_name) && us->ntl_team_id[0] &&
-        us->ntl_auth_key[0]) {
-      int index = ntl_find_profile(us, S.profile_name);
-      if (index < 0 && us->ntl_team_profile_count < MAX_NTL_TEAM_PROFILES)
-        index = us->ntl_team_profile_count++;
-      if (index >= 0) {
-        ntl_team_profile *profile = &us->ntl_team_profiles[index];
-        strncpy(profile->name, S.profile_name, sizeof profile->name - 1);
-        profile->name[sizeof profile->name - 1] = 0;
-        strncpy(profile->team_id, us->ntl_team_id, sizeof profile->team_id - 1);
-        profile->team_id[sizeof profile->team_id - 1] = 0;
-        strncpy(profile->auth_key, us->ntl_auth_key, sizeof profile->auth_key - 1);
-        profile->auth_key[sizeof profile->auth_key - 1] = 0;
-        us->ntl_active_team_profile = index;
-        us->ntl_enabled = true;
-        ntl_sync_active_credentials(us);
-        save_user_settings(us);
-        S.next_poll = 0;
-      }
-    }
-  }
+  igSeparatorText("Minimap teammates");
+  igCheckbox("Show teammates on minimap", &us->ntl_show_teammates);
+  igCheckbox("Show teammate names", &us->ntl_marker_labels);
+  igText("My dot");
   igSameLine(0, 8);
-  if (igButton("Delete team", (ImVec2){150, 0}) &&
-      us->ntl_active_team_profile >= 0 &&
-      us->ntl_active_team_profile < us->ntl_team_profile_count) {
-    int index = us->ntl_active_team_profile;
-    for (int i = index; i + 1 < us->ntl_team_profile_count; ++i)
-      us->ntl_team_profiles[i] = us->ntl_team_profiles[i + 1];
-    us->ntl_team_profile_count--;
-    memset(&us->ntl_team_profiles[us->ntl_team_profile_count], 0,
-           sizeof us->ntl_team_profiles[0]);
-    us->ntl_active_team_profile = -1;
-    S.profile_name[0] = 0;
-    save_user_settings(us);
-  }
-  igSpacing();
-  if (igButton("Reconnect now", (ImVec2){150, 0})) {
-    ntl_reset_feed(true);
-    S.next_poll = 0;
-  }
+  igSetNextItemWidth(120);
+  igCombo_Str_arr("##own_marker_shape", &us->own_marker_shape,
+                  (const char*[]){"Circle", "Diamond", "Triangle"}, 3, -1);
   igSameLine(0, 8);
-  if (igButton("Clear credentials", (ImVec2){150, 0})) {
-    us->ntl_team_id[0] = 0;
-    us->ntl_auth_key[0] = 0;
-    us->ntl_active_team_profile = -1;
-    S.profile_name[0] = 0;
-    us->ntl_enabled = false;
-    ntl_sync_active_credentials(us);
-    S.pending_msg[0] = 0;
+  igSetNextItemWidth(120);
+  igSliderFloat("##own_marker_size", &us->own_marker_size, 2.0f, 14.0f,
+                "%.1f px", ImGuiSliderFlags_AlwaysClamp);
+  igSameLine(0, 8);
+  igColorEdit4("##own_marker_color", us->own_marker_color,
+               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+  igText("Team dots");
+  igSameLine(0, 8);
+  igSetNextItemWidth(120);
+  igCombo_Str_arr("##team_marker_shape", &us->ntl_marker_shape,
+                  (const char*[]){"Circle", "Diamond", "Triangle"}, 3, -1);
+  igSameLine(0, 8);
+  igSetNextItemWidth(120);
+  igSliderFloat("##team_marker_size", &us->ntl_marker_size, 2.0f, 14.0f,
+                "%.1f px", ImGuiSliderFlags_AlwaysClamp);
+  igSameLine(0, 8);
+  igColorEdit4("##team_marker_color", us->ntl_marker_color,
+               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+  igSpacing();
+
+  igSeparatorText("Online players");
+  igBeginChild_Str("##ntl_members", (ImVec2){0, 0},
+                   ImGuiChildFlags_None,
+                   ImGuiWindowFlags_AlwaysVerticalScrollbar);
+  jsr_network *jnet = global_chat_get_network();
+  int jsr_count = jnet ? jsr_network_roster_count(jnet) : 0;
+  if (jsr_count == 0) {
+    igTextDisabled("No players online.");
+  } else {
+    for (int i = 0; i < jsr_count; ++i) {
+      char pname[32];
+      char powner[32];
+      if (!jsr_network_roster_name(jnet, i, pname, sizeof pname)) continue;
+      powner[0] = 0;
+      jsr_network_roster_owner(jnet, i, powner, sizeof powner);
+      if (powner[0]) {
+        igTextColored((ImVec4){0.95f, 0.3f, 0.3f, 1.0f}, "%s", powner);
+        igSameLine(0, 6);
+      }
+      igText("%s", pname);
+      igSpacing();
+    }
   }
   igEndChild();
 
-  if (wide) igSameLine(0, style->ItemSpacing.x);
-
-  igBeginChild_Str("##ntl_team_and_chat",
-                   (ImVec2){right_w, wide ? body_h : body_h * 0.50f},
-                   ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
-
-  if (igBeginTabBar("##ntl_panel_tabs", ImGuiTabBarFlags_None)) {
-    ImGuiTabItemFlags chat_flags = S.select_chat_tab
-                                       ? ImGuiTabItemFlags_SetSelected
-                                       : ImGuiTabItemFlags_None;
-    if (igBeginTabItem("Team chat", NULL, chat_flags)) {
-      S.select_chat_tab = false;
-      igTextDisabled("Only new messages received after joining are shown.");
-      igSameLine(0, 10);
-      if (igSmallButton("Clear chat")) {
-        memset(S.history, 0, sizeof S.history);
-        S.history_count = 0;
-        S.history_start = 0;
-        S.scroll_chat_bottom = false;
-      }
-      igSeparator();
-
-      float input_h = igGetFrameHeight() + style->ItemSpacing.y;
-      igBeginChild_Str("##ntl_panel_msgs", (ImVec2){0, -input_h},
-                       ImGuiChildFlags_None,
-                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
-      if (S.history_count == 0) {
-        igTextDisabled("No new team messages yet.");
-      } else {
-        for (int n = 0; n < S.history_count; ++n) {
-          int i = (S.history_start + n) % NTL_CHAT_HISTORY_MAX;
-          igTextColored((ImVec4){0.35f, 0.85f, 1.0f, 1.0f}, "%s",
-                        S.history[i].nick);
-          igSameLine(0, 6);
-          igTextWrapped("%s", S.history[i].text);
-        }
-      }
-      if (S.scroll_chat_bottom) {
-        igSetScrollHereY(1.0f);
-        S.scroll_chat_bottom = false;
-      }
-      igEndChild();
-
-      igSetNextItemWidth(-76);
-      bool enter = igInputTextWithHint(
-          "##ntl_panel_input", "Message team...", S.input, sizeof S.input,
-          ImGuiInputTextFlags_EnterReturnsTrue, NULL, NULL);
-      igSameLine(0, 6);
-      if (igButton("Send", (ImVec2){70, 0}) || enter) ntl_queue_message(us);
-      igEndTabItem();
-    }
-
-    if (igBeginTabItem("Players & minimap", NULL, ImGuiTabItemFlags_None)) {
-      igSeparatorText("Minimap teammates");
-      igCheckbox("Show teammates on minimap", &us->ntl_show_teammates);
-      igCheckbox("Show teammate names", &us->ntl_marker_labels);
-      igText("My dot");
-      igSameLine(0, 8);
-      igSetNextItemWidth(120);
-      igCombo_Str_arr("##own_marker_shape", &us->own_marker_shape,
-                      (const char*[]){"Circle", "Diamond", "Triangle"}, 3, -1);
-      igSameLine(0, 8);
-      igSetNextItemWidth(120);
-      igSliderFloat("##own_marker_size", &us->own_marker_size, 2.0f, 14.0f,
-                    "%.1f px", ImGuiSliderFlags_AlwaysClamp);
-      igSameLine(0, 8);
-      igColorEdit4("##own_marker_color", us->own_marker_color,
-                   ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
-      igText("Team dots");
-      igSameLine(0, 8);
-      igSetNextItemWidth(120);
-      igCombo_Str_arr("##team_marker_shape", &us->ntl_marker_shape,
-                      (const char*[]){"Circle", "Diamond", "Triangle"}, 3, -1);
-      igSameLine(0, 8);
-      igSetNextItemWidth(120);
-      igSliderFloat("##team_marker_size", &us->ntl_marker_size, 2.0f, 14.0f,
-                    "%.1f px", ImGuiSliderFlags_AlwaysClamp);
-      igSameLine(0, 8);
-      igColorEdit4("##team_marker_color", us->ntl_marker_color,
-                   ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
-      igSpacing();
-
-      igSeparatorText("Online players");
-      igBeginChild_Str("##ntl_members", (ImVec2){0, 0},
-                       ImGuiChildFlags_None,
-                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
-      if (S.count == 0) {
-        igTextDisabled("No NTL players received yet.");
-      } else {
-        for (int i = 0; i < S.count; ++i) {
-          ntl_member *m = &S.members[i];
-          bool same = same_server(m->srv, us->ipv4);
-          igText("%s", ntl_clean_name(m->nick));
-          igSameLine(0, 10);
-          igTextColored(
-              same ? (ImVec4){0.35f, 1.0f, 0.5f, 1.0f}
-                   : (ImVec4){0.65f, 0.65f, 0.65f, 1.0f},
-              same ? "Same server" : "Other server");
-          if (m->score > 0) {
-            igSameLine(0, 10);
-            igTextDisabled("Score %d", m->score);
-          }
-          igTextDisabled("Server: %s", m->srv[0] ? m->srv : "Unknown");
-          igSpacing();
-        }
-      }
-      igEndChild();
-      igEndTabItem();
-    }
-    igEndTabBar();
-  }
   igEndChild();
 
   float btn_w = (avail.x - style->ItemSpacing.x) * 0.5f;

@@ -4,6 +4,7 @@
 
 #include "thermite/tchat.h"
 #include "thermite/jsr_network.h"
+#include "ntl_team.h"
 
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
@@ -11,6 +12,10 @@
 
 #include <string.h>
 #include <math.h>
+
+#ifndef IM_COL32
+#define IM_COL32(R,G,B,A) (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)))
+#endif
 
 #define GLOBAL_CHAT_MAX_MESSAGES 50
 #define GLOBAL_CHAT_NAME_LEN 32
@@ -1148,6 +1153,10 @@ void global_chat_draw_minimap_markers(
     tuser_data* u = env->usr;
     game_data* g = &u->gdata;
 
+    if (!u->usrs.ntl_show_teammates) {
+        return;
+    }
+
     if (
         g->conn != CONNECTED ||
         g->data.grd <= 0.0f
@@ -1171,10 +1180,10 @@ void global_chat_draw_minimap_markers(
     ImU32 col =
         igColorConvertFloat4ToU32(
             (ImVec4){
-                1.0f,
-                0.85f,
-                0.2f,
-                1.0f
+                u->usrs.ntl_marker_color[0],
+                u->usrs.ntl_marker_color[1],
+                u->usrs.ntl_marker_color[2],
+                u->usrs.ntl_marker_color[3]
             }
         );
 
@@ -1189,6 +1198,7 @@ void global_chat_draw_minimap_markers(
         i++
     ) {
         char srv[64];
+        char pname[32];
         float lx;
         float ly;
 
@@ -1196,8 +1206,8 @@ void global_chat_draw_minimap_markers(
             !jsr_network_get_location(
                 global_chat_net,
                 i,
-                NULL,
-                0,
+                pname,
+                sizeof(pname),
                 srv,
                 sizeof(srv),
                 &lx,
@@ -1233,14 +1243,52 @@ void global_chat_draw_minimap_markers(
             center.y + ry * map_radius
         };
 
-        ImDrawList_AddCircleFilled(
+        ntl_draw_marker(
             dl,
             p,
-            4.0f,
-            col,
-            12
+            u->usrs.ntl_marker_size,
+            u->usrs.ntl_marker_shape,
+            col
         );
+
+        if (u->usrs.ntl_marker_labels) {
+            igPushFont(
+                u->imgui_data.mono_font[FONT_SIZE_SMALL],
+                u->imgui_data.mono_font[
+                    FONT_SIZE_SMALL
+                ]->LegacySize
+            );
+
+            ImVec2 text_size;
+
+            igCalcTextSize(
+                &text_size,
+                pname,
+                NULL,
+                false,
+                -1.0f
+            );
+
+            ImVec2 text_pos = {
+                p.x - text_size.x * 0.5f,
+                p.y + u->usrs.ntl_marker_size + 2.0f
+            };
+
+            ImDrawList_AddText_Vec2(
+                dl,
+                text_pos,
+                IM_COL32(255, 255, 255, 225),
+                pname,
+                NULL
+            );
+
+            igPopFont();
+        }
     }
+}
+
+jsr_network* global_chat_get_network(void) {
+    return global_chat_net;
 }
 
 void global_chat_destroy(tenv* env) {

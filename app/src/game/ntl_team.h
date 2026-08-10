@@ -11,4 +11,15 @@ void ntl_team_consume_ui_touch(tenv* env);
 void ntl_team_panel(tenv* env);
 void ntl_team_destroy(tenv* env);
 
+/* Shared minimap marker rendering (circle/diamond/triangle
+ * with a dark border), also used by global_chat.c so both
+ * systems' dots render identically. */
+void ntl_draw_marker(
+    ImDrawList* dl,
+    ImVec2 p,
+    float radius,
+    int shape,
+    ImU32 fill
+);
+
 #endif

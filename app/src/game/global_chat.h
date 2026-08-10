@@ -2,6 +2,7 @@
 #define GLOBAL_CHAT_H
 
 #include <thermite.h>
+#include "thermite/jsr_network.h"
 
 /* Initialize the ZORO Public Chat system. */
 void global_chat_init(tenv* env);
@@ -22,6 +23,12 @@ void global_chat_draw_minimap_markers(
     float y,
     float size
 );
+
+/* Read-only access to the underlying JSR network connection
+ * (NULL if not initialized yet), for other systems that want
+ * to show the same roster/location data -- e.g. the "Players
+ * & minimap" tab under Team Chat. */
+jsr_network* global_chat_get_network(void);
 
 /* Release Public Chat resources. */
 void global_chat_destroy(tenv* env);

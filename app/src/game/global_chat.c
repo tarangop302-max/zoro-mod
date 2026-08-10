@@ -482,7 +482,7 @@ void global_chat_draw(tenv* env) {
      */
     const char* title =
         global_chat_open ?
-            "ZORO PUBLIC CHAT##zoro_chat_window" :
+            "{ J S R } TEAM CHAT##zoro_chat_window" :
             "PUBLIC CHAT##zoro_chat_window";
 
     ImVec2 collapsed_size = {
@@ -844,10 +844,6 @@ static void global_chat_panel_contents(
         return;
     }
 
-    igText(
-        "Public chat - no team key required"
-    );
-
     bool is_connected =
         global_chat_net != NULL &&
         jsr_network_is_connected(
@@ -963,6 +959,32 @@ static void global_chat_panel_contents(
         global_chat_message* message =
             &global_chat_messages[i];
 
+        bool is_system =
+            strcmp(
+                message->name,
+                "[SYSTEM]"
+            ) == 0 ||
+            strcmp(
+                message->name,
+                "ZORO"
+            ) == 0;
+
+        if (is_system) {
+            igTextColored(
+                (ImVec4){
+                    0.3f,
+                    0.85f,
+                    0.95f,
+                    1.0f
+                },
+                "%s: %s",
+                message->name,
+                message->text
+            );
+
+            continue;
+        }
+
         if (message->owner[0] != '\0') {
             igTextColored(
                 (ImVec4){
@@ -983,9 +1005,9 @@ static void global_chat_panel_contents(
 
         igTextColored(
             (ImVec4){
-                0.25f,
-                0.75f,
-                1.0f,
+                0.95f,
+                0.3f,
+                0.3f,
                 1.0f
             },
             "%s:",

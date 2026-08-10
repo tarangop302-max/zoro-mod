@@ -342,6 +342,34 @@ void global_chat_update(tenv* env) {
     }
 
     /*
+     * Auto-reconnect. The connection reliably dies whenever
+     * the app is backgrounded for a bit (the render loop --
+     * and with it jsr_network_update() -- simply stops
+     * running while minimized, so the socket goes stale),
+     * and there's otherwise no retry logic anywhere in the
+     * network layer. Try again every few seconds whenever
+     * we're disconnected, have a saved key, and that key
+     * hasn't been explicitly rejected by the server.
+     */
+    static float reconnect_timer = 0.0f;
+    reconnect_timer += 1.0f / 60.0f;
+
+    if (
+        reconnect_timer >= 3.0f &&
+        global_chat_net != NULL &&
+        !jsr_network_is_connected(global_chat_net) &&
+        global_chat_net->ws_connection == NULL &&
+        !jsr_network_is_auth_rejected(global_chat_net) &&
+        env != NULL &&
+        env->usr != NULL &&
+        env->usr->usrs.public_chat_key[0] != '\0'
+    ) {
+        reconnect_timer = 0.0f;
+
+        global_chat_try_connect(env);
+    }
+
+    /*
      * If the player's chosen nickname changes while
      * connected (or between connections), reconnect under
      * the new name -- otherwise the server, other players,

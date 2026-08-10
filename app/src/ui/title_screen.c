@@ -19,15 +19,6 @@ void ui_title_screen(tenv* env) {
   ImGuiIO* io = igGetIO_Nil();
   game_data* gdata = &usr->gdata;
 
-  char version_str[16] = {0};
-  sprintf(version_str, "v%s", APP_VERSION);
-  ImVec2 vtxtsz; igCalcTextSize(&vtxtsz, version_str, NULL, false, -1);
-  igSetCursorPosX(ctx->size[0] - vtxtsz.x - style->WindowPadding.x);
-  igPushFont(usr->imgui_data.regular_font[FONT_SIZE_SMALL],
-             usr->imgui_data.regular_font[FONT_SIZE_SMALL]->LegacySize);
-  igTextColored((ImVec4){0.168f, 0.668f, 0.375f, 1}, version_str);
-  igPopFont();
-
   igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
              usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
 
@@ -241,23 +232,6 @@ void ui_title_screen(tenv* env) {
     env->config.running = false;
     save_user_settings(usrs);
   }
-
-#ifdef ANDROID
-
-  igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
-  igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 7 +
-                  frame_height * 6);
-  igPushStyleColor_Vec4(ImGuiCol_Button,
-                        (ImVec4){0.345f, 0.396f, 0.867f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
-                        (ImVec4){0.445f, 0.496f, 0.967f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
-                        (ImVec4){0.245f, 0.296f, 0.767f, 1.0f});
-  if (igButton("Join Discord", (ImVec2){logo_size})) {
-    android_jni_open_url("https://discord.gg/CJEeSScTJs");
-  }
-  igPopStyleColor(3);
-#endif
 
   igPopFont();
 }

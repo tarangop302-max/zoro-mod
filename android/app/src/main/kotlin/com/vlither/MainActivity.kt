@@ -101,7 +101,9 @@ class MainActivity : Activity() {
         registerDownloadReceiver()
         resumePendingDownloadIfAny()
 
-        checkForUpdate()
+        // Update checking removed -- this build isn't
+        // tracking the upstream repo's releases, so there's
+        // nothing to check against.
     }
 
     override fun onResume() {
@@ -676,7 +678,7 @@ Changes made by Lucky
         btnChangelog.alpha = 0.85f
 
         btnChangelog.visibility =
-            View.VISIBLE
+            View.GONE
 
         btnChangelog.setOnClickListener {
             showChangelog()

@@ -24,8 +24,6 @@ void input(tenv* env) {
   if (gdata->data.follow_view) {
     int xm;
     int ym;
-    bool key_left = false;
-    bool key_right = false;
 
     int snakes_len = tdarray_length(gdata->data.snakes);
     snake* me = gdata->data.snakes + (snakes_len - 1);
@@ -34,23 +32,9 @@ void input(tenv* env) {
       xm = gdata->bot.output.xm;
       ym = gdata->bot.output.ym;
     } else {
-      key_left = twindow_key_down(env->wnd, GLFW_KEY_LEFT);
-      key_right = twindow_key_down(env->wnd, GLFW_KEY_RIGHT);
-
-      /* Turn the head every rendered frame (same treatment mouse control
-       * already gets via atan2f below), instead of only once per 150ms
-       * network-send batch. This is what makes keyboard turning feel as
-       * instant/smooth as mouse turning. */
-      if (key_left && !key_right)
-        me->eang -=
-            gdata->data.mamu * gdata->data.vfr * me->scang * me->spang;
-      else if (key_right && !key_left)
-        me->eang +=
-            gdata->data.mamu * gdata->data.vfr * me->scang * me->spang;
-
-      if (key_left)
+      if (twindow_key_down(env->wnd, GLFW_KEY_LEFT))
         gdata->data.kd_l_frb += gdata->data.vfrb;
-      if (key_right)
+      if (twindow_key_down(env->wnd, GLFW_KEY_RIGHT))
         gdata->data.kd_r_frb += gdata->data.vfrb;
 
       if (gdata->data.kd_l_frb > 0 || gdata->data.kd_r_frb > 0)
@@ -66,18 +50,18 @@ void input(tenv* env) {
               gdata->data.kd_r_frb -= gdata->data.kd_l_frb;
               gdata->data.kd_l_frb = 0;
             }
-          /* eang is no longer updated here -- it's handled per-frame above.
-           * This block now only reports the turn to the server. */
           if (gdata->data.kd_l_frb > 0) {
             int v = gdata->data.kd_l_frb;
             if (v > 127) v = 127;
             gdata->data.kd_l_frb -= v;
+            me->eang -= gdata->data.mamu * v * me->scang * me->spang;
             mg_ws_send(connection, (uint8_t[]){252, (uint8_t)v}, 2,
                        WEBSOCKET_OP_BINARY);
           } else if (gdata->data.kd_r_frb > 0) {
             int v = gdata->data.kd_r_frb;
             if (v > 127) v = 127;
             gdata->data.kd_r_frb -= v;
+            me->eang += gdata->data.mamu * v * me->scang * me->spang;
             v += 128;
             mg_ws_send(connection, (uint8_t[]){252, (uint8_t)v}, 2,
                        WEBSOCKET_OP_BINARY);
@@ -217,42 +201,9 @@ void input(tenv* env) {
                  WEBSOCKET_OP_BINARY);
     }
 
-    /* ---- Client-side prediction of the REAL turn (wang/dir/ang) ----
-     * Previously o->wang/o->dir only ever changed once the server echoed
-     * our input back, so every turn was delayed by a full network
-     * round-trip before the snake's body actually bent -- true for BOTH
-     * mouse and keyboard control. We now set the same fields locally,
-     * instantly, using the exact rate/angle math oef.c already uses to
-     * animate confirmed turns. network/callback.c still overwrites
-     * o->wang/o->dir/o->ang whenever the server responds, exactly as
-     * before, so this is purely a local head-start: any misprediction
-     * self-corrects the moment the real packet arrives. */
-    #define PREDICT_KEY_LOOKAHEAD 0.5f
-    if (key_left && !key_right) {
-      /* Keep the local target a fixed "runway" ahead of our current angle
-       * so oef.c's existing dir-driven loop keeps turning us at the
-       * correct rate instead of reaching wang and stopping early. */
-      me->dir = 1;
-      me->wang = me->ang - PREDICT_KEY_LOOKAHEAD;
-    } else if (key_right && !key_left) {
-      me->dir = 2;
-      me->wang = me->ang + PREDICT_KEY_LOOKAHEAD;
-    } else if (!key_left && !key_right) {
-      /* Mouse / touch / bot: xm,ym already encode an absolute target
-       * angle (the same one sent to the server below), so predict it
-       * directly instead of waiting for confirmation. */
-      float target = atan2f(ym, xm);
-      float vang = fmodf(target - me->ang, PI2);
-      if (vang < 0) vang += PI2;
-      if (vang > PI) vang -= PI2;
-      me->wang = target;
-      me->dir = (fabsf(vang) < 0.001f) ? 0 : (vang < 0 ? 1 : 2);
-    }
-    /* ------------------------------------------------------------------ */
-
     bool want_e = false;
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;
-    if (!key_left && !key_right) me->eang = atan2f(ym, xm);
+    me->eang = atan2f(ym, xm);
     float ang;
     if (want_e && gdata->data.ctm - gdata->data.last_e_mtm > 50) {
       want_e = false;

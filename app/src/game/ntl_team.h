@@ -2,6 +2,7 @@
 #define NTL_TEAM_H
 
 #include <thermite.h>
+#include "../cimgui/cimgui.h"
 
 void ntl_team_init(tenv* env);
 void ntl_team_update(tenv* env);

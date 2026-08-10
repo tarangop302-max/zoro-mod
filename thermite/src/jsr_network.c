@@ -1101,6 +1101,22 @@ void jsr_network_disconnect(
     }
 
     net->is_connected = false;
+
+    /*
+     * We won't get a "left" notice for ourselves from the
+     * server (the connection is already going away), so
+     * remove our own roster entry locally. Otherwise a
+     * reconnect under a new username would leave the old
+     * name sitting in the roster forever.
+     */
+    jsr_roster_remove(
+        net,
+        net->username,
+        jsr_safe_strlen(
+            net->username,
+            sizeof(net->username) - 1
+        )
+    );
 }
 
 bool jsr_network_send_message(

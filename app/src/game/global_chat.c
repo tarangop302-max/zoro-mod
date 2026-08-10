@@ -342,6 +342,51 @@ void global_chat_update(tenv* env) {
     }
 
     /*
+     * If the player's chosen nickname changes while
+     * connected (or between connections), reconnect under
+     * the new name -- otherwise the server, other players,
+     * and our own roster entry all keep showing whatever
+     * name we originally joined with.
+     */
+    static char last_seen_nickname[64] = "";
+
+    if (
+        global_chat_net != NULL &&
+        env != NULL &&
+        env->usr != NULL
+    ) {
+        const char* current_nickname = "Player";
+
+        if (env->usr->usrs.nickname[0] != '\0') {
+            current_nickname = env->usr->usrs.nickname;
+        }
+
+        if (
+            last_seen_nickname[0] != '\0' &&
+            strcmp(
+                last_seen_nickname,
+                current_nickname
+            ) != 0
+        ) {
+            jsr_network_disconnect(
+                global_chat_net
+            );
+
+            global_chat_try_connect(env);
+        }
+
+        strncpy(
+            last_seen_nickname,
+            current_nickname,
+            sizeof(last_seen_nickname) - 1
+        );
+
+        last_seen_nickname[
+            sizeof(last_seen_nickname) - 1
+        ] = '\0';
+    }
+
+    /*
      * Broadcast our own position roughly twice a second
      * while actually playing, so other Public Chat players
      * on the same game server can see us on their minimap.

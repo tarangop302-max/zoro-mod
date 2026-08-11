@@ -435,6 +435,15 @@ void oef(tenv* env) {
     }
   }
 
-  if (usrs->hotkeys[HOTKEY_BOT].active && gdata->data.follow_view)
+  if (usrs->hotkeys[HOTKEY_BOT].active && gdata->data.follow_view) {
     ntl_bot_adapter_go(env);
+  } else {
+    /* ntl_bot_adapter_go only runs while the bot is active, so without
+     * this, whatever accel/xm/ym it last wrote (e.g. accel=true from an
+     * evade decision) would stay stuck forever after the bot is turned
+     * off, permanently overriding manual boost/steering input. */
+    gdata->bot.output.xm = 0;
+    gdata->bot.output.ym = 0;
+    gdata->bot.output.accel = false;
+  }
 }

@@ -512,15 +512,12 @@ void global_chat_draw(tenv* env) {
     };
 
     /*
-     * Wider, shorter box (closer to the reference layout's
-     * proportions) with enough width for the header row --
-     * status text and the players button -- to sit on one
-     * line instead of wrapping. Clamped to the viewport below,
-     * so it still shrinks to fit on narrower screens.
+     * Matches the size the panel was manually placed at:
+     * a compact box in the top-left corner.
      */
     ImVec2 expanded_size = {
-        680.0f,
-        460.0f
+        480.0f,
+        420.0f
     };
 
     if (expanded_size.x > viewport->WorkSize.x - 36.0f) {
@@ -773,10 +770,8 @@ static void global_chat_panel_contents(
     user_settings* usrs = &env->usr->usrs;
 
     /* Target design uses noticeably larger, easier-to-read text than
-     * ImGui's default size for this panel. SetWindowFontScale() is
-     * obsolete in this ImGui version, so scale via PushFont() instead;
-     * every return path below must PopFont() to match. */
-    igPushFont(NULL, igGetStyle()->FontSizeBase * 1.15f);
+     * ImGui's default size for this panel. */
+    igSetWindowFontScale(1.15f);
 
     bool rejected =
         global_chat_net != NULL &&
@@ -871,7 +866,6 @@ static void global_chat_panel_contents(
             }
         }
 
-        igPopFont();
         return;
     }
 
@@ -884,9 +878,6 @@ static void global_chat_panel_contents(
     ImVec2 row_avail;
     igGetContentRegionAvail(&row_avail);
     float row_width = row_avail.x;
-
-    ImVec2 row_start_screen;
-    igGetCursorScreenPos(&row_start_screen);
 
     if (is_connected) {
         igTextColored(
@@ -947,30 +938,13 @@ static void global_chat_panel_contents(
         style->FramePadding.x * 2.0f +
         16.0f;
 
-    /*
-     * Right-align the button on the status row. The wider box
-     * above means this fits on one line in normal use; this is
-     * just a safety net for narrow screens so the button drops
-     * to its own row instead of overlapping the status text or
-     * clipping off the window edge. Measured from the status
-     * text's actual screen rect, not GetCursorPosX() (which
-     * resets to the line start, not the previous item's end).
-     */
-    ImVec2 text_end_screen;
-    igGetItemRectMax(&text_end_screen);
-    float text_end_x = text_end_screen.x - row_start_screen.x;
-
     float target_x = row_width - button_w;
+    if (target_x < 0.0f) target_x = 0.0f;
 
-    if (target_x >= text_end_x + 10.0f) {
-        igSameLine(
-            target_x,
-            -1.0f
-        );
-    } else {
-        if (target_x < 0.0f) target_x = 0.0f;
-        igSetCursorPosX(target_x);
-    }
+    igSameLine(
+        target_x,
+        -1.0f
+    );
 
     if (
         igButton(
@@ -1012,7 +986,7 @@ static void global_chat_panel_contents(
 
     igPushStyleVar_Float(
         ImGuiStyleVar_GrabMinSize,
-        40.0f
+        message_area_height * 0.25f
     );
 
     igBeginChild_Str(
@@ -1064,13 +1038,6 @@ static void global_chat_panel_contents(
         if (time_x < 0.0f) time_x = 0.0f;
 
         if (is_system) {
-            /*
-             * Label + timestamp on their own line (the label is
-             * always short, so it can never collide with the
-             * timestamp), then the actual system text wrapped
-             * below -- same pattern as player messages use, so
-             * a long message never overlaps the timestamp.
-             */
             igTextColored(
                 (ImVec4){
                     0.3f,
@@ -1078,8 +1045,9 @@ static void global_chat_panel_contents(
                     0.95f,
                     1.0f
                 },
-                "%s:",
-                message->name
+                "%s: %s",
+                message->name,
+                message->text
             );
 
             igSameLine(
@@ -1090,15 +1058,6 @@ static void global_chat_panel_contents(
             igTextDisabled(
                 "%s",
                 message->time_str
-            );
-
-            igTextWrapped(
-                "%s",
-                message->text
-            );
-
-            igDummy(
-                (ImVec2){0.0f, 8.0f}
             );
 
             continue;
@@ -1147,10 +1106,6 @@ static void global_chat_panel_contents(
             "%s",
             message->text
         );
-
-        igDummy(
-            (ImVec2){0.0f, 8.0f}
-        );
     }
 
     if (
@@ -1182,9 +1137,8 @@ static void global_chat_panel_contents(
     );
 
     bool submitted =
-        igInputTextWithHint(
+        igInputText(
             "##global_chat_input",
-            "Type your message...",
             global_chat_input,
             sizeof(global_chat_input),
             ImGuiInputTextFlags_EnterReturnsTrue,
@@ -1254,8 +1208,6 @@ static void global_chat_panel_contents(
             );
         }
     }
-
-    igPopFont();
 }
 
 /*

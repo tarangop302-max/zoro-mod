@@ -947,27 +947,32 @@ static void global_chat_panel_contents(
         16.0f;
 
     /*
-     * Right-align the button, but never let it land on top of
-     * the status text to its left: floor it at "wherever the
-     * text on this row actually ended, plus a gap" -- measured
-     * from the last item's screen rect, not GetCursorPosX()
-     * (which resets to the line start, not the previous item's
-     * end). A long "Connected to relay N online" line pushes
-     * the button onto its own row instead of drawing under it.
+     * Right-align the button on the status row -- but only if
+     * it actually fits there without overlapping the text (a
+     * fixed-position overlap was the previous bug) or spilling
+     * past the window's right edge and getting clipped (what
+     * happened after that first fix: it was shoved sideways
+     * into the edge instead of given nowhere to go). Measure
+     * the status text's real end via its screen rect, not
+     * GetCursorPosX() (which resets to the line start, not the
+     * previous item's end). If there isn't room for both on one
+     * line, drop the button to its own row underneath instead.
      */
     ImVec2 text_end_screen;
     igGetItemRectMax(&text_end_screen);
     float text_end_x = text_end_screen.x - row_start_screen.x;
 
     float target_x = row_width - button_w;
-    if (target_x < text_end_x + 10.0f) {
-        target_x = text_end_x + 10.0f;
-    }
 
-    igSameLine(
-        target_x,
-        -1.0f
-    );
+    if (target_x >= text_end_x + 10.0f) {
+        igSameLine(
+            target_x,
+            -1.0f
+        );
+    } else {
+        if (target_x < 0.0f) target_x = 0.0f;
+        igSetCursorPosX(target_x);
+    }
 
     if (
         igButton(

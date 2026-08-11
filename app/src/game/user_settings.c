@@ -356,6 +356,12 @@ void read_user_settings(user_settings* usr_settings) {
   }
   if (!valid_ntl_client_id) loaded.ntl_client_id[0] = 0;
 
+  /* NTL's own chat feature is retired -- its floating HUD
+     widget is a no-op now regardless, but force this off too
+     so no saved-true value can ever re-trigger anything else
+     that might still check it. */
+  loaded.ntl_enabled = false;
+
   *usr_settings = loaded;
 }
 

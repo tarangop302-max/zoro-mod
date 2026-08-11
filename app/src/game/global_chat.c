@@ -512,12 +512,14 @@ void global_chat_draw(tenv* env) {
     };
 
     /*
-     * Matches the size the panel was manually placed at:
-     * a compact box in the top-left corner.
+     * Same overall footprint as before, reshaped to a wider,
+     * shorter box (matches the target layout) so the header
+     * row ("Connected to relay ... Show players") has enough
+     * width to lay out without the button clipping.
      */
     ImVec2 expanded_size = {
-        480.0f,
-        420.0f
+        540.0f,
+        373.0f
     };
 
     if (expanded_size.x > viewport->WorkSize.x - 36.0f) {
@@ -770,8 +772,10 @@ static void global_chat_panel_contents(
     user_settings* usrs = &env->usr->usrs;
 
     /* Target design uses noticeably larger, easier-to-read text than
-     * ImGui's default size for this panel. */
-    igSetWindowFontScale(1.15f);
+     * ImGui's default size for this panel. SetWindowFontScale() is
+     * obsolete in this ImGui version, so scale via PushFont() instead;
+     * every return path below must PopFont() to match. */
+    igPushFont(NULL, igGetStyle()->FontSizeBase * 1.15f);
 
     bool rejected =
         global_chat_net != NULL &&
@@ -866,6 +870,7 @@ static void global_chat_panel_contents(
             }
         }
 
+        igPopFont();
         return;
     }
 
@@ -1208,6 +1213,8 @@ static void global_chat_panel_contents(
             );
         }
     }
+
+    igPopFont();
 }
 
 /*

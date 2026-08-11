@@ -884,6 +884,9 @@ static void global_chat_panel_contents(
     igGetContentRegionAvail(&row_avail);
     float row_width = row_avail.x;
 
+    ImVec2 row_start_screen;
+    igGetCursorScreenPos(&row_start_screen);
+
     if (is_connected) {
         igTextColored(
             (ImVec4){
@@ -943,8 +946,23 @@ static void global_chat_panel_contents(
         style->FramePadding.x * 2.0f +
         16.0f;
 
+    /*
+     * Right-align the button, but never let it land on top of
+     * the status text to its left: floor it at "wherever the
+     * text on this row actually ended, plus a gap" -- measured
+     * from the last item's screen rect, not GetCursorPosX()
+     * (which resets to the line start, not the previous item's
+     * end). A long "Connected to relay N online" line pushes
+     * the button onto its own row instead of drawing under it.
+     */
+    ImVec2 text_end_screen;
+    igGetItemRectMax(&text_end_screen);
+    float text_end_x = text_end_screen.x - row_start_screen.x;
+
     float target_x = row_width - button_w;
-    if (target_x < 0.0f) target_x = 0.0f;
+    if (target_x < text_end_x + 10.0f) {
+        target_x = text_end_x + 10.0f;
+    }
 
     igSameLine(
         target_x,
@@ -1043,6 +1061,13 @@ static void global_chat_panel_contents(
         if (time_x < 0.0f) time_x = 0.0f;
 
         if (is_system) {
+            /*
+             * Label + timestamp on their own line (the label is
+             * always short, so it can never collide with the
+             * timestamp), then the actual system text wrapped
+             * below -- same pattern as player messages use, so
+             * a long message never overlaps the timestamp.
+             */
             igTextColored(
                 (ImVec4){
                     0.3f,
@@ -1050,9 +1075,8 @@ static void global_chat_panel_contents(
                     0.95f,
                     1.0f
                 },
-                "%s: %s",
-                message->name,
-                message->text
+                "%s:",
+                message->name
             );
 
             igSameLine(
@@ -1063,6 +1087,15 @@ static void global_chat_panel_contents(
             igTextDisabled(
                 "%s",
                 message->time_str
+            );
+
+            igTextWrapped(
+                "%s",
+                message->text
+            );
+
+            igDummy(
+                (ImVec2){0.0f, 8.0f}
             );
 
             continue;
@@ -1111,6 +1144,10 @@ static void global_chat_panel_contents(
             "%s",
             message->text
         );
+
+        igDummy(
+            (ImVec2){0.0f, 8.0f}
+        );
     }
 
     if (
@@ -1142,8 +1179,9 @@ static void global_chat_panel_contents(
     );
 
     bool submitted =
-        igInputText(
+        igInputTextWithHint(
             "##global_chat_input",
+            "Type your message...",
             global_chat_input,
             sizeof(global_chat_input),
             ImGuiInputTextFlags_EnterReturnsTrue,

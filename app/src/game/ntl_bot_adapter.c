@@ -23,10 +23,26 @@
 #define NTLA_MAX_SEGS_PER_SNAKE 1500
 #define NTLA_MAX_FOOD 2048
 
+/* Once the bot commits to circling its own body, don't let a single
+ * frame's differing decision (e.g. food briefly crossing in front of
+ * the path, or a borderline occupancy reading) kick it back out to
+ * food/recenter mode -- that's what produced the "circles then
+ * immediately darts off" behavior. Hold the circle for at least this
+ * long before allowing a *non-danger* mode switch away from it.
+ * Genuine danger (EVADE) always overrides this immediately -- safety
+ * is never debounced. */
+#define NTLA_CIRCLE_MIN_HOLD_MS 800.0
+
 static NtlSegment s_self_segs[NTLA_MAX_SEGS_PER_SNAKE];
 static NtlSegment s_enemy_segs[NTLA_MAX_ENEMIES][NTLA_MAX_SEGS_PER_SNAKE];
 static NtlSnakeView s_enemies[NTLA_MAX_ENEMIES];
 static NtlFoodView s_foods[NTLA_MAX_FOOD];
+
+static NtlBotMode s_committed_mode = NTL_BOT_MODE_RECENTER;
+static double s_mode_start_ms = 0.0;
+static NtlVec2 s_last_circle_target = {0.0f, 0.0f};
+static float s_last_circle_angle = 0.0f;
+static int s_have_circle_target = 0;
 
 static int fill_segments(body_part* pts, NtlSegment* out, int cap) {
   int n = (int)tdarray_length(pts);
@@ -45,6 +61,7 @@ static int fill_segments(body_part* pts, NtlSegment* out, int cap) {
 void ntl_bot_adapter_go(tenv* env) {
   tuser_data* usr = env->usr;
   game_data* gdata = &usr->gdata;
+  user_settings* usrs = &usr->usrs;
 
   int ns = (int)tdarray_length(gdata->data.snakes);
   if (ns == 0) return;
@@ -115,16 +132,64 @@ void ntl_bot_adapter_go(tenv* env) {
   NtlBotConfig cfg;
   ntl_bot_default_config(&cfg);
 
+  /* "Bot circle after score" is entered as the same *displayed* score
+   * the UI shows, but the bot compares against the raw fam accumulator
+   * (self.length_score above). Convert using the exact inverse of the
+   * formula the game itself uses to derive displayed score from fam
+   * (see input.c's own score computation), so the slider means what it
+   * says regardless of which skin/category multiplier is active. */
+  {
+    float fpsl = gdata->data.fpsls[me->sct];
+    float fmlt = gdata->data.fmlts[me->sct];
+    float displayed_threshold = (float)usrs->bot_follow_circle_score;
+    cfg.circle_length_threshold =
+        fmlt * ((displayed_threshold + 5.0f) / 15.0f - fpsl + 1.0f);
+  }
+
+  /* "Bot radius multiplier" previously only drove sbot.c's own circling
+   * math. Scale NTL's own offset distance proportionally around its
+   * built-in default (1.25 at the settings' own default of 20x), so
+   * moving the slider still meaningfully widens/tightens the circle. */
+  cfg.body_follow_offset = 1.25f * ((float)usrs->bot_radius_mult / 20.0f);
+
   NtlBotDecision decision;
   ntl_bot_update(&world, &self, &cfg, &decision);
+
+  if (decision.mode == NTL_BOT_MODE_BODY_FOLLOW) {
+    s_last_circle_target = decision.target;
+    s_last_circle_angle = decision.aim_angle;
+    s_have_circle_target = 1;
+  }
+
+  NtlVec2 out_target = decision.target;
+  float out_angle = decision.aim_angle;
+  int out_boost = decision.boost;
+
+  if (decision.mode != s_committed_mode) {
+    int allow_switch = 1;
+    if (s_committed_mode == NTL_BOT_MODE_BODY_FOLLOW &&
+        decision.mode != NTL_BOT_MODE_EVADE &&
+        (gdata->data.ctm - s_mode_start_ms) < NTLA_CIRCLE_MIN_HOLD_MS) {
+      allow_switch = 0;
+    }
+    if (allow_switch) {
+      s_committed_mode = decision.mode;
+      s_mode_start_ms = gdata->data.ctm;
+    } else if (s_have_circle_target) {
+      /* Still within the hold window: keep steering toward the last
+       * good circling point instead of flickering out. */
+      out_target = s_last_circle_target;
+      out_angle = s_last_circle_angle;
+      out_boost = 0;
+    }
+  }
 
   /* Same convention sbot.c itself uses for bot->output.xm/ym: target
    * world position relative to the camera view position, scaled by
    * the game's world-to-screen scale factor -- not a synthetic
    * angle-based guess, so it matches exactly what input.c expects. */
-  gdata->bot.output.xm =
-      (decision.target.x - gdata->data.view_xx) * gdata->data.gsc;
-  gdata->bot.output.ym =
-      (decision.target.y - gdata->data.view_yy) * gdata->data.gsc;
-  gdata->bot.output.accel = decision.boost != 0;
+  gdata->bot.output.xm = (out_target.x - gdata->data.view_xx) * gdata->data.gsc;
+  gdata->bot.output.ym = (out_target.y - gdata->data.view_yy) * gdata->data.gsc;
+  gdata->bot.output.accel = out_boost != 0;
+  (void)out_angle;
 }

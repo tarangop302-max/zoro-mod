@@ -512,14 +512,15 @@ void global_chat_draw(tenv* env) {
     };
 
     /*
-     * Same overall footprint as before, reshaped to a wider,
-     * shorter box (matches the target layout) so the header
-     * row ("Connected to relay ... Show players") has enough
-     * width to lay out without the button clipping.
+     * Wider, shorter box (closer to the reference layout's
+     * proportions) with enough width for the header row --
+     * status text and the players button -- to sit on one
+     * line instead of wrapping. Clamped to the viewport below,
+     * so it still shrinks to fit on narrower screens.
      */
     ImVec2 expanded_size = {
-        540.0f,
-        373.0f
+        680.0f,
+        460.0f
     };
 
     if (expanded_size.x > viewport->WorkSize.x - 36.0f) {
@@ -947,16 +948,13 @@ static void global_chat_panel_contents(
         16.0f;
 
     /*
-     * Right-align the button on the status row -- but only if
-     * it actually fits there without overlapping the text (a
-     * fixed-position overlap was the previous bug) or spilling
-     * past the window's right edge and getting clipped (what
-     * happened after that first fix: it was shoved sideways
-     * into the edge instead of given nowhere to go). Measure
-     * the status text's real end via its screen rect, not
-     * GetCursorPosX() (which resets to the line start, not the
-     * previous item's end). If there isn't room for both on one
-     * line, drop the button to its own row underneath instead.
+     * Right-align the button on the status row. The wider box
+     * above means this fits on one line in normal use; this is
+     * just a safety net for narrow screens so the button drops
+     * to its own row instead of overlapping the status text or
+     * clipping off the window edge. Measured from the status
+     * text's actual screen rect, not GetCursorPosX() (which
+     * resets to the line start, not the previous item's end).
      */
     ImVec2 text_end_screen;
     igGetItemRectMax(&text_end_screen);

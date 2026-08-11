@@ -12,6 +12,7 @@
 
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #ifndef IM_COL32
 #define IM_COL32(R,G,B,A) (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)))
@@ -33,6 +34,7 @@ typedef struct {
     char name[GLOBAL_CHAT_NAME_LEN];
     char owner[GLOBAL_CHAT_NAME_LEN];
     char text[GLOBAL_CHAT_TEXT_LEN];
+    char time_str[9]; /* "HH:MM:SS\0" */
 } global_chat_message;
 
 static bool global_chat_initialized = false;
@@ -125,6 +127,20 @@ static void global_chat_add_message(
     message->text[
         GLOBAL_CHAT_TEXT_LEN - 1
     ] = '\0';
+
+    time_t now = time(NULL);
+    struct tm local_tm;
+#ifdef _WIN32
+    localtime_s(&local_tm, &now);
+#else
+    localtime_r(&now, &local_tm);
+#endif
+    strftime(
+        message->time_str,
+        sizeof(message->time_str),
+        "%H:%M:%S",
+        &local_tm
+    );
 
     global_chat_message_count++;
 }
@@ -753,6 +769,10 @@ static void global_chat_panel_contents(
 
     user_settings* usrs = &env->usr->usrs;
 
+    /* Target design uses noticeably larger, easier-to-read text than
+     * ImGui's default size for this panel. */
+    igSetWindowFontScale(1.15f);
+
     bool rejected =
         global_chat_net != NULL &&
         jsr_network_is_auth_rejected(
@@ -855,6 +875,10 @@ static void global_chat_panel_contents(
             global_chat_net
         );
 
+    ImVec2 row_avail;
+    igGetContentRegionAvail(&row_avail);
+    float row_width = row_avail.x;
+
     if (is_connected) {
         igTextColored(
             (ImVec4){
@@ -894,16 +918,41 @@ static void global_chat_panel_contents(
         online_count
     );
 
+    const char* players_label =
+        global_chat_players_open ?
+            "Hide players" :
+            "Show players";
+
+    ImGuiStyle* style = igGetStyle();
+    ImVec2 label_size;
+    igCalcTextSize(
+        &label_size,
+        players_label,
+        NULL,
+        false,
+        -1.0f
+    );
+
+    float button_w =
+        label_size.x +
+        style->FramePadding.x * 2.0f +
+        16.0f;
+
+    float target_x = row_width - button_w;
+    if (target_x < 0.0f) target_x = 0.0f;
+
     igSameLine(
-        0.0f,
-        10.0f
+        target_x,
+        -1.0f
     );
 
     if (
-        igSmallButton(
-            global_chat_players_open ?
-                "Hide players" :
-                "Show players"
+        igButton(
+            players_label,
+            (ImVec2){
+                button_w,
+                0.0f
+            }
         )
     ) {
         global_chat_players_open =
@@ -952,6 +1001,10 @@ static void global_chat_panel_contents(
 
     static int last_seen_message_count = 0;
 
+    ImVec2 msg_area_avail;
+    igGetContentRegionAvail(&msg_area_avail);
+    float msg_row_width = msg_area_avail.x;
+
     bool was_at_bottom =
         igGetScrollY() >=
         igGetScrollMaxY() - 1.0f;
@@ -968,11 +1021,21 @@ static void global_chat_panel_contents(
             strcmp(
                 message->name,
                 "[SYSTEM]"
-            ) == 0 ||
-            strcmp(
-                message->name,
-                "ZORO"
             ) == 0;
+
+        /* Right-aligned timestamp, drawn first so the name/text below
+         * can simply flow left without worrying about its width. */
+        ImVec2 time_size;
+        igCalcTextSize(
+            &time_size,
+            message->time_str,
+            NULL,
+            false,
+            -1.0f
+        );
+
+        float time_x = msg_row_width - time_size.x;
+        if (time_x < 0.0f) time_x = 0.0f;
 
         if (is_system) {
             igTextColored(
@@ -985,6 +1048,16 @@ static void global_chat_panel_contents(
                 "%s: %s",
                 message->name,
                 message->text
+            );
+
+            igSameLine(
+                time_x,
+                -1.0f
+            );
+
+            igTextDisabled(
+                "%s",
+                message->time_str
             );
 
             continue;
@@ -1017,6 +1090,16 @@ static void global_chat_panel_contents(
             },
             "%s:",
             message->name
+        );
+
+        igSameLine(
+            time_x,
+            -1.0f
+        );
+
+        igTextDisabled(
+            "%s",
+            message->time_str
         );
 
         igTextWrapped(

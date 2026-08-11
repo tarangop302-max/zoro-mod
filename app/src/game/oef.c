@@ -4,6 +4,7 @@
 #include "oef.h"
 
 #include "../user.h"
+#include "ntl_bot_adapter.h"
 
 void time_step(tenv* env) {
   tuser_data* usr = env->usr;
@@ -435,5 +436,5 @@ void oef(tenv* env) {
   }
 
   if (usrs->hotkeys[HOTKEY_BOT].active && gdata->data.follow_view)
-    sbot_go(env);
+    ntl_bot_adapter_go(env);
 }

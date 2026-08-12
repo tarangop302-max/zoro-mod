@@ -769,9 +769,15 @@ static void global_chat_panel_contents(
 
     user_settings* usrs = &env->usr->usrs;
 
-    /* Target design uses noticeably larger, easier-to-read text than
-     * ImGui's default size for this panel. */
-    igSetWindowFontScale(1.15f);
+    /*
+     * Smaller than the default panel scale -- more chat history
+     * fits on screen at once, per request. This scale applies to
+     * everything in the panel: header row, messages, input box.
+     * (This ImGui version has no SetWindowFontScale -- font size
+     * is instead set via PushFont/PopFont, so every return path
+     * below must PopFont() to match.)
+     */
+    igPushFont(NULL, igGetStyle()->FontSizeBase * 0.85f);
 
     bool rejected =
         global_chat_net != NULL &&
@@ -866,6 +872,7 @@ static void global_chat_panel_contents(
             }
         }
 
+        igPopFont();
         return;
     }
 
@@ -903,7 +910,7 @@ static void global_chat_panel_contents(
 
     igSameLine(
         0.0f,
-        10.0f
+        8.0f
     );
 
     int online_count =
@@ -933,10 +940,15 @@ static void global_chat_panel_contents(
         -1.0f
     );
 
+    /*
+     * Tight padding (vs. the +16 used before) -- makes the
+     * button itself smaller, per request, so it comfortably
+     * fits on the now-narrower header row.
+     */
     float button_w =
         label_size.x +
         style->FramePadding.x * 2.0f +
-        16.0f;
+        6.0f;
 
     float target_x = row_width - button_w;
     if (target_x < 0.0f) target_x = 0.0f;
@@ -961,8 +973,13 @@ static void global_chat_panel_contents(
 
     igSeparator();
 
+    /*
+     * Smaller reserved input-box height (was 50) -- the smaller
+     * font means the input box itself doesn't need as much
+     * space, so the freed height goes to the message area.
+     */
     float input_height =
-        50.0f;
+        40.0f;
 
     ImVec2 avail;
     igGetContentRegionAvail(&avail);
@@ -979,15 +996,19 @@ static void global_chat_panel_contents(
             80.0f;
     }
 
-    igPushStyleVar_Float(
-        ImGuiStyleVar_ScrollbarSize,
-        22.0f
-    );
-
-    igPushStyleVar_Float(
-        ImGuiStyleVar_GrabMinSize,
-        message_area_height * 0.25f
-    );
+    /*
+     * Custom scrollbar: ImGui's built-in one can only be given
+     * a *minimum* size, not forced to an exact ratio, so with
+     * only a few short messages the "minimum" ends up being
+     * almost the entire track -- that's the oversized bar this
+     * replaces. NoScrollbar hides the built-in one (mouse-wheel
+     * scrolling still works); a slim track + a thumb permanently
+     * fixed at 1/4 of the track height is drawn manually below,
+     * positioned to match the current scroll position and
+     * draggable via an invisible button.
+     */
+    const float SCROLLBAR_WIDTH = 8.0f;
+    const float SCROLLBAR_MARGIN = 4.0f;
 
     igBeginChild_Str(
         "##global_chat_messages",
@@ -996,14 +1017,16 @@ static void global_chat_panel_contents(
             message_area_height
         },
         true,
-        ImGuiWindowFlags_AlwaysVerticalScrollbar
+        ImGuiWindowFlags_NoScrollbar
     );
 
     static int last_seen_message_count = 0;
 
     ImVec2 msg_area_avail;
     igGetContentRegionAvail(&msg_area_avail);
-    float msg_row_width = msg_area_avail.x;
+    float msg_row_width =
+        msg_area_avail.x -
+        (SCROLLBAR_WIDTH + SCROLLBAR_MARGIN * 2.0f);
 
     bool was_at_bottom =
         igGetScrollY() >=
@@ -1128,17 +1151,112 @@ static void global_chat_panel_contents(
     last_seen_message_count =
         global_chat_message_count;
 
+    /* Custom scrollbar track + thumb, drawn last so it sits on
+     * top of the message text, matching the reference layout. */
+    float scroll_max = igGetScrollMaxY();
+
+    if (scroll_max > 0.0f) {
+        ImVec2 child_pos;
+        ImVec2 child_size;
+
+        igGetWindowPos(&child_pos);
+        igGetWindowSize(&child_size);
+
+        float track_x =
+            child_pos.x +
+            child_size.x -
+            SCROLLBAR_WIDTH -
+            SCROLLBAR_MARGIN;
+
+        float track_y = child_pos.y;
+        float track_h = child_size.y;
+
+        /* Permanently 1/4 of the scrolling area's height, per
+         * request -- not a minimum, an exact fixed ratio. */
+        float thumb_h = track_h * 0.25f;
+
+        float scroll_ratio =
+            igGetScrollY() / scroll_max;
+
+        float thumb_y =
+            track_y +
+            scroll_ratio *
+            (track_h - thumb_h);
+
+        ImDrawList* dl = igGetWindowDrawList();
+
+        ImDrawList_AddRectFilled(
+            dl,
+            (ImVec2){track_x, track_y},
+            (ImVec2){
+                track_x + SCROLLBAR_WIDTH,
+                track_y + track_h
+            },
+            IM_COL32(255, 255, 255, 18),
+            SCROLLBAR_WIDTH * 0.5f,
+            0
+        );
+
+        ImDrawList_AddRectFilled(
+            dl,
+            (ImVec2){track_x, thumb_y},
+            (ImVec2){
+                track_x + SCROLLBAR_WIDTH,
+                thumb_y + thumb_h
+            },
+            IM_COL32(200, 200, 200, 140),
+            SCROLLBAR_WIDTH * 0.5f,
+            0
+        );
+
+        igSetCursorScreenPos(
+            (ImVec2){track_x, track_y}
+        );
+
+        igInvisibleButton(
+            "##global_chat_scrollbar_drag",
+            (ImVec2){SCROLLBAR_WIDTH, track_h},
+            ImGuiButtonFlags_None
+        );
+
+        if (igIsItemActive()) {
+            ImGuiIO* io = igGetIO_Nil();
+
+            float usable_track =
+                track_h - thumb_h;
+
+            if (usable_track > 0.0f) {
+                float delta_ratio =
+                    io->MouseDelta.y /
+                    usable_track;
+
+                float new_scroll =
+                    igGetScrollY() +
+                    delta_ratio * scroll_max;
+
+                if (new_scroll < 0.0f) {
+                    new_scroll = 0.0f;
+                }
+
+                if (new_scroll > scroll_max) {
+                    new_scroll = scroll_max;
+                }
+
+                igSetScrollY_Float(new_scroll);
+            }
+        }
+    }
+
     igEndChild();
 
-    igPopStyleVar(2);
-
     igPushItemWidth(
-        live_size.x - 115.0f
+        live_size.x - 100.0f
     );
 
     bool submitted =
-        igInputText(
+        igInputTextWithHint(
             "##global_chat_input",
+            "Type your message...",
             global_chat_input,
             sizeof(global_chat_input),
             ImGuiInputTextFlags_EnterReturnsTrue,
@@ -1150,14 +1268,14 @@ static void global_chat_panel_contents(
 
     igSameLine(
         0.0f,
-        8.0f
+        6.0f
     );
 
     bool send_clicked =
         igButton(
             "SEND",
             (ImVec2){
-                80.0f,
+                70.0f,
                 0.0f
             }
         );
@@ -1208,6 +1326,8 @@ static void global_chat_panel_contents(
             );
         }
     }
+
+    igPopFont();
 }
 
 /*

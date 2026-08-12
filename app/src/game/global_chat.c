@@ -561,12 +561,8 @@ void global_chat_draw(tenv* env) {
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoResize;
-
-    if (!global_chat_open) {
-        flags |=
-            ImGuiWindowFlags_NoScrollbar;
-    }
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoScrollbar;
 
     if (
         igBegin(
@@ -941,14 +937,13 @@ static void global_chat_panel_contents(
     );
 
     /*
-     * Tight padding (vs. the +16 used before) -- makes the
-     * button itself smaller, per request, so it comfortably
-     * fits on the now-narrower header row.
+     * Minimal padding -- as snug a fit as the label text itself
+     * needs, per request.
      */
     float button_w =
         label_size.x +
         style->FramePadding.x * 2.0f +
-        6.0f;
+        2.0f;
 
     float target_x = row_width - button_w;
     if (target_x < 0.0f) target_x = 0.0f;
@@ -1010,6 +1005,18 @@ static void global_chat_panel_contents(
     const float SCROLLBAR_WIDTH = 8.0f;
     const float SCROLLBAR_MARGIN = 4.0f;
 
+    /* Captured now (still in the outer window's context) so the
+     * scrollbar can be drawn flush against the *outer* window's
+     * right edge afterward, rather than tucked inside the child --
+     * this is what actually frees up width for the message area. */
+    ImVec2 outer_pos;
+    ImVec2 outer_size;
+    igGetWindowPos(&outer_pos);
+    igGetWindowSize(&outer_size);
+
+    ImVec2 msg_area_screen_pos;
+    igGetCursorScreenPos(&msg_area_screen_pos);
+
     igBeginChild_Str(
         "##global_chat_messages",
         (ImVec2){
@@ -1024,9 +1031,7 @@ static void global_chat_panel_contents(
 
     ImVec2 msg_area_avail;
     igGetContentRegionAvail(&msg_area_avail);
-    float msg_row_width =
-        msg_area_avail.x -
-        (SCROLLBAR_WIDTH + SCROLLBAR_MARGIN * 2.0f);
+    float msg_row_width = msg_area_avail.x;
 
     bool was_at_bottom =
         igGetScrollY() >=
@@ -1151,32 +1156,43 @@ static void global_chat_panel_contents(
     last_seen_message_count =
         global_chat_message_count;
 
-    /* Custom scrollbar track + thumb, drawn last so it sits on
-     * top of the message text, matching the reference layout. */
+    /* Cached here, while still inside the child, since scroll
+     * state/window-identity queries always refer to whichever
+     * window is currently active -- the actual scrollbar is drawn
+     * after igEndChild() (see below), so it can be positioned at
+     * the outer window's edge instead of being clipped to the
+     * child's own inset bounds. */
     float scroll_max = igGetScrollMaxY();
+    float scroll_y_cached = igGetScrollY();
+    ImGuiWindow* msg_window = igGetCurrentWindow();
+
+    igEndChild();
+
+    /* Save/restore the cursor around the scrollbar drawing below --
+     * positioning it via SetCursorScreenPos would otherwise disrupt
+     * the normal layout flow for the input box that follows. */
+    ImVec2 cursor_before_scrollbar;
+    igGetCursorScreenPos(&cursor_before_scrollbar);
 
     if (scroll_max > 0.0f) {
-        ImVec2 child_pos;
-        ImVec2 child_size;
-
-        igGetWindowPos(&child_pos);
-        igGetWindowSize(&child_size);
-
+        /* Flush against the *outer* window's right edge -- this is
+         * the space the old oversized native scrollbar occupied,
+         * now reclaimed for our own slim one. */
         float track_x =
-            child_pos.x +
-            child_size.x -
+            outer_pos.x +
+            outer_size.x -
             SCROLLBAR_WIDTH -
             SCROLLBAR_MARGIN;
 
-        float track_y = child_pos.y;
-        float track_h = child_size.y;
+        float track_y = msg_area_screen_pos.y;
+        float track_h = message_area_height;
 
         /* Permanently 1/4 of the scrolling area's height, per
          * request -- not a minimum, an exact fixed ratio. */
         float thumb_h = track_h * 0.25f;
 
         float scroll_ratio =
-            igGetScrollY() / scroll_max;
+            scroll_y_cached / scroll_max;
 
         float thumb_y =
             track_y +
@@ -1231,7 +1247,7 @@ static void global_chat_panel_contents(
                     usable_track;
 
                 float new_scroll =
-                    igGetScrollY() +
+                    scroll_y_cached +
                     delta_ratio * scroll_max;
 
                 if (new_scroll < 0.0f) {
@@ -1242,12 +1258,17 @@ static void global_chat_panel_contents(
                     new_scroll = scroll_max;
                 }
 
-                igSetScrollY_Float(new_scroll);
+                /* Redirect to the child's scroll state by window
+                 * pointer, since we're no longer inside it. */
+                igSetScrollY_WindowPtr(
+                    msg_window,
+                    new_scroll
+                );
             }
         }
     }
 
-    igEndChild();
+    igSetCursorScreenPos(cursor_before_scrollbar);
 
     igPushItemWidth(
         live_size.x - 100.0f

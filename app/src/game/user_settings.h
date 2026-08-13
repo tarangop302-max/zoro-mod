@@ -172,6 +172,18 @@ typedef struct user_settings {
   /* ZORO Public Chat access key, assigned by the clan owner.
      Entered once, saved here so it doesn't need retyping. */
   char public_chat_key[96];
+
+  /* v2.7 extension fields. Saved position/size for the Public/Team
+     Chat window (global_chat.c), set via "Adjust position" /
+     "Adjust size" on the TEAM CHAT panel. Relative to the viewport
+     work area so they scale sensibly across screen sizes. Ignored
+     (default top-left placement used instead) until the player
+     customizes it, at which point public_chat_pos_custom is set. */
+  bool  public_chat_pos_custom;
+  float public_chat_rel_x;
+  float public_chat_rel_y;
+  float public_chat_rel_w;
+  float public_chat_rel_h;
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

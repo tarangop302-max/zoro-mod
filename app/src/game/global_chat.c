@@ -1027,9 +1027,15 @@ static void global_chat_panel_contents(
      * button. It's always drawn, per request, rather than only
      * appearing once content overflows.
      */
-    const float SCROLLBAR_WIDTH = 8.0f;
+    const float SCROLLBAR_WIDTH = 12.0f;
     const float SCROLLBAR_MARGIN = 4.0f;
     const float SCROLLBAR_THUMB_RATIO = 0.18f;
+
+    /* The draggable hit-region is much wider than the visible bar
+     * itself -- a slim 12px bar is nearly impossible to land a
+     * fingertip on reliably, so the actual tap/drag target extends
+     * well past it on both sides while staying visually unchanged. */
+    const float SCROLLBAR_HIT_PADDING = 14.0f;
 
     /* Captured now (still in the outer window's context) so the
      * scrollbar can be drawn flush against the *outer* window's
@@ -1291,12 +1297,19 @@ static void global_chat_panel_contents(
         ImDrawList_PopClipRect(dl);
 
         igSetCursorScreenPos(
-            (ImVec2){track_x, track_y}
+            (ImVec2){
+                track_x - SCROLLBAR_HIT_PADDING,
+                track_y
+            }
         );
 
         igInvisibleButton(
             "##global_chat_scrollbar_drag",
-            (ImVec2){SCROLLBAR_WIDTH, track_h},
+            (ImVec2){
+                SCROLLBAR_WIDTH +
+                    SCROLLBAR_HIT_PADDING * 2.0f,
+                track_h
+            },
             ImGuiButtonFlags_None
         );
 

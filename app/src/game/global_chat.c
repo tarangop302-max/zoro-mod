@@ -1027,7 +1027,7 @@ static void global_chat_panel_contents(
      * button. It's always drawn, per request, rather than only
      * appearing once content overflows.
      */
-    const float SCROLLBAR_WIDTH = 12.0f;
+    const float SCROLLBAR_WIDTH = 24.0f;
     const float SCROLLBAR_MARGIN = 4.0f;
     const float SCROLLBAR_THUMB_RATIO = 0.18f;
 
@@ -1312,6 +1312,40 @@ static void global_chat_panel_contents(
             },
             ImGuiButtonFlags_None
         );
+
+        if (igIsItemActivated() && scroll_max > 0.0f) {
+            /* Fires once, the instant a click/tap begins. A plain
+             * click with no drag previously did nothing at all
+             * (the old logic only responded to movement while
+             * held) -- this jumps straight to roughly where the
+             * click landed, so a single tap now visibly scrolls
+             * even without dragging. */
+            ImVec2 mouse_pos;
+            igGetMousePos(&mouse_pos);
+
+            float usable_track = track_h - thumb_h;
+
+            if (usable_track > 0.0f) {
+                float click_ratio =
+                    (mouse_pos.y - track_y - thumb_h * 0.5f) /
+                    usable_track;
+
+                if (click_ratio < 0.0f) click_ratio = 0.0f;
+                if (click_ratio > 1.0f) click_ratio = 1.0f;
+
+                float jump_scroll = click_ratio * scroll_max;
+
+                igSetScrollY_WindowPtr(
+                    msg_window,
+                    jump_scroll
+                );
+
+                /* So the drag-delta logic below (which can also
+                 * run this same frame) continues from here, not
+                 * from the stale pre-click position. */
+                scroll_y_cached = jump_scroll;
+            }
+        }
 
         if (igIsItemActive() && scroll_max > 0.0f) {
             ImGuiIO* io = igGetIO_Nil();

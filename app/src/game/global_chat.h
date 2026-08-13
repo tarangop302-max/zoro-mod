@@ -14,6 +14,24 @@ void global_chat_update(tenv* env);
  * full chat box when expanded). */
 void global_chat_draw(tenv* env);
 
+/* Lets the TEAM CHAT settings panel put the "{ J S R } TEAM CHAT"
+ * window into (and out of) a temporary drag/resize mode, so the
+ * player can reposition or resize it, then confirm to lock it back
+ * down. Position and size are otherwise fixed. */
+typedef enum {
+    GLOBAL_CHAT_ADJUST_NONE = 0,
+    GLOBAL_CHAT_ADJUST_POSITION,
+    GLOBAL_CHAT_ADJUST_SIZE
+} global_chat_adjust_mode;
+
+/* Current adjust mode (GLOBAL_CHAT_ADJUST_NONE when locked). */
+global_chat_adjust_mode global_chat_get_adjust_mode(void);
+
+/* Switch adjust mode. Passing GLOBAL_CHAT_ADJUST_NONE while a mode
+ * is active confirms the change: the current position/size is
+ * saved to the user's settings and the window locks back down. */
+void global_chat_set_adjust_mode(tenv* env, global_chat_adjust_mode mode);
+
 /* Draw a dot on the minimap for every Public Chat player
  * on the same game server as us. Call this right after
  * ntl_team_draw_minimap() with the same x/y/size. */

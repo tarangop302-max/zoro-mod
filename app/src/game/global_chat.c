@@ -41,6 +41,17 @@ static bool global_chat_initialized = false;
 static bool global_chat_open = false;
 static bool global_chat_players_open = false;
 
+/* Drag/resize adjust mode -- see global_chat_set_adjust_mode(). */
+static global_chat_adjust_mode global_chat_adjust = GLOBAL_CHAT_ADJUST_NONE;
+
+/* Live-tracked rect (relative to viewport work area) while a mode
+ * is active, so whichever value was current the instant the player
+ * confirms is what gets saved. */
+static float global_chat_adjust_x = 0.0f;
+static float global_chat_adjust_y = 0.0f;
+static float global_chat_adjust_w = 0.0f;
+static float global_chat_adjust_h = 0.0f;
+
 /* Networking state for the public/global room. */
 static tchat_system* global_chat_tchat = NULL;
 static jsr_network* global_chat_net = NULL;
@@ -484,6 +495,73 @@ void global_chat_update(tenv* env) {
     }
 }
 
+global_chat_adjust_mode global_chat_get_adjust_mode(void) {
+    return global_chat_adjust;
+}
+
+void global_chat_set_adjust_mode(
+    tenv* env,
+    global_chat_adjust_mode mode
+) {
+    if (mode == global_chat_adjust) {
+        return;
+    }
+
+    if (
+        global_chat_adjust != GLOBAL_CHAT_ADJUST_NONE &&
+        mode == GLOBAL_CHAT_ADJUST_NONE
+    ) {
+        /* Confirming -- persist whatever rect was last captured
+         * this session while dragging/resizing. */
+        if (env != NULL && env->usr != NULL) {
+            user_settings* usrs = &env->usr->usrs;
+
+            usrs->public_chat_pos_custom = true;
+            usrs->public_chat_rel_x = global_chat_adjust_x;
+            usrs->public_chat_rel_y = global_chat_adjust_y;
+            usrs->public_chat_rel_w = global_chat_adjust_w;
+            usrs->public_chat_rel_h = global_chat_adjust_h;
+
+            save_user_settings(usrs);
+        }
+    } else if (
+        global_chat_adjust == GLOBAL_CHAT_ADJUST_NONE &&
+        mode != GLOBAL_CHAT_ADJUST_NONE
+    ) {
+        /* Entering a mode -- make sure there's something visible
+         * to drag/resize, and seed the tracked rect from wherever
+         * the window currently sits so the first frame doesn't
+         * jump it somewhere unexpected. */
+        global_chat_open = true;
+
+        if (env != NULL && env->usr != NULL) {
+            user_settings* usrs = &env->usr->usrs;
+            ImGuiViewport* vp = igGetMainViewport();
+
+            if (
+                !usrs->public_chat_pos_custom &&
+                vp->WorkSize.x > 0.0f &&
+                vp->WorkSize.y > 0.0f
+            ) {
+                float default_w = fminf(480.0f, vp->WorkSize.x - 36.0f);
+                float default_h = fminf(420.0f, vp->WorkSize.y - 36.0f);
+
+                usrs->public_chat_rel_x = 18.0f / vp->WorkSize.x;
+                usrs->public_chat_rel_y = 18.0f / vp->WorkSize.y;
+                usrs->public_chat_rel_w = default_w / vp->WorkSize.x;
+                usrs->public_chat_rel_h = default_h / vp->WorkSize.y;
+            }
+
+            global_chat_adjust_x = usrs->public_chat_rel_x;
+            global_chat_adjust_y = usrs->public_chat_rel_y;
+            global_chat_adjust_w = usrs->public_chat_rel_w;
+            global_chat_adjust_h = usrs->public_chat_rel_h;
+        }
+    }
+
+    global_chat_adjust = mode;
+}
+
 void global_chat_draw(tenv* env) {
     if (!global_chat_initialized) {
         return;
@@ -511,36 +589,75 @@ void global_chat_draw(tenv* env) {
         74.0f
     };
 
-    /*
-     * Matches the size the panel was manually placed at:
-     * a compact box in the top-left corner.
-     */
-    ImVec2 expanded_size = {
-        480.0f,
-        420.0f
-    };
-
-    if (expanded_size.x > viewport->WorkSize.x - 36.0f) {
-        expanded_size.x = viewport->WorkSize.x - 36.0f;
-    }
-
-    if (expanded_size.y > viewport->WorkSize.y - 36.0f) {
-        expanded_size.y = viewport->WorkSize.y - 36.0f;
-    }
-
-    ImVec2 fixed_pos = {
-        viewport->WorkPos.x + 18.0f,
-        viewport->WorkPos.y + 18.0f
-    };
+    user_settings* usrs =
+        (env != NULL && env->usr != NULL) ?
+            &env->usr->usrs :
+            NULL;
 
     /*
-     * Position and size are forced every frame (no
-     * FirstUseEver here, no drag) -- the window is pinned
-     * to the top-left corner permanently.
+     * Default: a compact box in the top-left corner. Once the
+     * player has adjusted position/size via the TEAM CHAT panel,
+     * usrs->public_chat_pos_custom is set and their saved rect
+     * (relative to the work area) is used instead.
      */
+    ImVec2 expanded_size;
+    ImVec2 fixed_pos;
+
+    if (usrs != NULL && usrs->public_chat_pos_custom) {
+        expanded_size.x = usrs->public_chat_rel_w * viewport->WorkSize.x;
+        expanded_size.y = usrs->public_chat_rel_h * viewport->WorkSize.y;
+        fixed_pos.x = viewport->WorkPos.x + usrs->public_chat_rel_x * viewport->WorkSize.x;
+        fixed_pos.y = viewport->WorkPos.y + usrs->public_chat_rel_y * viewport->WorkSize.y;
+    } else {
+        expanded_size.x = 480.0f;
+        expanded_size.y = 420.0f;
+        fixed_pos.x = viewport->WorkPos.x + 18.0f;
+        fixed_pos.y = viewport->WorkPos.y + 18.0f;
+    }
+
+    float chat_min_w = fminf(260.0f, viewport->WorkSize.x - 36.0f);
+    float chat_min_h = fminf(220.0f, viewport->WorkSize.y - 36.0f);
+    float chat_max_w = fmaxf(chat_min_w, viewport->WorkSize.x - 36.0f);
+    float chat_max_h = fmaxf(chat_min_h, viewport->WorkSize.y - 36.0f);
+
+    if (expanded_size.x > chat_max_w) expanded_size.x = chat_max_w;
+    if (expanded_size.y > chat_max_h) expanded_size.y = chat_max_h;
+    if (expanded_size.x < chat_min_w) expanded_size.x = chat_min_w;
+    if (expanded_size.y < chat_min_h) expanded_size.y = chat_min_h;
+
+    /* Keep it fully on-screen for whatever size ended up in effect. */
+    if (fixed_pos.x < viewport->WorkPos.x) {
+        fixed_pos.x = viewport->WorkPos.x;
+    }
+    if (fixed_pos.x > viewport->WorkPos.x + viewport->WorkSize.x - expanded_size.x) {
+        fixed_pos.x = viewport->WorkPos.x + viewport->WorkSize.x - expanded_size.x;
+    }
+    if (fixed_pos.y < viewport->WorkPos.y) {
+        fixed_pos.y = viewport->WorkPos.y;
+    }
+    if (fixed_pos.y > viewport->WorkPos.y + viewport->WorkSize.y - expanded_size.y) {
+        fixed_pos.y = viewport->WorkPos.y + viewport->WorkSize.y - expanded_size.y;
+    }
+
+    /*
+     * Normally position and size are forced every frame (no drag,
+     * no resize) -- the window stays pinned wherever it's set to.
+     * While the player is actively adjusting position or size from
+     * the TEAM CHAT panel, the relevant one is instead only set on
+     * "Appearing" so ImGui's own drag/resize handles it, and the
+     * matching lock flag below is lifted.
+     */
+    bool adjusting_pos =
+        global_chat_open &&
+        global_chat_adjust == GLOBAL_CHAT_ADJUST_POSITION;
+
+    bool adjusting_size =
+        global_chat_open &&
+        global_chat_adjust == GLOBAL_CHAT_ADJUST_SIZE;
+
     igSetNextWindowPos(
         fixed_pos,
-        ImGuiCond_Always,
+        adjusting_pos ? ImGuiCond_Appearing : ImGuiCond_Always,
         (ImVec2){0.0f, 0.0f}
     );
 
@@ -548,8 +665,17 @@ void global_chat_draw(tenv* env) {
         global_chat_open ?
             expanded_size :
             collapsed_size,
-        ImGuiCond_Always
+        adjusting_size ? ImGuiCond_Appearing : ImGuiCond_Always
     );
+
+    if (adjusting_size) {
+        igSetNextWindowSizeConstraints(
+            (ImVec2){chat_min_w, chat_min_h},
+            (ImVec2){chat_max_w, chat_max_h},
+            NULL,
+            NULL
+        );
+    }
 
     igSetNextWindowBgAlpha(
         global_chat_open ? 0.1f : 0.85f
@@ -560,9 +686,15 @@ void global_chat_draw(tenv* env) {
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoScrollbar;
+
+    if (!adjusting_pos) {
+        flags |= ImGuiWindowFlags_NoMove;
+    }
+
+    if (!adjusting_size) {
+        flags |= ImGuiWindowFlags_NoResize;
+    }
 
     /*
      * Reduced top/bottom window padding while expanded, so the
@@ -609,6 +741,24 @@ void global_chat_draw(tenv* env) {
         );
 #endif
 
+        if (
+            (adjusting_pos || adjusting_size) &&
+            viewport->WorkSize.x > 0.0f &&
+            viewport->WorkSize.y > 0.0f
+        ) {
+            /* Track the live rect (relative to the work area) so
+             * whatever it is the instant the player confirms via
+             * global_chat_set_adjust_mode() is what gets saved. */
+            global_chat_adjust_x =
+                (live_pos.x - viewport->WorkPos.x) / viewport->WorkSize.x;
+            global_chat_adjust_y =
+                (live_pos.y - viewport->WorkPos.y) / viewport->WorkSize.y;
+            global_chat_adjust_w =
+                live_size.x / viewport->WorkSize.x;
+            global_chat_adjust_h =
+                live_size.y / viewport->WorkSize.y;
+        }
+
         if (!global_chat_open) {
             if (
                 igButton(
@@ -640,6 +790,12 @@ void global_chat_draw(tenv* env) {
         !open
     ) {
         global_chat_open = false;
+
+        /* Closing the window mid-adjustment would otherwise leave
+         * adjust mode dangling with nothing to drag/resize. */
+        if (global_chat_adjust != GLOBAL_CHAT_ADJUST_NONE) {
+            global_chat_set_adjust_mode(env, GLOBAL_CHAT_ADJUST_NONE);
+        }
     }
 
     if (

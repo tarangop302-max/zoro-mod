@@ -138,7 +138,7 @@ static void global_chat_add_message(
     strftime(
         message->time_str,
         sizeof(message->time_str),
-        "%H:%M:%S",
+        "%H:%M",
         &local_tm
     );
 
@@ -564,6 +564,24 @@ void global_chat_draw(tenv* env) {
         ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoScrollbar;
 
+    /*
+     * Reduced top/bottom window padding while expanded, so the
+     * header row (Connected to relay / Show players) sits right
+     * up against the title bar's bottom edge instead of leaving
+     * a visible gap -- per request, this has to happen before
+     * igBegin() since WindowPadding is only read at that point.
+     */
+    ImVec2 base_padding = igGetStyle()->WindowPadding;
+    bool pushed_padding = false;
+
+    if (global_chat_open) {
+        igPushStyleVar_Vec2(
+            ImGuiStyleVar_WindowPadding,
+            (ImVec2){base_padding.x, 6.0f}
+        );
+        pushed_padding = true;
+    }
+
     if (
         igBegin(
             title,
@@ -612,6 +630,10 @@ void global_chat_draw(tenv* env) {
     }
 
     igEnd();
+
+    if (pushed_padding) {
+        igPopStyleVar(1);
+    }
 
     if (
         global_chat_open &&
@@ -937,13 +959,12 @@ static void global_chat_panel_contents(
     );
 
     /*
-     * Minimal padding -- as snug a fit as the label text itself
-     * needs, per request.
+     * Fully snug fit -- just the label plus ImGui's own frame
+     * padding, no extra margin, per request ("more smaller").
      */
     float button_w =
         label_size.x +
-        style->FramePadding.x * 2.0f +
-        2.0f;
+        style->FramePadding.x * 2.0f;
 
     float target_x = row_width - button_w;
     if (target_x < 0.0f) target_x = 0.0f;
@@ -966,7 +987,12 @@ static void global_chat_panel_contents(
             !global_chat_players_open;
     }
 
-    igSeparator();
+    /*
+     * No separator here (removed per request) -- the message
+     * area now starts immediately below the header row, so its
+     * top-right corner touches the button's bottom-right corner
+     * instead of leaving a gap.
+     */
 
     /*
      * Smaller reserved input-box height (was 50) -- the smaller
@@ -993,17 +1019,17 @@ static void global_chat_panel_contents(
 
     /*
      * Custom scrollbar: ImGui's built-in one can only be given
-     * a *minimum* size, not forced to an exact ratio, so with
-     * only a few short messages the "minimum" ends up being
-     * almost the entire track -- that's the oversized bar this
-     * replaces. NoScrollbar hides the built-in one (mouse-wheel
-     * scrolling still works); a slim track + a thumb permanently
-     * fixed at 1/4 of the track height is drawn manually below,
-     * positioned to match the current scroll position and
-     * draggable via an invisible button.
+     * a *minimum* size, not forced to an exact ratio. A slim
+     * track + a thumb fixed at a set fraction of the track
+     * height is drawn manually below, positioned to match the
+     * current scroll position (or pinned to the top if there's
+     * nothing to scroll yet) and draggable via an invisible
+     * button. It's always drawn, per request, rather than only
+     * appearing once content overflows.
      */
     const float SCROLLBAR_WIDTH = 8.0f;
     const float SCROLLBAR_MARGIN = 4.0f;
+    const float SCROLLBAR_THUMB_RATIO = 0.18f;
 
     /* Captured now (still in the outer window's context) so the
      * scrollbar can be drawn flush against the *outer* window's
@@ -1066,6 +1092,13 @@ static void global_chat_panel_contents(
         if (time_x < 0.0f) time_x = 0.0f;
 
         if (is_system) {
+            /*
+             * Label + timestamp on their own line, then the actual
+             * system text wrapped below -- same two-line pattern
+             * player messages use. Combining name+text on one
+             * line (the old behavior) let a long system message
+             * run straight into the timestamp, overlapping it.
+             */
             igTextColored(
                 (ImVec4){
                     0.3f,
@@ -1073,9 +1106,8 @@ static void global_chat_panel_contents(
                     0.95f,
                     1.0f
                 },
-                "%s: %s",
-                message->name,
-                message->text
+                "%s",
+                message->name
             );
 
             igSameLine(
@@ -1086,6 +1118,17 @@ static void global_chat_panel_contents(
             igTextDisabled(
                 "%s",
                 message->time_str
+            );
+
+            igTextColored(
+                (ImVec4){
+                    0.3f,
+                    0.85f,
+                    0.95f,
+                    1.0f
+                },
+                "%s",
+                message->text
             );
 
             continue;
@@ -1174,7 +1217,7 @@ static void global_chat_panel_contents(
     ImVec2 cursor_before_scrollbar;
     igGetCursorScreenPos(&cursor_before_scrollbar);
 
-    if (scroll_max > 0.0f) {
+    {
         /* Flush against the *outer* window's right edge -- this is
          * the space the old oversized native scrollbar occupied,
          * now reclaimed for our own slim one. */
@@ -1187,12 +1230,12 @@ static void global_chat_panel_contents(
         float track_y = msg_area_screen_pos.y;
         float track_h = message_area_height;
 
-        /* Permanently 1/4 of the scrolling area's height, per
-         * request -- not a minimum, an exact fixed ratio. */
-        float thumb_h = track_h * 0.25f;
+        float thumb_h = track_h * SCROLLBAR_THUMB_RATIO;
 
         float scroll_ratio =
-            scroll_y_cached / scroll_max;
+            scroll_max > 0.0f ?
+                (scroll_y_cached / scroll_max) :
+                0.0f;
 
         float thumb_y =
             track_y +
@@ -1200,6 +1243,26 @@ static void global_chat_panel_contents(
             (track_h - thumb_h);
 
         ImDrawList* dl = igGetWindowDrawList();
+
+        /*
+         * The outer window clips its own drawing to its content
+         * rect, which stops short of the true window edge by
+         * WindowPadding -- pushing an unclipped override here
+         * guarantees the scrollbar actually renders flush against
+         * the edge instead of silently being cut off there.
+         */
+        ImDrawList_PushClipRect(
+            dl,
+            (ImVec2){
+                outer_pos.x,
+                outer_pos.y
+            },
+            (ImVec2){
+                outer_pos.x + outer_size.x,
+                outer_pos.y + outer_size.y
+            },
+            false
+        );
 
         ImDrawList_AddRectFilled(
             dl,
@@ -1225,6 +1288,8 @@ static void global_chat_panel_contents(
             0
         );
 
+        ImDrawList_PopClipRect(dl);
+
         igSetCursorScreenPos(
             (ImVec2){track_x, track_y}
         );
@@ -1235,7 +1300,7 @@ static void global_chat_panel_contents(
             ImGuiButtonFlags_None
         );
 
-        if (igIsItemActive()) {
+        if (igIsItemActive() && scroll_max > 0.0f) {
             ImGuiIO* io = igGetIO_Nil();
 
             float usable_track =

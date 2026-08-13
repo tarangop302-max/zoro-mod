@@ -1118,6 +1118,12 @@ void ntl_team_panel(tenv *env) {
                    (ImVec2){avail.x, body_h},
                    ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
 
+  float col_gap = style->ItemSpacing.x * 2.0f;
+  float left_col_w = (avail.x - col_gap) * 0.58f;
+
+  igBeginChild_Str("##ntl_left_col", (ImVec2){left_col_w, 0},
+                   ImGuiChildFlags_None, ImGuiWindowFlags_None);
+
   igSeparatorText("Minimap teammates");
   igCheckbox("Show teammates on minimap", &us->ntl_show_teammates);
   igCheckbox("Show teammate names", &us->ntl_marker_labels);
@@ -1174,14 +1180,70 @@ void ntl_team_panel(tenv *env) {
 
   igEndChild();
 
+  igSameLine(0, col_gap);
+
+  igBeginChild_Str("##ntl_right_col", (ImVec2){0, 0},
+                   ImGuiChildFlags_None, ImGuiWindowFlags_None);
+
+  igSeparatorText("Chat position");
+
+  global_chat_adjust_mode chat_adjust_mode = global_chat_get_adjust_mode();
+  bool pos_active = chat_adjust_mode == GLOBAL_CHAT_ADJUST_POSITION;
+  bool size_active = chat_adjust_mode == GLOBAL_CHAT_ADJUST_SIZE;
+  float chat_btn_h = igGetFrameHeight() * 1.8f;
+
+  if (pos_active)
+    igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.20f, 0.62f, 0.30f, 1.0f});
+  if (igButton(pos_active ? "CONFIRM POSITION" : "ADJUST POSITION",
+              (ImVec2){-1.0f, chat_btn_h})) {
+    global_chat_set_adjust_mode(env, pos_active ?
+                                GLOBAL_CHAT_ADJUST_NONE :
+                                GLOBAL_CHAT_ADJUST_POSITION);
+  }
+  if (pos_active) igPopStyleColor(1);
+
+  igSpacing();
+
+  if (size_active)
+    igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.20f, 0.62f, 0.30f, 1.0f});
+  if (igButton(size_active ? "CONFIRM SIZE" : "ADJUST SIZE",
+              (ImVec2){-1.0f, chat_btn_h})) {
+    global_chat_set_adjust_mode(env, size_active ?
+                                GLOBAL_CHAT_ADJUST_NONE :
+                                GLOBAL_CHAT_ADJUST_SIZE);
+  }
+  if (size_active) igPopStyleColor(1);
+
+  if (chat_adjust_mode != GLOBAL_CHAT_ADJUST_NONE) {
+    igSpacing();
+    igTextWrapped(
+        "%s",
+        pos_active ?
+            "Drag the chat window by its title bar, then tap "
+            "Confirm position." :
+            "Drag the chat window's edge or corner, then tap "
+            "Confirm size.");
+  }
+
+  igEndChild();
+
+  igEndChild();
+
+  /* Leaving the panel (Save/Back below) always locks the chat
+   * window back down first, so it can't be left stuck in a
+   * draggable state with no controls visible to confirm it. */
   float btn_w = (avail.x - style->ItemSpacing.x) * 0.5f;
   if (igButton("Save", (ImVec2){btn_w, igGetFrameHeight() * 1.6f})) {
+    if (chat_adjust_mode != GLOBAL_CHAT_ADJUST_NONE)
+      global_chat_set_adjust_mode(env, GLOBAL_CHAT_ADJUST_NONE);
     ntl_sync_active_credentials(us);
     save_user_settings(us);
     S.next_poll = 0;
   }
   igSameLine(0, style->ItemSpacing.x);
   if (igButton("Back", (ImVec2){btn_w, igGetFrameHeight() * 1.6f})) {
+    if (chat_adjust_mode != GLOBAL_CHAT_ADJUST_NONE)
+      global_chat_set_adjust_mode(env, GLOBAL_CHAT_ADJUST_NONE);
     save_user_settings(us);
     g->curr_screen = TITLE_SCREEN;
   }

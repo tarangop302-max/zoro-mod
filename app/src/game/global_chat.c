@@ -1210,10 +1210,30 @@ static void global_chat_panel_contents(
     ImVec2 msg_area_screen_pos;
     igGetCursorScreenPos(&msg_area_screen_pos);
 
+    /*
+     * Reserve a strip on the right for the scrollbar (including its
+     * widened touch-hit region) so the message child -- a real,
+     * separate ImGui window, not just drawn content -- doesn't
+     * physically extend underneath it. It previously did, at full
+     * width, and being a nested window it won a touch/click there
+     * over the invisible drag-button drawn on top of it afterward:
+     * the scrollbar was rendered on top visually, but the child
+     * beneath it was what actually caught the input, so dragging
+     * (and even tapping) it did nothing.
+     */
+    float scrollbar_reserved_w =
+        SCROLLBAR_WIDTH +
+        SCROLLBAR_MARGIN +
+        SCROLLBAR_HIT_PADDING +
+        2.0f;
+
+    float msg_child_w = avail.x - scrollbar_reserved_w;
+    if (msg_child_w < 80.0f) msg_child_w = 80.0f;
+
     igBeginChild_Str(
         "##global_chat_messages",
         (ImVec2){
-            0.0f,
+            msg_child_w,
             message_area_height
         },
         true,

@@ -83,12 +83,12 @@ void ui_overlay(tenv* env) {
     if (mm_size < mm_min) mm_size = mm_min;
 
     /*
-     * The player stats block (nickname/IP/ping/FPS/timer) and the
-     * heading/zoom readout both now live below the minimap, so its
-     * default position needs to reserve room for all of that, not
-     * just one line.
+     * The player stats block now lives at the bottom-right of
+     * the screen instead of directly under the minimap, so this
+     * only needs to leave room for the heading/zoom readout
+     * that's still drawn just below it.
      */
-    float mm_bottom_reserve = frame_height * 7.0f;
+    float mm_bottom_reserve = frame_height * 2.0f;
 
     float mm_x;
     float mm_y;
@@ -106,22 +106,47 @@ void ui_overlay(tenv* env) {
     }
 
     /*
-     * Draw the player stats block (nickname/IP/ping/FPS/
-     * timer) below the minimap instead of the top-left
-     * corner.
+     * Player stats block (nickname/IP/ping/FPS/timer), anchored
+     * to the bottom-right corner of the screen instead of tucked
+     * just under the minimap. Each line is measured and
+     * right-aligned individually so it always ends at the same
+     * right margin -- long values (nickname, IP) can no longer
+     * run off the edge of the screen and get clipped.
      */
-    igSetCursorPosX(mm_x);
-    igSetCursorPosY(mm_y + mm_size + style->WindowPadding.y);
-
     igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
                usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
-    float line_height = igGetCursorPosY();
+
+    float stats_line_height = igGetTextLineHeightWithSpacing();
+    float stats_block_height = stats_line_height * 5.0f;
+    float stats_y =
+        ctx->size[1] - stats_block_height - style->WindowPadding.y;
+    float stats_right_x = ctx->size[0] - style->WindowPadding.x;
+
+    /*
+     * Right-aligns one "icon + text" line: measures both pieces
+     * with the stats font already active, then positions the
+     * cursor so the line's right edge lands on stats_right_x.
+     */
+#define STATS_LINE_RIGHT_ALIGN(icon_str, text_str)                      \
+    do {                                                                \
+      ImVec2 _icon_sz;                                                  \
+      igCalcTextSize(&_icon_sz, (icon_str), NULL, false, -1);           \
+      ImVec2 _text_sz;                                                  \
+      igCalcTextSize(&_text_sz, (text_str), NULL, false, -1);           \
+      float _line_w = _icon_sz.x + style->ItemSpacing.x + _text_sz.x;   \
+      float _x = stats_right_x - _line_w;                               \
+      if (_x < style->WindowPadding.x) _x = style->WindowPadding.x;     \
+      igSetCursorPosX(_x);                                              \
+    } while (0)
+
+    igSetCursorPosY(stats_y);
+    STATS_LINE_RIGHT_ALIGN("\ue971", usrs->nickname);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue971");
     igSameLine(0, -1);
     igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->nickname);
-    line_height = igGetCursorPosY() - line_height;
 
-    igSetCursorPosX(mm_x);
+    igSetCursorPosY(stats_y + stats_line_height);
+    STATS_LINE_RIGHT_ALIGN("\ueaec", usrs->ipv4);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ueaec");
     igSameLine(0, -1);
     igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->ipv4);
@@ -135,31 +160,46 @@ void ui_overlay(tenv* env) {
     vec3 ic_col;
     glm_vec3_lerp((vec3){1, 0.5f, 0.5f}, (vec3){1, 1, 1}, lag_norm, ic_col);
 
-    igSetCursorPosX(mm_x);
+    char ping_str[16];
+    snprintf(ping_str, sizeof(ping_str), "%d ms", gdata->data.ping);
+
+    igSetCursorPosY(stats_y + stats_line_height * 2.0f);
+    STATS_LINE_RIGHT_ALIGN("\ue91b", ping_str);
     igTextColored(
         (ImVec4){ic_col[0], ic_col[1], ic_col[2], glm_lerp(0.8, 0.3, lag_norm)},
         "\ue91b");
     igSameLine(0, -1);
     igTextColored(
         (ImVec4){ping_col[0], ping_col[1], ping_col[2], 0.6 * lag_norm},
-        "%d ms", gdata->data.ping);
+        "%s", ping_str);
 
-    igSetCursorPosX(mm_x);
+    char fps_str[16];
+    snprintf(fps_str, sizeof(fps_str), "%d FPS", gdata->data.fps);
+
+    igSetCursorPosY(stats_y + stats_line_height * 3.0f);
+    STATS_LINE_RIGHT_ALIGN("\ue99c", fps_str);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue99c");
     igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.5}, "%d FPS", gdata->data.fps);
-
-    igSetCursorPosX(mm_x);
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue952");
-    igSameLine(0, -1);
+    igTextColored((ImVec4){1, 1, 1, 0.5}, "%s", fps_str);
 
     int tot_sec = (int)gdata->data.play_etm;
     int hours = tot_sec / 3600;
     int minutes = (tot_sec % 3600) / 60;
     int seconds = tot_sec % 60;
 
-    igTextColored((ImVec4){1, 1, 1, 0.7}, "%02d:%02d:%02d", hours, minutes,
-                  seconds);
+    char timer_str[16];
+    snprintf(timer_str, sizeof(timer_str), "%02d:%02d:%02d", hours, minutes,
+              seconds);
+
+    igSetCursorPosY(stats_y + stats_line_height * 4.0f);
+    STATS_LINE_RIGHT_ALIGN("\ue952", timer_str);
+    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue952");
+    igSameLine(0, -1);
+    igTextColored((ImVec4){1, 1, 1, 0.7}, "%s", timer_str);
+
+#undef STATS_LINE_RIGHT_ALIGN
+
+    float line_height = stats_line_height;
     igText("");
 
     float px = (((gdata->data.view_xx - gdata->data.grd) * 2) /
@@ -352,10 +392,7 @@ void ui_overlay(tenv* env) {
     igCalcTextSize(&lctxtsz, "--360° 100%", NULL, false, -1);
 
     float label_x = mm_x + mm_size * 0.5f - lctxtsz.x * 0.5f;
-    float stats_block_height = line_height * 6.0f;
-    float label_y =
-        mm_y + mm_size + style->WindowPadding.y +
-        stats_block_height + 2.0f;
+    float label_y = mm_y + mm_size + style->WindowPadding.y + 2.0f;
     if (label_y + line_height > ctx->size[1] - style->WindowPadding.y)
       label_y = mm_y - line_height;
     label_x = fmaxf(style->WindowPadding.x,

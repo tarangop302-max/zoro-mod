@@ -1193,6 +1193,11 @@ static void global_chat_panel_contents(
      * well past it on both sides while staying visually unchanged. */
     const float SCROLLBAR_HIT_PADDING = 14.0f;
 
+    /* Anchor point for the absolute-position drag tracking below --
+     * must persist across frames while the same drag is held. */
+    static float drag_anchor_mouse_y = 0.0f;
+    static float drag_anchor_scroll = 0.0f;
+
     /* Captured now (still in the outer window's context) so the
      * scrollbar can be drawn flush against the *outer* window's
      * right edge afterward, rather than tucked inside the child --
@@ -1452,9 +1457,24 @@ static void global_chat_panel_contents(
 
         ImDrawList_PopClipRect(dl);
 
+        /*
+         * Clamp the widened hit region to the window's own right
+         * edge. Without this, SCROLLBAR_HIT_PADDING pushes part of
+         * the touch target past the actual window bounds -- and on
+         * Android, input outside the window's captured rect (set
+         * via android_ui_capture_rect above) never reaches ImGui at
+         * all, so any drag starting in that sliver silently did
+         * nothing.
+         */
+        float hit_left = track_x - SCROLLBAR_HIT_PADDING;
+        float hit_right =
+            track_x + SCROLLBAR_WIDTH + SCROLLBAR_HIT_PADDING;
+        float window_right = outer_pos.x + outer_size.x;
+        if (hit_right > window_right) hit_right = window_right;
+
         igSetCursorScreenPos(
             (ImVec2){
-                track_x - SCROLLBAR_HIT_PADDING,
+                hit_left,
                 track_y
             }
         );
@@ -1462,8 +1482,7 @@ static void global_chat_panel_contents(
         igInvisibleButton(
             "##global_chat_scrollbar_drag",
             (ImVec2){
-                SCROLLBAR_WIDTH +
-                    SCROLLBAR_HIT_PADDING * 2.0f,
+                hit_right - hit_left,
                 track_h
             },
             ImGuiButtonFlags_None
@@ -1501,21 +1520,35 @@ static void global_chat_panel_contents(
                  * from the stale pre-click position. */
                 scroll_y_cached = jump_scroll;
             }
+
+            /* Anchor the drag to where the press started, in both
+             * finger/cursor position and resulting scroll offset.
+             * Every later frame derives the new scroll directly
+             * from how far the touch/mouse has moved since this
+             * point (see below), instead of accumulating a
+             * per-frame delta -- accumulation silently stalls if
+             * even one frame's motion event is missed or coalesced
+             * (as touch-move events often are), which is what made
+             * dragging do nothing on some devices. Absolute
+             * tracking can't drift or drop like that. */
+            drag_anchor_mouse_y = mouse_pos.y;
+            drag_anchor_scroll = scroll_y_cached;
         }
 
         if (igIsItemActive() && scroll_max > 0.0f) {
-            ImGuiIO* io = igGetIO_Nil();
+            ImVec2 mouse_pos;
+            igGetMousePos(&mouse_pos);
 
             float usable_track =
                 track_h - thumb_h;
 
             if (usable_track > 0.0f) {
                 float delta_ratio =
-                    io->MouseDelta.y /
+                    (mouse_pos.y - drag_anchor_mouse_y) /
                     usable_track;
 
                 float new_scroll =
-                    scroll_y_cached +
+                    drag_anchor_scroll +
                     delta_ratio * scroll_max;
 
                 if (new_scroll < 0.0f) {

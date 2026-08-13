@@ -191,6 +191,12 @@ void user_settings_default(user_settings* usr_settings) {
          sizeof usr_settings->ntl_team_profiles);
   usr_settings->ntl_client_id[0] = '\0';
   usr_settings->public_chat_key[0] = '\0';
+
+  usr_settings->public_chat_pos_custom = false;
+  usr_settings->public_chat_rel_x = 0.02f;
+  usr_settings->public_chat_rel_y = 0.03f;
+  usr_settings->public_chat_rel_w = 0.36f;
+  usr_settings->public_chat_rel_h = 0.44f;
 }
 
 void write_default_settings(user_settings* usr_settings) {
@@ -252,9 +258,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v24_prefix = offsetof(user_settings, ntl_chat_minimized);
   size_t v25_prefix = offsetof(user_settings, ntl_client_id);
   size_t v26_prefix = offsetof(user_settings, public_chat_key);
+  size_t v27_prefix = offsetof(user_settings, public_chat_pos_custom);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v27_prefix)
+    /* A file saved before the chat position/size fields existed ends at
+       v27_prefix, possibly followed only by compiler tail padding. Do not
+       copy that padding into the new fields. */
+    bytes_to_read = v27_prefix;
   else if ((size_t)file_size >= v26_prefix)
     /* A file saved before the public chat key field existed ends at
        v26_prefix, possibly followed only by compiler tail padding. Do not
@@ -355,6 +367,19 @@ void read_user_settings(user_settings* usr_settings) {
         (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
   }
   if (!valid_ntl_client_id) loaded.ntl_client_id[0] = 0;
+
+  if (!isfinite(loaded.public_chat_rel_x) || loaded.public_chat_rel_x < -0.25f ||
+      loaded.public_chat_rel_x > 1.25f)
+    loaded.public_chat_rel_x = 0.02f;
+  if (!isfinite(loaded.public_chat_rel_y) || loaded.public_chat_rel_y < -0.25f ||
+      loaded.public_chat_rel_y > 1.25f)
+    loaded.public_chat_rel_y = 0.03f;
+  if (!isfinite(loaded.public_chat_rel_w) || loaded.public_chat_rel_w < 0.10f ||
+      loaded.public_chat_rel_w > 1.00f)
+    loaded.public_chat_rel_w = 0.36f;
+  if (!isfinite(loaded.public_chat_rel_h) || loaded.public_chat_rel_h < 0.10f ||
+      loaded.public_chat_rel_h > 1.00f)
+    loaded.public_chat_rel_h = 0.44f;
 
   /* NTL's own chat feature is retired -- its floating HUD
      widget is a no-op now regardless, but force this off too

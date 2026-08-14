@@ -1,6 +1,7 @@
 #include "redraw.h"
 
 #include "../user.h"
+#include "global_chat.h"
 
 void lerp_minimap_float(float* dst, const uint8_t* src, int mmsz, float alpha) {
   int stride = MAX_MINIMAP_SIZE;
@@ -238,10 +239,25 @@ void redraw(tenv* env) {
               gdata->cg_colors +
               (o->cusk ? o->cusk_data[0] : gdata->default_skins[o->cv][1]);
 
+          /* JSR teammates (authenticated on the shared public-chat
+           * relay via an access key) get a fixed green label
+           * instead of the usual skin-tinted one, so they stand
+           * out at a glance. Only the label color changes -- the
+           * snake itself, its skin, and everything else about the
+           * label (font, size, position, score suffix) are
+           * untouched. */
+          bool is_teammate = global_chat_is_teammate(o->nk);
+
           vec3 ncolor;
-          glm_vec3_lerp((float*)scolor, (vec3){1, 1, 1}, mode->player_names_outline ? 0.7f : 0.6f, ncolor);
           vec3 lcolor;
-          glm_vec3_lerp((float*)scolor, (vec3){1, 1, 1}, mode->player_names_outline ? 0.8f : 0.7f, lcolor);
+
+          if (is_teammate) {
+            ncolor[0] = 0.25f; ncolor[1] = 1.0f; ncolor[2] = 0.35f;
+            lcolor[0] = 0.25f; lcolor[1] = 1.0f; lcolor[2] = 0.35f;
+          } else {
+            glm_vec3_lerp((float*)scolor, (vec3){1, 1, 1}, mode->player_names_outline ? 0.7f : 0.6f, ncolor);
+            glm_vec3_lerp((float*)scolor, (vec3){1, 1, 1}, mode->player_names_outline ? 0.8f : 0.7f, lcolor);
+          }
 
           ntx = ntx - (usrs->snake_scores ? tsize.x : nsize.x) * 0.5f;
           nty = nty + 32 + 11 * o->sc * gdata->data.gsc;

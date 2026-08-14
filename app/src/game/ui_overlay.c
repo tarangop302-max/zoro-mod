@@ -18,6 +18,62 @@
 #include "../android_glfw_shim.h"
 #endif
 
+/*
+ * Shared by the leaderboard and teammates list under "Adjust HUD
+ * Layout" mode (see settings.c) -- both are simple position-only
+ * drag targets, unlike the minimap's separate move+resize editor
+ * further down. `edit_action`/`drag_dx`/`drag_dy`/`was_editing` are
+ * each caller's own persistent (static) state; `pos_custom`/
+ * `rel_x`/`rel_y` point at the matching user_settings fields to
+ * update.
+ */
+#ifdef ANDROID
+static void hud_layout_drag_rect(
+    tenv* env, user_settings* usrs, tcontext* ctx, ImGuiStyle* style,
+    float x, float y, float w, float h,
+    bool* pos_custom, float* rel_x, float* rel_y,
+    int* edit_action, float* drag_dx, float* drag_dy, bool* was_editing) {
+  if (usrs->hud_layout_edit_mode) {
+    float hit_pad = 10.0f;
+    android_ui_capture_rect(x - hit_pad, y - hit_pad, x + w + hit_pad,
+                            y + h + hit_pad);
+
+    touch_state* ui = &env->wnd->ui_touch;
+    if (ui->just_down && ui->x >= x - hit_pad && ui->x <= x + w + hit_pad &&
+        ui->y >= y - hit_pad && ui->y <= y + h + hit_pad) {
+      *edit_action = 1;
+      *was_editing = true;
+      *drag_dx = ui->x - x;
+      *drag_dy = ui->y - y;
+    }
+
+    if (*edit_action != 0 && ui->down) {
+      float nx = ui->x - *drag_dx;
+      float ny = ui->y - *drag_dy;
+      nx = fmaxf(style->WindowPadding.x,
+                fminf(nx, ctx->size[0] - w - style->WindowPadding.x));
+      ny = fmaxf(style->WindowPadding.y,
+                fminf(ny, ctx->size[1] - h - style->WindowPadding.y));
+      *pos_custom = true;
+      *rel_x = nx / ctx->size[0];
+      *rel_y = ny / ctx->size[1];
+    } else if (*edit_action != 0 && !ui->down) {
+      *edit_action = 0;
+      if (*was_editing) save_user_settings(usrs);
+      *was_editing = false;
+    }
+
+    ImDrawList* edit_dl =
+        igGetForegroundDrawList_ViewportPtr(igGetMainViewport());
+    ImDrawList_AddRect(edit_dl, (ImVec2){x, y}, (ImVec2){x + w, y + h},
+                       IM_COL32(255, 255, 255, 130), 4.0f, 0, 1.5f);
+  } else if (*edit_action != 0) {
+    *edit_action = 0;
+    *was_editing = false;
+  }
+}
+#endif
+
 void ui_overlay(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -225,8 +281,21 @@ void ui_overlay(tenv* env) {
 
       float tb_width =
           psize.x + nksize.x + scsize.x + (style->CellPadding.x * 2 * 3);
-      igSetCursorPosX(ctx->size[0] - tb_width - style->WindowPadding.x);
-      igSetCursorPosY(style->WindowPadding.y);
+
+      float lb_x, lb_y;
+      if (usrs->leaderboard_pos_custom) {
+        lb_x = usrs->leaderboard_rel_x * ctx->size[0];
+        lb_y = usrs->leaderboard_rel_y * ctx->size[1];
+      } else {
+        lb_x = ctx->size[0] - tb_width - style->WindowPadding.x;
+        lb_y = style->WindowPadding.y;
+      }
+      lb_x = fmaxf(style->WindowPadding.x,
+                   fminf(lb_x, ctx->size[0] - tb_width - style->WindowPadding.x));
+      lb_y = fmaxf(style->WindowPadding.y, lb_y);
+
+      igSetCursorPosX(lb_x);
+      igSetCursorPosY(lb_y);
 
       if (igBeginTable("leaderboard_table", 3, ImGuiTableFlags_NoHostExtendX,
                        (ImVec2){}, 0)) {
@@ -268,6 +337,17 @@ void ui_overlay(tenv* env) {
       }
 
       lb_bottom_y = igGetCursorPosY();
+
+#ifdef ANDROID
+      static int s_lb_edit_action = 0;
+      static float s_lb_drag_dx = 0.0f, s_lb_drag_dy = 0.0f;
+      static bool s_lb_was_editing = false;
+      hud_layout_drag_rect(env, usrs, ctx, style, lb_x, lb_y, tb_width,
+                           lb_bottom_y - lb_y, &usrs->leaderboard_pos_custom,
+                           &usrs->leaderboard_rel_x, &usrs->leaderboard_rel_y,
+                           &s_lb_edit_action, &s_lb_drag_dx, &s_lb_drag_dy,
+                           &s_lb_was_editing);
+#endif
     }
 
     /*
@@ -320,11 +400,23 @@ void ui_overlay(tenv* env) {
         float tm_width =
             tm_nksize.x + tm_scsize.x + (style->CellPadding.x * 2 * 2);
 
-        igSetCursorPosX(ctx->size[0] - tm_width - style->WindowPadding.x);
-        igSetCursorPosY(lb_bottom_y + style->ItemSpacing.y * 2.0f);
+        float tm_x, tm_y;
+        if (usrs->teammates_pos_custom) {
+          tm_x = usrs->teammates_rel_x * ctx->size[0];
+          tm_y = usrs->teammates_rel_y * ctx->size[1];
+        } else {
+          tm_x = ctx->size[0] - tm_width - style->WindowPadding.x;
+          tm_y = lb_bottom_y + style->ItemSpacing.y * 2.0f;
+        }
+        tm_x = fmaxf(style->WindowPadding.x,
+                     fminf(tm_x, ctx->size[0] - tm_width - style->WindowPadding.x));
+        tm_y = fmaxf(style->WindowPadding.y, tm_y);
+
+        igSetCursorPosX(tm_x);
+        igSetCursorPosY(tm_y);
         igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 0.85f}, "Teammates");
 
-        igSetCursorPosX(ctx->size[0] - tm_width - style->WindowPadding.x);
+        igSetCursorPosX(tm_x);
 
         if (igBeginTable("teammates_table", 2, ImGuiTableFlags_NoHostExtendX,
                          (ImVec2){}, 0)) {
@@ -345,7 +437,20 @@ void ui_overlay(tenv* env) {
           igEndTable();
         }
 
+        float tm_bottom_y = igGetCursorPosY();
+
         igPopFont();
+
+#ifdef ANDROID
+        static int s_tm_edit_action = 0;
+        static float s_tm_drag_dx = 0.0f, s_tm_drag_dy = 0.0f;
+        static bool s_tm_was_editing = false;
+        hud_layout_drag_rect(env, usrs, ctx, style, tm_x, tm_y, tm_width,
+                             tm_bottom_y - tm_y, &usrs->teammates_pos_custom,
+                             &usrs->teammates_rel_x, &usrs->teammates_rel_y,
+                             &s_tm_edit_action, &s_tm_drag_dx, &s_tm_drag_dy,
+                             &s_tm_was_editing);
+#endif
       }
     }
 

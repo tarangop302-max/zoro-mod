@@ -66,7 +66,7 @@ void server_destroy(tenv* env) {
 
 static const char* CUSTOM_SERVER_IPS[CUSTOM_SERVER_COUNT] = {
   "206.206.76.190:444",
-  "139.84.166.84:444",
+  "139.84.170.60:444",
   "51.91.19.175:444",
   "206.221.176.241:444",
 };

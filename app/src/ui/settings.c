@@ -1,6 +1,18 @@
 #include "settings.h"
 
+#ifdef ANDROID
+#include "../android_glfw_shim.h"
+#endif
+
+#include "../network/server.h"
 #include "../user.h"
+
+/* Remembers what these were set to before "Adjust HUD Layout" force-enabled
+   them, so "Done adjusting" can restore the player's actual preferences
+   instead of just leaving bot mode / instant restart on. */
+static bool s_hud_edit_saved_bot = false;
+static bool s_hud_edit_saved_instant_restart = false;
+static bool s_hud_edit_saved_minimap_drag = false;
 
 void ui_settings_init(tenv* env) {}
 
@@ -74,6 +86,8 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Reset minimap position");
       igAlignTextToFramePadding();
+      igText("Adjust HUD Layout");
+      igAlignTextToFramePadding();
       igText("Instant restart");
       igAlignTextToFramePadding();
       igText("Restart with right click");
@@ -144,7 +158,42 @@ void ui_settings(tenv* env) {
         usrs->minimap_rel_x = 0.84f;
         usrs->minimap_rel_y = 0.78f;
       }
+      if (!usrs->hud_layout_edit_mode) {
+        if (igButton("Start adjusting##hud_layout", (ImVec2){-1, 0})) {
+          /* Remember the player's real settings before this
+           * temporarily overrides them for the editing session. */
+          s_hud_edit_saved_bot = usrs->hotkeys[HOTKEY_BOT].active;
+          s_hud_edit_saved_instant_restart = usrs->instant_restart;
+          s_hud_edit_saved_minimap_drag = usrs->minimap_drag_enabled;
+
+          usrs->hud_layout_edit_mode = true;
+          usrs->hotkeys[HOTKEY_BOT].active = true;
+          usrs->instant_restart = true;
+          usrs->minimap_drag_enabled = true;
+          save_user_settings(usrs);
+
+          /* Same sequence as the title screen's Play button -- jump
+           * straight into a game so there's a HUD to drag around. */
+          gdata->conn = CONNECTING;
+          gdata->curr_screen = PLAYING;
+          glfwSetTime(0);
+          server_connect(env);
+        }
+      } else {
+        igPushStyleColor_Vec4(ImGuiCol_Button,
+                              (ImVec4){0.20f, 0.62f, 0.30f, 1.0f});
+        if (igButton("Done adjusting##hud_layout", (ImVec2){-1, 0})) {
+          usrs->hud_layout_edit_mode = false;
+          usrs->hotkeys[HOTKEY_BOT].active = s_hud_edit_saved_bot;
+          usrs->instant_restart = s_hud_edit_saved_instant_restart;
+          usrs->minimap_drag_enabled = s_hud_edit_saved_minimap_drag;
+          save_user_settings(usrs);
+        }
+        igPopStyleColor(1);
+      }
+      igBeginDisabled(usrs->hud_layout_edit_mode);
       igCheckbox("##instant restart", &usrs->instant_restart);
+      igEndDisabled();
       igCheckbox("##restart rc", &usrs->restart_rc);
       igCheckbox("##quit mc", &usrs->quit_mc);
       igSetNextItemWidth(-1);

@@ -1836,6 +1836,50 @@ jsr_network* global_chat_get_network(void) {
     return global_chat_net;
 }
 
+bool global_chat_is_teammate(
+    const char* nickname
+) {
+    if (
+        global_chat_net == NULL ||
+        nickname == NULL ||
+        nickname[0] == '\0'
+    ) {
+        return false;
+    }
+
+    int count =
+        jsr_network_roster_count(
+            global_chat_net
+        );
+
+    for (
+        int i = 0;
+        i < count;
+        i++
+    ) {
+        char name[32];
+
+        if (
+            !jsr_network_roster_name(
+                global_chat_net,
+                i,
+                name,
+                sizeof(name)
+            )
+        ) {
+            continue;
+        }
+
+        if (
+            strcmp(name, nickname) == 0
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void global_chat_destroy(tenv* env) {
     (void)env;
 

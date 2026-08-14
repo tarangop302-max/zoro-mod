@@ -72,15 +72,7 @@ void ui_overlay(tenv* env) {
   usr->r->global.minimap_opacity = 0;
   if (usrs->hotkeys[HOTKEY_HUD].active) {
     ImGuiStyle* style = igGetStyle();
-
-    /* Push this early -- both the minimap's default reserved gap
-     * and the stats block itself need to know this font's line
-     * height before anything else is laid out. */
-    igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
-               usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
-
-    float stats_line_height = igGetTextLineHeightWithSpacing();
-    float stats_block_height = stats_line_height * 6.0f;
+    float frame_height = igGetFrameHeight();
 
     /* Keep the minimap usable on every device resolution. The configured
        pixel size is treated as a preference and capped against the current
@@ -91,13 +83,12 @@ void ui_overlay(tenv* env) {
     if (mm_size < mm_min) mm_size = mm_min;
 
     /*
-     * The player stats block (nickname/IP/ping/FPS/timer/heading)
-     * now lives at the bottom-right of the screen as one 6-line
-     * column, so the minimap's default position needs to reserve
-     * that whole height below it -- otherwise a tall minimap can
-     * sit low enough to overlap the stats text.
+     * The player stats block (nickname/IP/ping/FPS/timer) and the
+     * heading/zoom readout both now live below the minimap, so its
+     * default position needs to reserve room for all of that, not
+     * just one line.
      */
-    float mm_bottom_reserve = stats_block_height + style->WindowPadding.y;
+    float mm_bottom_reserve = frame_height * 7.0f;
 
     float mm_x;
     float mm_y;
@@ -115,42 +106,22 @@ void ui_overlay(tenv* env) {
     }
 
     /*
-     * Player stats block (nickname/IP/ping/FPS/timer/heading),
-     * anchored to the bottom-right corner of the screen. Each
-     * line is measured and right-aligned individually so it
-     * always ends at the same right margin -- long values
-     * (nickname, IP) can no longer run off the edge of the
-     * screen and get clipped.
+     * Draw the player stats block (nickname/IP/ping/FPS/
+     * timer) below the minimap instead of the top-left
+     * corner.
      */
-    float stats_y =
-        ctx->size[1] - stats_block_height - style->WindowPadding.y;
-    float stats_right_x = ctx->size[0] - style->WindowPadding.x;
+    igSetCursorPosX(mm_x);
+    igSetCursorPosY(mm_y + mm_size + style->WindowPadding.y);
 
-    /*
-     * Right-aligns one "icon + text" line: measures both pieces
-     * with the stats font already active, then positions the
-     * cursor so the line's right edge lands on stats_right_x.
-     */
-#define STATS_LINE_RIGHT_ALIGN(icon_str, text_str)                      \
-    do {                                                                \
-      ImVec2 _icon_sz;                                                  \
-      igCalcTextSize(&_icon_sz, (icon_str), NULL, false, -1);           \
-      ImVec2 _text_sz;                                                  \
-      igCalcTextSize(&_text_sz, (text_str), NULL, false, -1);           \
-      float _line_w = _icon_sz.x + style->ItemSpacing.x + _text_sz.x;   \
-      float _x = stats_right_x - _line_w;                               \
-      if (_x < style->WindowPadding.x) _x = style->WindowPadding.x;     \
-      igSetCursorPosX(_x);                                              \
-    } while (0)
-
-    igSetCursorPosY(stats_y);
-    STATS_LINE_RIGHT_ALIGN("\ue971", usrs->nickname);
+    igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
+               usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
+    float line_height = igGetCursorPosY();
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue971");
     igSameLine(0, -1);
     igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->nickname);
+    line_height = igGetCursorPosY() - line_height;
 
-    igSetCursorPosY(stats_y + stats_line_height);
-    STATS_LINE_RIGHT_ALIGN("\ueaec", usrs->ipv4);
+    igSetCursorPosX(mm_x);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ueaec");
     igSameLine(0, -1);
     igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->ipv4);
@@ -164,50 +135,33 @@ void ui_overlay(tenv* env) {
     vec3 ic_col;
     glm_vec3_lerp((vec3){1, 0.5f, 0.5f}, (vec3){1, 1, 1}, lag_norm, ic_col);
 
-    char ping_str[16];
-    snprintf(ping_str, sizeof(ping_str), "%d ms", gdata->data.ping);
-
-    igSetCursorPosY(stats_y + stats_line_height * 2.0f);
-    STATS_LINE_RIGHT_ALIGN("\ue91b", ping_str);
+    igSetCursorPosX(mm_x);
     igTextColored(
         (ImVec4){ic_col[0], ic_col[1], ic_col[2], glm_lerp(0.8, 0.3, lag_norm)},
         "\ue91b");
     igSameLine(0, -1);
     igTextColored(
         (ImVec4){ping_col[0], ping_col[1], ping_col[2], 0.6 * lag_norm},
-        "%s", ping_str);
+        "%d ms", gdata->data.ping);
 
-    char fps_str[16];
-    snprintf(fps_str, sizeof(fps_str), "%d FPS", gdata->data.fps);
-
-    igSetCursorPosY(stats_y + stats_line_height * 3.0f);
-    STATS_LINE_RIGHT_ALIGN("\ue99c", fps_str);
+    igSetCursorPosX(mm_x);
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue99c");
     igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.5}, "%s", fps_str);
+    igTextColored((ImVec4){1, 1, 1, 0.5}, "%d FPS", gdata->data.fps);
+
+    igSetCursorPosX(mm_x);
+    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue952");
+    igSameLine(0, -1);
 
     int tot_sec = (int)gdata->data.play_etm;
     int hours = tot_sec / 3600;
     int minutes = (tot_sec % 3600) / 60;
     int seconds = tot_sec % 60;
 
-    char timer_str[16];
-    snprintf(timer_str, sizeof(timer_str), "%02d:%02d:%02d", hours, minutes,
-              seconds);
+    igTextColored((ImVec4){1, 1, 1, 0.7}, "%02d:%02d:%02d", hours, minutes,
+                  seconds);
+    igText("");
 
-    igSetCursorPosY(stats_y + stats_line_height * 4.0f);
-    STATS_LINE_RIGHT_ALIGN("\ue952", timer_str);
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue952");
-    igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.7}, "%s", timer_str);
-
-    /*
-     * Heading/zoom readout, folded into this same right-aligned
-     * column as its 6th row instead of being positioned relative
-     * to the minimap separately -- that's what let the two blocks
-     * collide whenever the minimap ended up low enough on screen
-     * to overlap the bottom-anchored stats column.
-     */
     float px = (((gdata->data.view_xx - gdata->data.grd) * 2) /
                 ((gdata->data.flux_grd) * 2));
     float py = (((gdata->data.view_yy - gdata->data.grd) * 2) /
@@ -215,20 +169,6 @@ void ui_overlay(tenv* env) {
     int pang = (int)roundf(glm_deg(atan2f(-py, px)));
     if (pang < 0) pang += 360;
     int dst = (int)roundf(sqrtf(px * px + py * py) * 100.0f);
-
-    char heading_str[16];
-    snprintf(heading_str, sizeof(heading_str), "%d° %d%%", pang, dst);
-
-    igSetCursorPosY(stats_y + stats_line_height * 5.0f);
-    STATS_LINE_RIGHT_ALIGN("\ue947", heading_str);
-    igTextColored((ImVec4){1, 1, 1, 0.3f}, "\ue947");
-    igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.7f}, "%s", heading_str);
-
-#undef STATS_LINE_RIGHT_ALIGN
-
-    float line_height = stats_line_height;
-    igText("");
 
     igSetCursorPosY(ctx->size[1] - (line_height * 3) - style->WindowPadding.y);
 
@@ -254,9 +194,22 @@ void ui_overlay(tenv* env) {
 
     igPopFont();
 
+    /* Scale applied to the leaderboard (and the teammates list
+     * below it) only -- shrinks their on-screen footprint without
+     * touching the lb_font_size setting or anything else in the
+     * HUD. This build's ImGui sizes fonts per-push (no separate
+     * window-scale call), so the shrink is baked into the explicit
+     * size passed to every igPushFont() in this block instead. */
+    const float lb_scale = 0.72f;
+    float lb_size =
+        usr->imgui_data.mono_font[usrs->lb_font_size]->LegacySize * lb_scale;
+    float lb_size_bold =
+        usr->imgui_data.mono_font_bold[usrs->lb_font_size]->LegacySize *
+        lb_scale;
+    float lb_bottom_y = style->WindowPadding.y;
+
     if (gdata->data.gotlb) {
-      igPushFont(usr->imgui_data.mono_font[usrs->lb_font_size],
-                 usr->imgui_data.mono_font[usrs->lb_font_size]->LegacySize);
+      igPushFont(usr->imgui_data.mono_font[usrs->lb_font_size], lb_size);
       ImVec2 psize;
       igCalcTextSize(&psize, "10.", NULL, false, -1);
 
@@ -293,11 +246,11 @@ void ui_overlay(tenv* env) {
           if (is_my_snake) {
             igPushFont(
                 usr->imgui_data.mono_font_bold[usrs->lb_font_size],
-                usr->imgui_data.mono_font_bold[usrs->lb_font_size]->LegacySize);
+                lb_size_bold);
           } else {
             igPushFont(
                 usr->imgui_data.mono_font[usrs->lb_font_size],
-                usr->imgui_data.mono_font[usrs->lb_font_size]->LegacySize);
+                lb_size);
             itcolor.w = 0.6f;
           }
 
@@ -312,6 +265,87 @@ void ui_overlay(tenv* env) {
           igPopFont();
         }
         igEndTable();
+      }
+
+      lb_bottom_y = igGetCursorPosY();
+    }
+
+    /*
+     * Teammates list: JSR-authenticated players (see the green
+     * name-label highlight elsewhere in this file) who are also
+     * currently present as a snake in this game session, with
+     * their live score. Drawn just below the leaderboard, at the
+     * same reduced scale. Skipped entirely if no teammate is
+     * currently detected, so it never takes up space for nothing.
+     */
+    {
+      typedef struct {
+        const char* nick;
+        int score;
+      } teammate_row;
+
+      teammate_row teammates[16];
+      int teammate_count = 0;
+
+      for (int i = snakes_len - 1; i >= 0 && teammate_count < 16; i--) {
+        snake* o = gdata->data.snakes + i;
+        if (o->id == gdata->data.snake_id) continue;
+        if (!global_chat_is_teammate(o->nk)) continue;
+
+        int sct = o->sct + o->rsc;
+        int score = (int)floorf((gdata->data.fpsls[sct] +
+                                 o->fam / gdata->data.fmlts[sct] - 1) *
+                                    15 -
+                                5) /
+                    1;
+        score = GLM_MIN(GLM_MAX(score, 0), 999999);
+
+        teammates[teammate_count].nick = o->nk;
+        teammates[teammate_count].score = score;
+        teammate_count++;
+      }
+
+      if (teammate_count > 0) {
+        igPushFont(usr->imgui_data.mono_font[usrs->lb_font_size], lb_size);
+
+        ImVec2 tm_nksize;
+        char tmp2[MAX_NICKNAME_LEN + 1] = {0};
+        memset(tmp2, (int)'a', MAX_NICKNAME_LEN);
+        igCalcTextSize(&tm_nksize, tmp2, NULL, false, -1);
+        tm_nksize.x *= 1.25f;
+
+        ImVec2 tm_scsize;
+        igCalcTextSize(&tm_scsize, "999999", NULL, false, -1);
+
+        float tm_width =
+            tm_nksize.x + tm_scsize.x + (style->CellPadding.x * 2 * 2);
+
+        igSetCursorPosX(ctx->size[0] - tm_width - style->WindowPadding.x);
+        igSetCursorPosY(lb_bottom_y + style->ItemSpacing.y * 2.0f);
+        igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 0.85f}, "Teammates");
+
+        igSetCursorPosX(ctx->size[0] - tm_width - style->WindowPadding.x);
+
+        if (igBeginTable("teammates_table", 2, ImGuiTableFlags_NoHostExtendX,
+                         (ImVec2){}, 0)) {
+          igTableSetupColumn("##tm_nickname", ImGuiTableColumnFlags_WidthFixed,
+                             tm_nksize.x, 0);
+          igTableSetupColumn("##tm_score", ImGuiTableColumnFlags_WidthFixed,
+                             tm_scsize.x, 0);
+
+          for (int row = 0; row < teammate_count; row++) {
+            igTableNextRow(ImGuiTableRowFlags_None, 0);
+            igTableSetColumnIndex(0);
+            igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%s",
+                          teammates[row].nick);
+            igTableSetColumnIndex(1);
+            igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%d",
+                          teammates[row].score);
+          }
+          igEndTable();
+        }
+
+        igPopFont();
       }
     }
 
@@ -405,6 +439,29 @@ void ui_overlay(tenv* env) {
 
     ntl_team_draw_minimap(env, mm_x, mm_y, mm_size);
     global_chat_draw_minimap_markers(env, mm_x, mm_y, mm_size);
+
+    igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
+               usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
+    ImVec2 lctxtsz;
+    igCalcTextSize(&lctxtsz, "--360° 100%", NULL, false, -1);
+
+    float label_x = mm_x + mm_size * 0.5f - lctxtsz.x * 0.5f;
+    float stats_block_height = line_height * 6.0f;
+    float label_y =
+        mm_y + mm_size + style->WindowPadding.y +
+        stats_block_height + 2.0f;
+    if (label_y + line_height > ctx->size[1] - style->WindowPadding.y)
+      label_y = mm_y - line_height;
+    label_x = fmaxf(style->WindowPadding.x,
+                    fminf(label_x, ctx->size[0] - lctxtsz.x - style->WindowPadding.x));
+    label_y = fmaxf(style->WindowPadding.y, label_y);
+    igSetCursorPosX(label_x);
+    igSetCursorPosY(label_y);
+
+    igTextColored((ImVec4){1, 1, 1, 0.3f}, "\ue947");
+    igSameLine(0, -1);
+    igTextColored((ImVec4){1, 1, 1, 0.7f}, "%d° %d%%", pang, dst);
+    igPopFont();
   }
 
 #ifdef ANDROID

@@ -32,6 +32,12 @@ global_chat_adjust_mode global_chat_get_adjust_mode(void);
  * saved to the user's settings and the window locks back down. */
 void global_chat_set_adjust_mode(tenv* env, global_chat_adjust_mode mode);
 
+/* True if `nickname` is currently connected to the shared JSR
+ * public-chat relay -- i.e. authenticated with a valid access key,
+ * the same check the "Online players" roster is built from. Used
+ * to highlight teammates' in-game name labels. */
+bool global_chat_is_teammate(const char* nickname);
+
 /* Draw a dot on the minimap for every Public Chat player
  * on the same game server as us. Call this right after
  * ntl_team_draw_minimap() with the same x/y/size. */

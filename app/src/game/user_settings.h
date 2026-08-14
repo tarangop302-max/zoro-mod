@@ -184,6 +184,22 @@ typedef struct user_settings {
   float public_chat_rel_y;
   float public_chat_rel_w;
   float public_chat_rel_h;
+
+  /* v2.8 extension fields. Saved position for the in-game
+     leaderboard and teammates list (ui_overlay.c), set via the
+     "Adjust HUD Layout" mode in Settings. Relative to the viewport
+     work area. Ignored (default top-right placement used instead)
+     until customized, at which point the matching *_pos_custom
+     flag is set. hud_layout_edit_mode itself is never persisted --
+     see read_user_settings(), which always forces it back off, so
+     the app never reopens stuck in the middle of an edit session. */
+  bool  hud_layout_edit_mode;
+  bool  leaderboard_pos_custom;
+  float leaderboard_rel_x;
+  float leaderboard_rel_y;
+  bool  teammates_pos_custom;
+  float teammates_rel_x;
+  float teammates_rel_y;
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

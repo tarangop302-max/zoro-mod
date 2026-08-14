@@ -72,7 +72,15 @@ void ui_overlay(tenv* env) {
   usr->r->global.minimap_opacity = 0;
   if (usrs->hotkeys[HOTKEY_HUD].active) {
     ImGuiStyle* style = igGetStyle();
-    float frame_height = igGetFrameHeight();
+
+    /* Push this early -- both the minimap's default reserved gap
+     * and the stats block itself need to know this font's line
+     * height before anything else is laid out. */
+    igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
+               usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
+
+    float stats_line_height = igGetTextLineHeightWithSpacing();
+    float stats_block_height = stats_line_height * 6.0f;
 
     /* Keep the minimap usable on every device resolution. The configured
        pixel size is treated as a preference and capped against the current
@@ -83,12 +91,13 @@ void ui_overlay(tenv* env) {
     if (mm_size < mm_min) mm_size = mm_min;
 
     /*
-     * The player stats block now lives at the bottom-right of
-     * the screen instead of directly under the minimap, so this
-     * only needs to leave room for the heading/zoom readout
-     * that's still drawn just below it.
+     * The player stats block (nickname/IP/ping/FPS/timer/heading)
+     * now lives at the bottom-right of the screen as one 6-line
+     * column, so the minimap's default position needs to reserve
+     * that whole height below it -- otherwise a tall minimap can
+     * sit low enough to overlap the stats text.
      */
-    float mm_bottom_reserve = frame_height * 2.0f;
+    float mm_bottom_reserve = stats_block_height + style->WindowPadding.y;
 
     float mm_x;
     float mm_y;
@@ -106,18 +115,13 @@ void ui_overlay(tenv* env) {
     }
 
     /*
-     * Player stats block (nickname/IP/ping/FPS/timer), anchored
-     * to the bottom-right corner of the screen instead of tucked
-     * just under the minimap. Each line is measured and
-     * right-aligned individually so it always ends at the same
-     * right margin -- long values (nickname, IP) can no longer
-     * run off the edge of the screen and get clipped.
+     * Player stats block (nickname/IP/ping/FPS/timer/heading),
+     * anchored to the bottom-right corner of the screen. Each
+     * line is measured and right-aligned individually so it
+     * always ends at the same right margin -- long values
+     * (nickname, IP) can no longer run off the edge of the
+     * screen and get clipped.
      */
-    igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
-               usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
-
-    float stats_line_height = igGetTextLineHeightWithSpacing();
-    float stats_block_height = stats_line_height * 5.0f;
     float stats_y =
         ctx->size[1] - stats_block_height - style->WindowPadding.y;
     float stats_right_x = ctx->size[0] - style->WindowPadding.x;
@@ -197,11 +201,13 @@ void ui_overlay(tenv* env) {
     igSameLine(0, -1);
     igTextColored((ImVec4){1, 1, 1, 0.7}, "%s", timer_str);
 
-#undef STATS_LINE_RIGHT_ALIGN
-
-    float line_height = stats_line_height;
-    igText("");
-
+    /*
+     * Heading/zoom readout, folded into this same right-aligned
+     * column as its 6th row instead of being positioned relative
+     * to the minimap separately -- that's what let the two blocks
+     * collide whenever the minimap ended up low enough on screen
+     * to overlap the bottom-anchored stats column.
+     */
     float px = (((gdata->data.view_xx - gdata->data.grd) * 2) /
                 ((gdata->data.flux_grd) * 2));
     float py = (((gdata->data.view_yy - gdata->data.grd) * 2) /
@@ -209,6 +215,20 @@ void ui_overlay(tenv* env) {
     int pang = (int)roundf(glm_deg(atan2f(-py, px)));
     if (pang < 0) pang += 360;
     int dst = (int)roundf(sqrtf(px * px + py * py) * 100.0f);
+
+    char heading_str[16];
+    snprintf(heading_str, sizeof(heading_str), "%d° %d%%", pang, dst);
+
+    igSetCursorPosY(stats_y + stats_line_height * 5.0f);
+    STATS_LINE_RIGHT_ALIGN("\ue947", heading_str);
+    igTextColored((ImVec4){1, 1, 1, 0.3f}, "\ue947");
+    igSameLine(0, -1);
+    igTextColored((ImVec4){1, 1, 1, 0.7f}, "%s", heading_str);
+
+#undef STATS_LINE_RIGHT_ALIGN
+
+    float line_height = stats_line_height;
+    igText("");
 
     igSetCursorPosY(ctx->size[1] - (line_height * 3) - style->WindowPadding.y);
 
@@ -385,26 +405,6 @@ void ui_overlay(tenv* env) {
 
     ntl_team_draw_minimap(env, mm_x, mm_y, mm_size);
     global_chat_draw_minimap_markers(env, mm_x, mm_y, mm_size);
-
-    igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
-               usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
-    ImVec2 lctxtsz;
-    igCalcTextSize(&lctxtsz, "--360° 100%", NULL, false, -1);
-
-    float label_x = mm_x + mm_size * 0.5f - lctxtsz.x * 0.5f;
-    float label_y = mm_y + mm_size + style->WindowPadding.y + 2.0f;
-    if (label_y + line_height > ctx->size[1] - style->WindowPadding.y)
-      label_y = mm_y - line_height;
-    label_x = fmaxf(style->WindowPadding.x,
-                    fminf(label_x, ctx->size[0] - lctxtsz.x - style->WindowPadding.x));
-    label_y = fmaxf(style->WindowPadding.y, label_y);
-    igSetCursorPosX(label_x);
-    igSetCursorPosY(label_y);
-
-    igTextColored((ImVec4){1, 1, 1, 0.3f}, "\ue947");
-    igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.7f}, "%d° %d%%", pang, dst);
-    igPopFont();
   }
 
 #ifdef ANDROID

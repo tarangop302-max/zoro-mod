@@ -202,6 +202,7 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->leaderboard_pos_custom = false;
   usr_settings->leaderboard_rel_x = 0.80f;
   usr_settings->leaderboard_rel_y = 0.02f;
+  usr_settings->leaderboard_scale = 0.72f;
   usr_settings->teammates_pos_custom = false;
   usr_settings->teammates_rel_x = 0.80f;
   usr_settings->teammates_rel_y = 0.30f;
@@ -401,6 +402,9 @@ void read_user_settings(user_settings* usr_settings) {
   if (!isfinite(loaded.leaderboard_rel_y) || loaded.leaderboard_rel_y < -0.25f ||
       loaded.leaderboard_rel_y > 1.25f)
     loaded.leaderboard_rel_y = 0.02f;
+  if (!isfinite(loaded.leaderboard_scale) || loaded.leaderboard_scale < 0.40f ||
+      loaded.leaderboard_scale > 1.50f)
+    loaded.leaderboard_scale = 0.72f;
   if (!isfinite(loaded.teammates_rel_x) || loaded.teammates_rel_x < -0.25f ||
       loaded.teammates_rel_x > 1.25f)
     loaded.teammates_rel_x = 0.80f;

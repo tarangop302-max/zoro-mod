@@ -7,6 +7,7 @@
 #include "ui/title_screen.h"
 #include "ui/settings.h"
 #include "ui/controls.h"
+#include "ui/hud_layout_editor.h"
 #include "ui/key_buttons.h"
 #include "ui/viewport.h"
 
@@ -601,6 +602,9 @@ void trender(tenv* env) {
             gdata->curr_screen ==
                 NTL_PANEL ||
 
+            gdata->curr_screen ==
+                HUD_LAYOUT_EDITOR ||
+
             igGetIO_Nil()
                 ->WantTextInput
         );
@@ -884,6 +888,35 @@ void trender(tenv* env) {
 
 
         ui_controls(
+            env
+        );
+
+        break;
+
+
+      case HUD_LAYOUT_EDITOR:
+
+        if (
+            !bg_preview_visible(
+                env
+            ) &&
+
+            (
+                gdata->conn ==
+                    CONNECTED ||
+
+                gdata->conn ==
+                    CONNECTING
+            )
+        ) {
+
+          game_loop(
+              env
+          );
+        }
+
+
+        ui_hud_layout_editor(
             env
         );
 

@@ -139,8 +139,8 @@ void ntl_bot_adapter_go(tenv* env) {
    * (see input.c's own score computation), so the slider means what it
    * says regardless of which skin/category multiplier is active. */
   {
-    float fpsl = gdata->data.fpsls[me->sct];
-    float fmlt = gdata->data.fmlts[me->sct];
+    float fpsl = gdata->data.fpsls[me->sct + me->rsc];
+    float fmlt = gdata->data.fmlts[me->sct + me->rsc];
     float displayed_threshold = (float)usrs->bot_follow_circle_score;
     cfg.circle_length_threshold =
         fmlt * ((displayed_threshold + 5.0f) / 15.0f - fpsl + 1.0f);

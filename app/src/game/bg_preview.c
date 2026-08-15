@@ -1,3 +1,4 @@
+
 #include "bg_preview.h"
 
 #ifdef ANDROID
@@ -67,7 +68,8 @@ static bool bg_preview_wanted(tenv* env) {
   tuser_data* usr = env->usr;
   game_data* gdata = &usr->gdata;
 
-  return gdata->curr_screen == SETTINGS || gdata->curr_screen == CONTROLS;
+  return gdata->curr_screen == SETTINGS || gdata->curr_screen == CONTROLS ||
+         gdata->curr_screen == HUD_LAYOUT_EDITOR;
 }
 
 /* Minimal stand-in for game/input.c's input(), used only while the
@@ -221,11 +223,15 @@ void bg_preview_update(tenv* env) {
         server_poll(env);
         oef(env);
         redraw(env);
-        /* No full HUD here — but on the Controls screen specifically,
-           draw the real overlay (boost button, joystick, zoom slider,
-           on-screen hotkey buttons) so the player can actually see
-           where each one lands as they adjust its position sliders. */
-        if (gdata->curr_screen == CONTROLS) ui_overlay(env);
+        /* No full HUD here — but on the Controls screen, and on the
+           HUD Layout editor, draw the real overlay (boost button,
+           joystick, zoom slider, on-screen hotkey buttons, and for
+           the layout editor also the leaderboard/teammates/minimap)
+           so the player can see exactly where each one lands as
+           they adjust it. */
+        if (gdata->curr_screen == CONTROLS ||
+            gdata->curr_screen == HUD_LAYOUT_EDITOR)
+          ui_overlay(env);
 
         if (gdata->closed) {
           game_data_reset(env);

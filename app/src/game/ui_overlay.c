@@ -19,13 +19,16 @@
 #endif
 
 /*
- * Shared by the leaderboard and teammates list under "Adjust HUD
- * Layout" mode (see settings.c) -- both are simple position-only
- * drag targets, unlike the minimap's separate move+resize editor
- * further down. `edit_action`/`drag_dx`/`drag_dy`/`was_editing` are
- * each caller's own persistent (static) state; `pos_custom`/
- * `rel_x`/`rel_y` point at the matching user_settings fields to
- * update.
+ * Shared by the leaderboard, teammates list, and (for resizing)
+ * the leaderboard's corner handle, all under the dedicated HUD
+ * layout editor screen (see ui/hud_layout_editor.c) reached via
+ * "Adjust HUD Layout" in Settings -- unlike the minimap's own
+ * separate move+resize editor further down, gated by its own
+ * `minimap_drag_enabled` setting, these are only draggable while
+ * actually on that screen. `edit_action`/`drag_dx`/`drag_dy`/
+ * `was_editing` are each caller's own persistent (static) state;
+ * `pos_custom`/`rel_x`/`rel_y` point at the matching user_settings
+ * fields to update.
  */
 #ifdef ANDROID
 static void hud_layout_drag_rect(
@@ -33,21 +36,22 @@ static void hud_layout_drag_rect(
     float x, float y, float w, float h,
     bool* pos_custom, float* rel_x, float* rel_y,
     int* edit_action, float* drag_dx, float* drag_dy, bool* was_editing) {
-  if (usrs->hud_layout_edit_mode) {
+  if (env->usr->gdata.curr_screen == HUD_LAYOUT_EDITOR) {
     float hit_pad = 10.0f;
     android_ui_capture_rect(x - hit_pad, y - hit_pad, x + w + hit_pad,
                             y + h + hit_pad);
 
     touch_state* ui = &env->wnd->ui_touch;
-    if (ui->just_down && ui->x >= x - hit_pad && ui->x <= x + w + hit_pad &&
-        ui->y >= y - hit_pad && ui->y <= y + h + hit_pad) {
+    if (ui->just_down && *edit_action == 0 && ui->x >= x - hit_pad &&
+        ui->x <= x + w + hit_pad && ui->y >= y - hit_pad &&
+        ui->y <= y + h + hit_pad) {
       *edit_action = 1;
       *was_editing = true;
       *drag_dx = ui->x - x;
       *drag_dy = ui->y - y;
     }
 
-    if (*edit_action != 0 && ui->down) {
+    if (*edit_action == 1 && ui->down) {
       float nx = ui->x - *drag_dx;
       float ny = ui->y - *drag_dy;
       nx = fmaxf(style->WindowPadding.x,
@@ -57,7 +61,7 @@ static void hud_layout_drag_rect(
       *pos_custom = true;
       *rel_x = nx / ctx->size[0];
       *rel_y = ny / ctx->size[1];
-    } else if (*edit_action != 0 && !ui->down) {
+    } else if (*edit_action == 1 && !ui->down) {
       *edit_action = 0;
       if (*was_editing) save_user_settings(usrs);
       *was_editing = false;
@@ -68,6 +72,67 @@ static void hud_layout_drag_rect(
     ImDrawList_AddRect(edit_dl, (ImVec2){x, y}, (ImVec2){x + w, y + h},
                        IM_COL32(255, 255, 255, 130), 4.0f, 0, 1.5f);
   } else if (*edit_action != 0) {
+    *edit_action = 0;
+    *was_editing = false;
+  }
+}
+
+/*
+ * Bottom-right corner resize handle for the leaderboard, adjusting
+ * its scale (font size and everything derived from it) rather than
+ * an independent width/height -- the table's own content dictates
+ * its size, there's nothing else to resize. `base_w`/`base_x`/
+ * `base_y`/`base_scale` are the caller's own persistent (static)
+ * state, capturing the box's size/position/scale at the moment the
+ * drag starts so the resulting scale stays proportional to how far
+ * the corner has actually moved, the same way the minimap's own
+ * resize handle works.
+ */
+static void hud_layout_resize_handle(
+    tenv* env, user_settings* usrs, float x, float y, float w, float h,
+    float* scale, float scale_min, float scale_max,
+    int* edit_action, float* base_x, float* base_y, float* base_w,
+    float* base_scale, bool* was_editing) {
+  if (env->usr->gdata.curr_screen == HUD_LAYOUT_EDITOR) {
+    float handle = 22.0f;
+    float hx0 = x + w - handle * 0.5f;
+    float hy0 = y + h - handle * 0.5f;
+    float hx1 = x + w + handle;
+    float hy1 = y + h + handle;
+
+    android_ui_capture_rect(hx0, hy0, hx1, hy1);
+
+    touch_state* ui = &env->wnd->ui_touch;
+    if (ui->just_down && *edit_action == 0 && ui->x >= hx0 && ui->x <= hx1 &&
+        ui->y >= hy0 && ui->y <= hy1) {
+      *edit_action = 2;
+      *was_editing = true;
+      *base_x = x;
+      *base_y = y;
+      *base_w = w > 1.0f ? w : 1.0f;
+      *base_scale = *scale;
+    }
+
+    if (*edit_action == 2 && ui->down) {
+      float desired_w = fmaxf(60.0f, ui->x - *base_x);
+      float ratio = desired_w / *base_w;
+      float new_scale = *base_scale * ratio;
+      if (new_scale < scale_min) new_scale = scale_min;
+      if (new_scale > scale_max) new_scale = scale_max;
+      *scale = new_scale;
+    } else if (*edit_action == 2 && !ui->down) {
+      *edit_action = 0;
+      if (*was_editing) save_user_settings(usrs);
+      *was_editing = false;
+    }
+
+    ImDrawList* edit_dl =
+        igGetForegroundDrawList_ViewportPtr(igGetMainViewport());
+    ImDrawList_AddRectFilled(
+        edit_dl, (ImVec2){x + w - handle, y + h - handle},
+        (ImVec2){x + w + handle * 0.4f, y + h + handle * 0.4f},
+        IM_COL32(255, 255, 255, 90), 3.0f, 0);
+  } else if (*edit_action == 2) {
     *edit_action = 0;
     *was_editing = false;
   }
@@ -255,8 +320,12 @@ void ui_overlay(tenv* env) {
      * touching the lb_font_size setting or anything else in the
      * HUD. This build's ImGui sizes fonts per-push (no separate
      * window-scale call), so the shrink is baked into the explicit
-     * size passed to every igPushFont() in this block instead. */
-    const float lb_scale = 0.72f;
+     * size passed to every igPushFont() in this block instead.
+     * Player-adjustable (default 0.72) via the corner-drag resize
+     * handle in the HUD layout editor -- see hud_layout_resize_handle. */
+    float lb_scale = usrs->leaderboard_scale;
+    if (lb_scale < 0.40f) lb_scale = 0.40f;
+    if (lb_scale > 1.50f) lb_scale = 1.50f;
     float lb_size =
         usr->imgui_data.mono_font[usrs->lb_font_size]->LegacySize * lb_scale;
     float lb_size_bold =
@@ -342,6 +411,17 @@ void ui_overlay(tenv* env) {
       static int s_lb_edit_action = 0;
       static float s_lb_drag_dx = 0.0f, s_lb_drag_dy = 0.0f;
       static bool s_lb_was_editing = false;
+      static float s_lb_resize_base_x = 0.0f, s_lb_resize_base_y = 0.0f;
+      static float s_lb_resize_base_w = 0.0f, s_lb_resize_base_scale = 0.72f;
+      /* Resize handle checked first so a touch right on the corner
+       * (where its hit-region overlaps the move rect below) claims
+       * the drag as a resize, not a move. */
+      hud_layout_resize_handle(env, usrs, lb_x, lb_y, tb_width,
+                               lb_bottom_y - lb_y, &usrs->leaderboard_scale,
+                               0.40f, 1.50f, &s_lb_edit_action,
+                               &s_lb_resize_base_x, &s_lb_resize_base_y,
+                               &s_lb_resize_base_w, &s_lb_resize_base_scale,
+                               &s_lb_was_editing);
       hud_layout_drag_rect(env, usrs, ctx, style, lb_x, lb_y, tb_width,
                            lb_bottom_y - lb_y, &usrs->leaderboard_pos_custom,
                            &usrs->leaderboard_rel_x, &usrs->leaderboard_rel_y,
@@ -463,7 +543,7 @@ void ui_overlay(tenv* env) {
     static float s_minimap_fixed_x = 0.0f, s_minimap_fixed_y = 0.0f;
     static bool s_minimap_was_editing = false;
 
-    if (usrs->minimap_drag_enabled) {
+    if (usrs->minimap_drag_enabled || gdata->curr_screen == HUD_LAYOUT_EDITOR) {
       float hit_pad = fmaxf(10.0f, mm_size * 0.05f);
       android_ui_capture_rect(mm_x - hit_pad, mm_y - hit_pad,
                               mm_x + mm_size + hit_pad,

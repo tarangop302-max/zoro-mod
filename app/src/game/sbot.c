@@ -683,6 +683,37 @@ static void follow_circle_self(game_data* gdata) {
       if (dm < enemy_head_d2) enemy_head_d2 = dm;
     }
 
+    /*
+     * How tight the loop is allowed to hug this enemy's body, scaled
+     * by how close it currently is -- not a flat constant. A far-off
+     * enemy leaves the floor at -B.width, same as before (tight,
+     * corner-almost-touching hugging, unchanged from the original
+     * behavior when there's no real threat). A close one raises the
+     * floor toward 0 (no tightening below the plain sum-of-radii
+     * safe distance), so the loop proactively widens well before
+     * the enemy is actually in range -- worst-casing them as if
+     * already boosting toward this point, the way a real opponent
+     * might be, rather than only reacting once they're already
+     * close at their current speed. It still narrows back down on
+     * its own as `enemy_dist` grows again once they pass or turn
+     * away, via the same per-point search below.
+     */
+    float enemy_dist = sqrtf(dist2(B.x, B.y, sk->xx, sk->yy));
+    float danger_range = 20.0f * B.width;
+    float proximity = 1.0f - fminf(1.0f, enemy_dist / danger_range);
+    float enemy_od_floor = -B.width + proximity * B.width;
+
+    /*
+     * enemy_body_od only ever shrinks as the search below tightens
+     * it, and it's shared across every enemy checked this frame --
+     * so if a distant enemy (low floor) got processed first, it
+     * could leave enemy_body_od sitting below a closer enemy's
+     * higher floor by the time we get here. Bring it back up to at
+     * least this enemy's own floor before searching, or the loop
+     * below would start (and stay) too tight for them.
+     */
+    if (enemy_body_od < enemy_od_floor) enemy_body_od = enemy_od_floor;
+
     bool offset_set = false;
     float offset = 0.0f;
     poly_box cpolbody;
@@ -695,7 +726,7 @@ static void follow_circle_self(game_data* gdata) {
       v2 pt = {po->xx, po->yy};
 
       while (!offset_set ||
-             (enemy_body_od >= -B.width && point_in_poly(pt, &cpolbody))) {
+             (enemy_body_od >= enemy_od_floor && point_in_poly(pt, &cpolbody))) {
         if (!offset_set) {
           offset_set = true;
         } else {
@@ -799,11 +830,24 @@ static void to_circle(game_data* gdata) {
     }
   if (!me) return;
 
-  int pn = tdarray_length(me->pts), checked = 0;
-  for (int i = 0; i < pn && checked < 20; i++) {
+  /*
+   * Scan the WHOLE body for the head looping back onto it, not just
+   * the first 20 non-dying points encountered. That arbitrary cap
+   * only reliably finds the self-intersection on a small, regular
+   * coil -- on anything else (a larger loop, an irregular shape, or
+   * simply having eaten/grown since the loop started forming), the
+   * actual crossing point can sit well past the 20th point, so it's
+   * never found. B.stage then never advances to 2, and the bot is
+   * left running the reactive, turn-by-turn avoidance in stage 1
+   * (check_collision/check_encircle) indefinitely instead of
+   * settling into the smooth, dedicated circle-following behavior
+   * below -- which looks exactly like "boosting and running here
+   * and there" instead of holding a steady loop.
+   */
+  int pn = tdarray_length(me->pts);
+  for (int i = 0; i < pn; i++) {
     body_part* po = me->pts + i;
     if (po->dying) continue;
-    checked++;
     circ tc = {po->xx, po->yy, B.radius};
     if (circle_intersect(B.head_circle, tc, NULL)) {
       B.stage = 2;

@@ -185,18 +185,28 @@ typedef struct user_settings {
   float public_chat_rel_w;
   float public_chat_rel_h;
 
-  /* v2.8 extension fields. Saved position for the in-game
-     leaderboard and teammates list (ui_overlay.c), set via the
-     "Adjust HUD Layout" mode in Settings. Relative to the viewport
-     work area. Ignored (default top-right placement used instead)
-     until customized, at which point the matching *_pos_custom
-     flag is set. hud_layout_edit_mode itself is never persisted --
-     see read_user_settings(), which always forces it back off, so
-     the app never reopens stuck in the middle of an edit session. */
+  /* v2.8 extension fields. Saved position (and, for the
+     leaderboard, scale) for the in-game leaderboard, teammates
+     list, and minimap (ui_overlay.c), set from the dedicated HUD
+     layout editor screen reached via "Adjust HUD Layout" in
+     Settings (see hud_layout_editor.c). Relative to the viewport
+     work area. Ignored (default placement used instead) until
+     customized, at which point the matching *_pos_custom flag is
+     set.
+
+     hud_layout_edit_mode is unused -- an earlier version of this
+     editor toggled live gameplay settings (bot mode, instant
+     restart) directly rather than using the isolated preview
+     session hud_layout_editor.c uses now, and this flag gated
+     that. Kept as an inert placeholder rather than removed, since
+     removing a field from the middle of this struct would shift
+     every field after it and misread already-saved settings
+     files. Always false; see read_user_settings(). */
   bool  hud_layout_edit_mode;
   bool  leaderboard_pos_custom;
   float leaderboard_rel_x;
   float leaderboard_rel_y;
+  float leaderboard_scale;
   bool  teammates_pos_custom;
   float teammates_rel_x;
   float teammates_rel_y;

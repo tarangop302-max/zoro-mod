@@ -205,17 +205,17 @@ void input(tenv* env) {
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;
     me->eang = atan2f(ym, xm);
     float ang;
-    /* Human turning input: send the new heading the moment it changes,
-       instead of waiting on an artificial per-frame send-rate cap. The
-       sang-change check below already dedupes redundant sends, so this
-       does not flood the socket -- it just removes the extra latency
-       the old 50ms gate added on top of normal network round-trip time
-       before the server (and therefore o->wang / the physics turn-rate
-       in oef.c) ever saw the new direction. Bot-controlled turning is
-       untouched: it goes through this same immediate path already, and
-       nothing about its own decision-making changes. */
-    if (want_e) {
+    /* Rate-limited to roughly the server's expected steering-update
+       cadence (~20/sec). This isn't a latency compromise -- 50ms is
+       well under human reaction time -- it's what keeps the socket
+       from getting flagged by the server's flood protection during
+       continuous mouse movement, where the sang-change check below
+       still changes almost every frame and can't dedupe that on its
+       own. Removing this caused disconnects back to the lobby after
+       a few seconds of steering. */
+    if (want_e && gdata->data.ctm - gdata->data.last_e_mtm > 50) {
       want_e = false;
+      gdata->data.last_e_mtm = gdata->data.ctm;
       gdata->data.lsxm = xm;
       gdata->data.lsym = ym;
       float d2 = xm * xm + ym * ym;

@@ -4,7 +4,7 @@
 #include "oef.h"
 
 #include "../user.h"
-#include "ntl_bot_adapter.h"
+#include "sbot.h"
 
 void time_step(tenv* env) {
   tuser_data* usr = env->usr;
@@ -436,9 +436,9 @@ void oef(tenv* env) {
   }
 
   if (usrs->hotkeys[HOTKEY_BOT].active && gdata->data.follow_view) {
-    ntl_bot_adapter_go(env);
+    sbot_go(env);
   } else {
-    /* ntl_bot_adapter_go only runs while the bot is active, so without
+    /* sbot_go only runs while the bot is active, so without
      * this, whatever accel/xm/ym it last wrote (e.g. accel=true from an
      * evade decision) would stay stuck forever after the bot is turned
      * off, permanently overriding manual boost/steering input. */

@@ -213,7 +213,7 @@ void input(tenv* env) {
        still changes almost every frame and can't dedupe that on its
        own. Removing this caused disconnects back to the lobby after
        a few seconds of steering. */
-    if (want_e && gdata->data.ctm - gdata->data.last_e_mtm > 50) {
+    if (want_e && gdata->data.ctm - gdata->data.last_e_mtm > 100) {
       want_e = false;
       gdata->data.last_e_mtm = gdata->data.ctm;
       gdata->data.lsxm = xm;

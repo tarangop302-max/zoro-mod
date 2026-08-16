@@ -305,22 +305,12 @@ void ui_overlay(tenv* env) {
     igSameLine(0, 0);
     igTextColored((ImVec4){1, 1, 1, 0.5}, " / %d", gdata->data.slither_count);
 
-    /* Current snake length (body segment count), not total score.
-       Segments are pushed/removed from `pts` live as the snake grows
-       or boosts, so this tracks length in real time. */
-    int my_length = 0;
-    int len_snakes_len = tdarray_length(gdata->data.snakes);
-    if (len_snakes_len) {
-      snake* len_me = gdata->data.snakes + (len_snakes_len - 1);
-      my_length = tdarray_length(len_me->pts);
-    }
-
     igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue99e");
     igSameLine(0, -1);
     igPushFont(
         usr->imgui_data.mono_font_bold[usrs->stats_font_size],
         usr->imgui_data.mono_font_bold[usrs->stats_font_size]->LegacySize);
-    igTextColored((ImVec4){1, 1, 1, 0.7}, "%d", my_length);
+    igTextColored((ImVec4){1, 1, 1, 0.7}, "%d", gdata->data.score);
     igPopFont();
 
     igPopFont();

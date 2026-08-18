@@ -781,6 +781,13 @@ static void follow_circle_self(game_data* gdata) {
     head_prox = 0.125f * head_prox * head_prox;
   else
     head_prox = -0.500f * head_prox * head_prox;
+  /* In a dense crowd, the single nearest enemy head is often just close
+   * by from sheer density, not on an actual collision line -- without a
+   * floor here, that still forces target_course arbitrarily negative,
+   * which yanks the goal toward the center of the loop instead of
+   * continuing to circle. Cap the pull so a genuinely close call still
+   * gets a strong reaction, but bystanders can't override circling. */
+  head_prox = fmaxf(head_prox, -2.0f);
   target_course = fminf(target_course, head_prox);
 
   float adj_body = (enemy_body_od - 0.0625f * B.width) / B.width;

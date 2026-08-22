@@ -220,7 +220,7 @@ void ui_title_screen(tenv* env) {
     usr->gdata.curr_screen = CONTROLS;
   }
   igSameLine(0, -1);
-  if (igButton("TEAM CHAT",
+  if (igButton("Chat",
                (ImVec2){logo_size / 2 - style->ItemSpacing.x / 2})) {
     usr->gdata.curr_screen = NTL_PANEL;
   }
@@ -228,6 +228,18 @@ void ui_title_screen(tenv* env) {
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 6 +
                   frame_height * 5);
+  /* Voice Chat: matches Vlither's panel layout. Vlither's button opens a
+     full voice-chat screen backed by mic capture/network code this repo
+     doesn't have yet, so for now this opens the existing team chat panel
+     instead of a dead button. Swap the target screen here once/if a real
+     voice backend is ported. */
+  if (igButton("Voice Chat", (ImVec2){logo_size})) {
+    usr->gdata.curr_screen = NTL_PANEL;
+  }
+
+  igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
+  igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 7 +
+                  frame_height * 6);
   if (igButton("\ue9b6 Quit", (ImVec2){logo_size})) {
     env->config.running = false;
     save_user_settings(usrs);

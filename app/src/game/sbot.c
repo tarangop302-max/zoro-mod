@@ -679,7 +679,6 @@ static void follow_circle_self(game_data* gdata) {
 
   float offset_incr = 0.0625f * B.width;
 
-  float enemy_body_od = 0.25f * B.width;
   float enemy_head_d2 = 64.0f * 64.0f * B.width * B.width;
 
   int ns = tdarray_length(gdata->data.snakes);
@@ -687,7 +686,6 @@ static void follow_circle_self(game_data* gdata) {
     snake* sk = gdata->data.snakes + i;
     if (sk->id == B.id) continue;
 
-    float ew = snake_width(sk->sc);
     v2 eh = {sk->xx, sk->yy};
     v2 ea = {eh.x + cosf(sk->ang) * B.width, eh.y + sinf(sk->ang) * B.width};
 
@@ -699,49 +697,19 @@ static void follow_circle_self(game_data* gdata) {
     }
 
     /*
-     * Matches the original: a fresh offset search for every enemy,
-     * floored at -B.width (the same tight, corner-almost-touching
-     * hugging distance the loop always allows down to). Each enemy
-     * is judged independently against its own body points -- no
-     * cross-enemy carry-over and no distance-scaled floor -- so an
-     * enemy that's actually squeezed in close still tightens all the
-     * way down to its true contact offset, instead of being capped
-     * early because some other, unrelated enemy was processed first
-     * this frame.
+     * bot_brain_exact.js's equivalent per-segment enemy-body loop
+     * computes a local offset/polygon per segment but never feeds it
+     * into steer/target_course anywhere -- it has no effect on the
+     * faithful bot's output. Two different custom attempts at wiring
+     * an equivalent "bend away from a squeezing enemy body" reaction
+     * into target_course here both caused real instability (one went
+     * inert exactly when it mattered, the other overreacted hard in
+     * crowds), so this is intentionally left out rather than guessed
+     * at a third time. Enemy avoidance while circling still comes
+     * from enemy_head_dist/head_prox below (unchanged) plus the
+     * reactive stage-1 check_collision()/check_encircle() that run
+     * before the snake ever reaches circle mode.
      */
-    float this_enemy_od = 0.0f;
-    bool offset_set = false;
-    float offset = 0.0f;
-    poly_box cpolbody;
-    float body_offset = 0.5f * (B.width + ew);
-
-    int pn = tdarray_length(sk->pts);
-    for (int j = 0; j < pn; j++) {
-      body_part* po = sk->pts + j;
-      if (po->dying) continue;
-      v2 pt = {po->xx, po->yy};
-
-      while (!offset_set ||
-             (this_enemy_od >= -B.width && point_in_poly(pt, &cpolbody))) {
-        if (!offset_set) {
-          offset_set = true;
-        } else {
-          this_enemy_od -= offset_incr;
-        }
-        offset = body_offset + this_enemy_od;
-        body_danger_zone(offset, target_pt, close_norm, close_dist, past_target,
-                         close_pt, &cpolbody);
-      }
-    }
-
-    /*
-     * enemy_body_od (used below to bend target_course) is the
-     * tightest constraint seen across every enemy this frame -- the
-     * one whose body is actually squeezed closest is what should
-     * decide how far the loop bends outward, regardless of which
-     * enemy happened to be processed first.
-     */
-    if (this_enemy_od < enemy_body_od) enemy_body_od = this_enemy_od;
   }
 
   float dist_to_ctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
@@ -794,9 +762,6 @@ static void follow_circle_self(game_data* gdata) {
    * gets a strong reaction, but bystanders can't override circling. */
   head_prox = fmaxf(head_prox, -2.0f);
   target_course = fminf(target_course, head_prox);
-
-  float adj_body = (enemy_body_od - 0.0625f * B.width) / B.width;
-  target_course = fminf(target_course, target_course + adj_body);
 
   if (near_wall) {
     float adj_wall = (wall_od - 0.0625f * B.width) / B.width;

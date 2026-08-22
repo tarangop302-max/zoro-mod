@@ -8,7 +8,6 @@
 #include "ui/settings.h"
 #include "ui/controls.h"
 #include "ui/hud_layout_editor.h"
-#include "ui/key_buttons.h"
 #include "ui/viewport.h"
 
 #include "user.h"
@@ -238,10 +237,6 @@ void tinit(tenv* env) {
   }
 
 
-  ui_key_buttons_init(
-      env
-  );
-
   ntl_team_init(
       env
   );
@@ -277,11 +272,6 @@ void tdestroy(tenv* env) {
     env->usr->tchat =
         NULL;
   }
-
-
-  ui_key_buttons_destroy(
-      env
-  );
 
 
   // Destroy new Global Chat
@@ -782,20 +772,6 @@ void trender(tenv* env) {
     global_chat_update(
         env
     );
-
-
-    if (
-        gdata->curr_screen ==
-            PLAYING ||
-
-        gdata->curr_screen ==
-            TITLE_SCREEN
-    ) {
-
-      ui_key_buttons(
-          env
-      );
-    }
 
 
     if (

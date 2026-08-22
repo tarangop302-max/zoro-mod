@@ -635,18 +635,19 @@ static void follow_circle_self(game_data* gdata) {
   /*
    * The corridor/spine projection below needs enough looped body (9
    * body-widths) to have a stable near/far reference point -- on a
-   * small or freshly-formed loop that isn't met yet. Returning here
-   * used to leave B.goal at whatever stale value it last held, which
-   * is what made the bot appear to stop following the loop on a
-   * small-radius circle. Fall back to the same gentle turn in the
-   * circling direction that to_circle() uses before a loop is even
-   * detected, so the snake keeps tightening the loop instead of
-   * freezing on an old target.
+   * small or freshly-formed loop that isn't met yet. This matches the
+   * faithful original: just leave B.goal untouched and wait for the
+   * loop to grow, rather than actively steering here. An earlier
+   * version of this fix nudged the heading directly, but that nudge
+   * had no awareness of the arena center or the wall -- if this
+   * condition kept re-triggering it could walk the snake straight
+   * toward the boundary with nothing pulling it back. Freezing the
+   * goal is safe because check_collision()/check_encircle() (stage 1,
+   * run before the snake ever reaches stage 2) already handle wall
+   * and enemy avoidance reactively; this early-return only matters
+   * for the brief window right as a loop first forms.
    */
-  if (B.bpts_len < 9.0f * B.width) {
-    B.goal = heading_rel((o * (float)M_PI) / 32.0f);
-    return;
-  }
+  if (B.bpts_len < 9.0f * B.width) return;
 
   float close_t = closest_body_point();
   v2 close_pt = smooth_point(close_t);

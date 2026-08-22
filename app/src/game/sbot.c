@@ -632,7 +632,21 @@ static void follow_circle_self(game_data* gdata) {
   determine_circle_dir();
   int o = B.circle_dir;
 
-  if (B.bpts_len < 9.0f * B.width) return;
+  /*
+   * The corridor/spine projection below needs enough looped body (9
+   * body-widths) to have a stable near/far reference point -- on a
+   * small or freshly-formed loop that isn't met yet. Returning here
+   * used to leave B.goal at whatever stale value it last held, which
+   * is what made the bot appear to stop following the loop on a
+   * small-radius circle. Fall back to the same gentle turn in the
+   * circling direction that to_circle() uses before a loop is even
+   * detected, so the snake keeps tightening the loop instead of
+   * freezing on an old target.
+   */
+  if (B.bpts_len < 9.0f * B.width) {
+    B.goal = heading_rel((o * (float)M_PI) / 32.0f);
+    return;
+  }
 
   float close_t = closest_body_point();
   v2 close_pt = smooth_point(close_t);
@@ -684,36 +698,17 @@ static void follow_circle_self(game_data* gdata) {
     }
 
     /*
-     * How tight the loop is allowed to hug this enemy's body, scaled
-     * by how close it currently is -- not a flat constant. A far-off
-     * enemy leaves the floor at -B.width, same as before (tight,
-     * corner-almost-touching hugging, unchanged from the original
-     * behavior when there's no real threat). A close one raises the
-     * floor toward 0 (no tightening below the plain sum-of-radii
-     * safe distance), so the loop proactively widens well before
-     * the enemy is actually in range -- worst-casing them as if
-     * already boosting toward this point, the way a real opponent
-     * might be, rather than only reacting once they're already
-     * close at their current speed. It still narrows back down on
-     * its own as `enemy_dist` grows again once they pass or turn
-     * away, via the same per-point search below.
+     * Matches the original: a fresh offset search for every enemy,
+     * floored at -B.width (the same tight, corner-almost-touching
+     * hugging distance the loop always allows down to). Each enemy
+     * is judged independently against its own body points -- no
+     * cross-enemy carry-over and no distance-scaled floor -- so an
+     * enemy that's actually squeezed in close still tightens all the
+     * way down to its true contact offset, instead of being capped
+     * early because some other, unrelated enemy was processed first
+     * this frame.
      */
-    float enemy_dist = sqrtf(dist2(B.x, B.y, sk->xx, sk->yy));
-    float danger_range = 20.0f * B.width;
-    float proximity = 1.0f - fminf(1.0f, enemy_dist / danger_range);
-    float enemy_od_floor = -B.width + proximity * B.width;
-
-    /*
-     * enemy_body_od only ever shrinks as the search below tightens
-     * it, and it's shared across every enemy checked this frame --
-     * so if a distant enemy (low floor) got processed first, it
-     * could leave enemy_body_od sitting below a closer enemy's
-     * higher floor by the time we get here. Bring it back up to at
-     * least this enemy's own floor before searching, or the loop
-     * below would start (and stay) too tight for them.
-     */
-    if (enemy_body_od < enemy_od_floor) enemy_body_od = enemy_od_floor;
-
+    float this_enemy_od = 0.0f;
     bool offset_set = false;
     float offset = 0.0f;
     poly_box cpolbody;
@@ -726,17 +721,26 @@ static void follow_circle_self(game_data* gdata) {
       v2 pt = {po->xx, po->yy};
 
       while (!offset_set ||
-             (enemy_body_od >= enemy_od_floor && point_in_poly(pt, &cpolbody))) {
+             (this_enemy_od >= -B.width && point_in_poly(pt, &cpolbody))) {
         if (!offset_set) {
           offset_set = true;
         } else {
-          enemy_body_od -= offset_incr;
+          this_enemy_od -= offset_incr;
         }
-        offset = body_offset + enemy_body_od;
+        offset = body_offset + this_enemy_od;
         body_danger_zone(offset, target_pt, close_norm, close_dist, past_target,
                          close_pt, &cpolbody);
       }
     }
+
+    /*
+     * enemy_body_od (used below to bend target_course) is the
+     * tightest constraint seen across every enemy this frame -- the
+     * one whose body is actually squeezed closest is what should
+     * decide how far the loop bends outward, regardless of which
+     * enemy happened to be processed first.
+     */
+    if (this_enemy_od < enemy_body_od) enemy_body_od = this_enemy_od;
   }
 
   float dist_to_ctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));

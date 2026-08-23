@@ -108,6 +108,11 @@ typedef struct user_settings {
 
   float arrow_size;
   float arrow_sensitivity;
+  /* Originally drove a separate glow-pulse layer behind the arrow while
+     boosting; that layer was removed. Now controls whether the arrow
+     itself grows while boosting (see boost_sz in ui_overlay.c) -- off
+     by default, so the arrow stays a constant size unless the player
+     opts in via Controls > Touch Arrow Cursor. */
   bool  boost_arrow_anim;
   bool  arrow_invisible;
   bool  bot_vis;

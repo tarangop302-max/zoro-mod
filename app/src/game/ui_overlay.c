@@ -805,7 +805,7 @@ void ui_overlay(tenv* env) {
         float cs   = cosf(rot);
         float sn_v = sinf(rot);
 
-        float boost_sz = 1.0f + 0.5f * s_accel_a;
+        float boost_sz = usrs->boost_arrow_anim ? (1.0f + 0.5f * s_accel_a) : 1.0f;
         float aw = sh * 0.11f  * usrs->arrow_size * boost_sz;
         float ah = sh * 0.066f * usrs->arrow_size * boost_sz;
 
@@ -886,9 +886,10 @@ void ui_overlay(tenv* env) {
 
         /* Boost pulse-glow layer removed: the arrow used to grow a
            second, brighter copy of itself behind it (pulsing opacity
-           via s_accel_a/s_accel_fr) whenever boosting. The arrow
-           itself still grows slightly on boost (see boost_sz above) --
-           only the extra glow silhouette is gone. */
+           via s_accel_a/s_accel_fr) whenever boosting. That glow
+           silhouette is gone for good; the arrow's own size on boost
+           is controlled separately by boost_arrow_anim above (off by
+           default, toggle in Controls > Touch Arrow Cursor). */
 
         #undef ARPT
       }

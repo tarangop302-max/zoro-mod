@@ -906,6 +906,12 @@ static void every(game_data* gdata) {
   if (!me) {
     me = gdata->data.snakes + (ns - 1);
     B.id = me->id;
+    /* We only land here when we don't have a live snake to track yet --
+     * bot just turned on, or the previous snake died and this is a
+     * fresh one after respawn. Either way, start straight into
+     * loop-forming instead of the food-chasing grow stage, so a
+     * respawn doesn't send the bot roaming across the map again. */
+    B.stage = 1;
   }
 
   B.x = me->xx;
@@ -932,7 +938,10 @@ void sbot_init(tenv* env) {
   tuser_data* usr = env->usr;
   game_data* gdata = &usr->gdata;
   memset(&B, 0, sizeof(B));
-  B.stage = 0;
+  /* Skip the food-chasing grow stage entirely -- start straight into
+   * loop-forming so the bot only ever circles, never roams the map
+   * for food. */
+  B.stage = 1;
   B.delay_frame = -1;
   B.default_accel = 0;
   B.circle_dir = +1;
@@ -958,7 +967,9 @@ void sbot_go(tenv* env) {
 
   every(gdata);
 
-  if (B.snake_len < B.follow_circle_length) B.stage = 0;
+  /* No score-threshold check here anymore -- "just circle" mode never
+   * drops back to the food-chasing grow stage. every() already resets
+   * to stage 1 (loop-forming) on respawn, above. */
   if (B.has_food && B.stage != 0) B.has_food = false;
 
   if (B.stage == 2) {

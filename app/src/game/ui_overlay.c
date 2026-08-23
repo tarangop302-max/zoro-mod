@@ -834,13 +834,13 @@ void ui_overlay(tenv* env) {
 
           ImTextureRef arrow_tex = {NULL, (ImTextureID)usr->r->arrow_atlas_ds};
 
-          /* Every design in the atlas is drawn pointing left (low u =
-             tip), and this shape's actual tip sits at local -X (the
-             old hand-drawn dart's sharp point was on that side, not
-             +X) -- so this is a direct, unflipped UV mapping. */
+          /* Verified empirically against a device screenshot: with a
+             direct (unflipped) UV mapping the tip rendered on the
+             wrong side, so this flips U -- tip (low u) goes on local
+             +X, tail (high u) on local -X. */
           ImDrawList_AddImageQuad(dl, arrow_tex, p_tl, p_tr, p_br, p_bl,
-            (ImVec2){u0, v0}, (ImVec2){u1, v0},
-            (ImVec2){u1, v1}, (ImVec2){u0, v1},
+            (ImVec2){u1, v0}, (ImVec2){u0, v0},
+            (ImVec2){u0, v1}, (ImVec2){u1, v1},
             IM_COL32(255, 255, 255, 230));
         } else {
           /* Fallback if the atlas texture failed to load for any

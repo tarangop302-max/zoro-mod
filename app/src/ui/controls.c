@@ -266,6 +266,8 @@ void ui_controls(tenv* env) {
           igAlignTextToFramePadding();
           igText("Invisible arrow");
           igAlignTextToFramePadding();
+          igText("Grows on boost");
+          igAlignTextToFramePadding();
           igText("Sync with zoom");
           igAlignTextToFramePadding();
           igText("Head dot colour");
@@ -278,6 +280,7 @@ void ui_controls(tenv* env) {
           igSliderFloat("##arrow sens", &usrs->arrow_sensitivity, 0.25f, 3.00f, "%.2f",
                         ImGuiSliderFlags_AlwaysClamp);
           igCheckbox("##arrow invisible", &usrs->arrow_invisible);
+          igCheckbox("##arrow grows boost", &usrs->boost_arrow_anim);
           igCheckbox("##arrow sync zoom", &usrs->arrow_sync_with_zoom);
           igSetNextItemWidth(-1);
           igColorEdit3("##head dot colour", usrs->head_dot_color,

@@ -210,6 +210,22 @@ typedef struct user_settings {
   bool  teammates_pos_custom;
   float teammates_rel_x;
   float teammates_rel_y;
+
+  /* v2.9 extension fields, ported from Vlither-android. These stay at the
+     end so pre-v2.9 files remain a compatible prefix.
+
+     key_btn_shape: per-slot shape for custom keyboard buttons (0 = rounded
+     rectangle, 1 = circle), set from the keyboard button editor.
+
+     arrow_style: selected index into the touch-arrow design atlas.
+     arrow_sync_with_zoom: when true, the arrow/head-dot scale with game
+     zoom; when false they keep a fixed on-screen size.
+     head_dot_color: local head-dot tint, chosen via the Controls color
+     picker. */
+  uint8_t key_btn_shape[MAX_KEY_BTNS];
+  int   arrow_style;
+  bool  arrow_sync_with_zoom;
+  vec3  head_dot_color;
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

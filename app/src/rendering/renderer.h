@@ -44,6 +44,12 @@ typedef struct renderer {
   texture* bg_tex;
   texture* boost_button_tex;
   VkDescriptorSet boost_button_ds;
+  /* All nine fixed-colour arrows share one atlas and one ImGui descriptor,
+     ported from Vlither's arrow design picker. Optional: a missing/failed
+     load leaves these NULL/VK_NULL_HANDLE and the Controls picker falls
+     back to plain text buttons instead of thumbnails. */
+  texture* arrow_atlas_tex;
+  VkDescriptorSet arrow_atlas_ds;
 
   VkSampler linear_sampler;
   VkSampler nearest_sampler;

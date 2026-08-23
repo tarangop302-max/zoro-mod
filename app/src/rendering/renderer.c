@@ -165,6 +165,20 @@ renderer* renderer_create(tenv* env) {
       r->linear_sampler, r->boost_button_tex->view,
       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+  /* Optional arrow-design atlas for the Controls "Arrow design" picker.
+     Kept non-fatal (like boost_button is fatal but this is not) so a
+     missing/failed load never prevents the renderer from starting --
+     the picker just falls back to plain text buttons. */
+  DLOG("renderer: loading arrow atlas texture");
+  r->arrow_atlas_tex = create_mipmap_texture(
+      ctx, "app/res/textures/arrow_atlas.png");
+  r->arrow_atlas_ds = VK_NULL_HANDLE;
+  if (r->arrow_atlas_tex)
+    r->arrow_atlas_ds = igImplVulkan_AddTexture(
+        r->linear_sampler, r->arrow_atlas_tex->view,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  DLOG("renderer: arrow_atlas_tex=%p", (void*)r->arrow_atlas_tex);
+
   vkCreateRenderPass(
       ctx->device,
       &(VkRenderPassCreateInfo){
@@ -459,6 +473,8 @@ void renderer_destroy(renderer* r, tcontext* ctx) {
   free(r->images);
   if (r->boost_button_ds) igImplVulkan_RemoveTexture(r->boost_button_ds);
   destroy_texture(ctx, r->boost_button_tex);
+  if (r->arrow_atlas_ds) igImplVulkan_RemoveTexture(r->arrow_atlas_ds);
+  if (r->arrow_atlas_tex) destroy_texture(ctx, r->arrow_atlas_tex);
   destroy_texture(ctx, r->tex_atlas);
   destroy_texture(ctx, r->bg_tex);
   vkDestroySampler(ctx->device, r->nearest_sampler, NULL);

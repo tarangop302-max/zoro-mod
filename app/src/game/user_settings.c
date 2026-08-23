@@ -206,6 +206,13 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->teammates_pos_custom = false;
   usr_settings->teammates_rel_x = 0.80f;
   usr_settings->teammates_rel_y = 0.30f;
+
+  memset(usr_settings->key_btn_shape, 0, sizeof(usr_settings->key_btn_shape));
+  usr_settings->arrow_style = 0;
+  usr_settings->arrow_sync_with_zoom = true;
+  usr_settings->head_dot_color[0] = 1.0f;
+  usr_settings->head_dot_color[1] = 1.0f;
+  usr_settings->head_dot_color[2] = 1.0f;
 }
 
 void write_default_settings(user_settings* usr_settings) {
@@ -269,9 +276,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v26_prefix = offsetof(user_settings, public_chat_key);
   size_t v27_prefix = offsetof(user_settings, public_chat_pos_custom);
   size_t v28_prefix = offsetof(user_settings, hud_layout_edit_mode);
+  size_t v29_prefix = offsetof(user_settings, key_btn_shape);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v29_prefix)
+    /* A file saved before the Vlither-ported arrow/head-dot/key-shape
+       fields existed ends at v29_prefix, possibly followed only by
+       compiler tail padding. Do not copy that padding into the new
+       fields. */
+    bytes_to_read = v29_prefix;
   else if ((size_t)file_size >= v28_prefix)
     /* A file saved before the HUD layout fields existed ends at
        v28_prefix, possibly followed only by compiler tail padding. Do not
@@ -423,6 +437,17 @@ void read_user_settings(user_settings* usr_settings) {
      so no saved-true value can ever re-trigger anything else
      that might still check it. */
   loaded.ntl_enabled = false;
+
+  if (loaded.arrow_style < 0 || loaded.arrow_style >= ARROW_STYLE_COUNT)
+    loaded.arrow_style = 0;
+  for (int c = 0; c < 3; ++c) {
+    if (!isfinite(loaded.head_dot_color[c]) || loaded.head_dot_color[c] < 0.0f ||
+        loaded.head_dot_color[c] > 1.0f)
+      loaded.head_dot_color[c] = 1.0f;
+  }
+  for (int i = 0; i < MAX_KEY_BTNS; ++i) {
+    if (loaded.key_btn_shape[i] > 1) loaded.key_btn_shape[i] = 0;
+  }
 
   *usr_settings = loaded;
 }

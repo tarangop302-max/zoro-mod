@@ -1,6 +1,15 @@
 #include "controls.h"
 
+#include <stdio.h>
+
+#include "../arrow_styles.h"
 #include "../user.h"
+#include "key_buttons.h"
+
+static const char* const ARROW_STYLE_NAMES[ARROW_STYLE_COUNT] = {
+    "Red Arrow", "Red 3D", "Blue 3D", "Blue Neon", "Colourful",
+    "Wing 3D", "Yellow Double", "Purple", "Magenta",
+};
 
 void ui_controls_init(tenv* env) {}
 
@@ -245,7 +254,7 @@ void ui_controls(tenv* env) {
         igBeginChild_Str("controls_col2_child", (ImVec2){-1, child_window_height},
                          ImGuiChildFlags_None, ImGuiWindowFlags_None);
 
-        igSeparatorText("Arrow Cursor");
+        igSeparatorText("Touch Arrow Cursor");
         if (igBeginTable("arrow_tbl", 2, ImGuiTableFlags_None, (ImVec2){}, 0)) {
           igTableNextRow(ImGuiTableRowFlags_None, 0);
           igTableSetColumnIndex(0);
@@ -255,9 +264,11 @@ void ui_controls(tenv* env) {
           igAlignTextToFramePadding();
           igText("Sensitivity");
           igAlignTextToFramePadding();
-          igText("Boost arrow glow");
-          igAlignTextToFramePadding();
           igText("Invisible arrow");
+          igAlignTextToFramePadding();
+          igText("Sync with zoom");
+          igAlignTextToFramePadding();
+          igText("Head dot colour");
 
           igTableSetColumnIndex(1);
           igSetNextItemWidth(-1);
@@ -266,16 +277,76 @@ void ui_controls(tenv* env) {
           igSetNextItemWidth(-1);
           igSliderFloat("##arrow sens", &usrs->arrow_sensitivity, 0.25f, 3.00f, "%.2f",
                         ImGuiSliderFlags_AlwaysClamp);
-          igCheckbox("##boost arrow anim", &usrs->boost_arrow_anim);
           igCheckbox("##arrow invisible", &usrs->arrow_invisible);
+          igCheckbox("##arrow sync zoom", &usrs->arrow_sync_with_zoom);
+          igSetNextItemWidth(-1);
+          igColorEdit3("##head dot colour", usrs->head_dot_color,
+                       ImGuiColorEditFlags_None);
           igIndent(-style->WindowPadding.x);
           igEndTable();
         }
-        if (igButton("Reset arrow cursor", (ImVec2){-1, 0.0f})) {
+        igSpacing();
+        {
+          int displayed_arrow_style = usrs->arrow_style;
+          if (displayed_arrow_style < 0 ||
+              displayed_arrow_style >= ARROW_STYLE_COUNT)
+            displayed_arrow_style = 0;
+          igText("Arrow design: %s", ARROW_STYLE_NAMES[displayed_arrow_style]);
+          ImVec2 arrow_picker_avail;
+          igGetContentRegionAvail(&arrow_picker_avail);
+          float arrow_tile = (arrow_picker_avail.x - style->ItemSpacing.x * 2.0f) / 3.0f;
+          if (arrow_tile > 74.0f) arrow_tile = 74.0f;
+          if (arrow_tile < 42.0f) arrow_tile = 42.0f;
+          if (igBeginTable("arrow_design_picker", 3, ImGuiTableFlags_None,
+                           (ImVec2){0, 0}, 0)) {
+            for (int i = 0; i < ARROW_STYLE_COUNT; ++i) {
+              igTableNextColumn();
+              char arrow_id[32];
+              snprintf(arrow_id, sizeof arrow_id, "##arrow_style_%d", i);
+              bool selected = usrs->arrow_style == i;
+              igPushStyleColor_Vec4(
+                  ImGuiCol_Button,
+                  selected ? (ImVec4){0.72f, 0.12f, 0.16f, 0.90f}
+                           : (ImVec4){0.05f, 0.07f, 0.10f, 0.72f});
+              igPushStyleColor_Vec4(
+                  ImGuiCol_ButtonHovered, (ImVec4){0.28f, 0.42f, 0.64f, 0.90f});
+              bool picked = false;
+              if (usr->r && usr->r->arrow_atlas_ds) {
+                float u0, v0, u1, v1;
+                arrow_style_uv_bounds(i, &u0, &v0, &u1, &v1);
+                float preview_w = arrow_tile;
+                float preview_h = arrow_tile / arrow_style_aspect(i);
+                ImTextureRef arrow_tex = {
+                    NULL, (ImTextureID)usr->r->arrow_atlas_ds};
+                picked = igImageButton(
+                    arrow_id, arrow_tex, (ImVec2){preview_w, preview_h},
+                    (ImVec2){u0, v0}, (ImVec2){u1, v1},
+                    (ImVec4){0, 0, 0, 0}, (ImVec4){1, 1, 1, 1});
+              } else {
+                picked = igButton(ARROW_STYLE_NAMES[i],
+                                  (ImVec2){arrow_tile, arrow_tile});
+              }
+              if (picked) usrs->arrow_style = i;
+              if (igIsItemHovered(0)) igSetTooltip("%s", ARROW_STYLE_NAMES[i]);
+              igPopStyleColor(2);
+            }
+            igEndTable();
+          }
+          if (usrs->arrow_sync_with_zoom)
+            igTextDisabled("Arrow size follows game zoom. Head dot size always stays fixed.");
+          else
+            igTextDisabled("Arrow and head dot keep a fixed on-screen size while zooming.");
+        }
+        if (igButton("Reset arrow and head dot", (ImVec2){-1, 0.0f})) {
           usrs->arrow_size        = 1.0f;
           usrs->arrow_sensitivity = 1.0f;
-          usrs->boost_arrow_anim  = true;
+          usrs->boost_arrow_anim  = false;
+          usrs->arrow_style       = 0;
           usrs->arrow_invisible   = false;
+          usrs->arrow_sync_with_zoom = true;
+          usrs->head_dot_color[0] = 1.0f;
+          usrs->head_dot_color[1] = 1.0f;
+          usrs->head_dot_color[2] = 1.0f;
         }
         igSpacing();
         igSpacing();
@@ -333,7 +404,7 @@ void ui_controls(tenv* env) {
 
         igEndChild();
 
-        // ---- Column 3: On-Screen Buttons ----
+        // ---- Column 3: Keyboard Buttons ----
 #ifdef ANDROID
         igTableSetColumnIndex(1);
 #else
@@ -341,28 +412,12 @@ void ui_controls(tenv* env) {
 #endif
         igBeginChild_Str("controls_col3_child", (ImVec2){-1, child_window_height},
                          ImGuiChildFlags_None, ImGuiWindowFlags_None);
-        igSeparatorText("On-Screen Buttons");
-        igTextColored((ImVec4){0.55f, 0.55f, 0.55f, 1.0f},
-                      "Toggle to show a tap button in-game.");
+        igSeparatorText("Keyboard Buttons");
+        igTextWrapped("Create and arrange only the keyboard buttons you need.");
         igSpacing();
-
-        static const char* hk_labels[NUM_HOTKEYS] = {
-          "HUD", "Show Names", "Big Food",
-          "Assist", "Bot", "Menu", "Restart", "Quit"
-        };
-        for (int hi = 0; hi < NUM_HOTKEYS; hi++) {
-          char lbl[80];
-          bool shown = usrs->hk_show_btn[hi];
-          snprintf(lbl, sizeof(lbl), "[%s] %s##hk%d",
-                   shown ? "ON " : "OFF", hk_labels[hi], hi);
-          if (shown) {
-            igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.20f, 0.55f, 0.30f, 0.70f});
-            igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0.30f, 0.65f, 0.40f, 0.80f});
-          }
-          if (igButton(lbl, (ImVec2){-1, 0.0f})) {
-            usrs->hk_show_btn[hi] = !usrs->hk_show_btn[hi];
-          }
-          if (shown) igPopStyleColor(2);
+        if (igButton("Adjust keyboard buttons", (ImVec2){-1, frame_height * 1.7f})) {
+          save_user_settings(usrs);
+          ui_key_buttons_open_editor(env);
         }
         igEndChild();
 
@@ -398,8 +453,13 @@ void ui_controls(tenv* env) {
         usrs->zoom_sensitivity   = 1.0f;
         usrs->arrow_size         = 1.0f;
         usrs->arrow_sensitivity  = 1.0f;
-        usrs->boost_arrow_anim   = true;
+        usrs->boost_arrow_anim   = false;
+        usrs->arrow_style        = 0;
         usrs->arrow_invisible    = false;
+        usrs->arrow_sync_with_zoom = true;
+        usrs->head_dot_color[0]  = 1.0f;
+        usrs->head_dot_color[1]  = 1.0f;
+        usrs->head_dot_color[2]  = 1.0f;
         usrs->bot_vis            = true;
         usrs->zslider_rel_x      = 0.968f;
         usrs->zslider_rel_y      = 0.500f;
@@ -408,7 +468,6 @@ void ui_controls(tenv* env) {
         usrs->zslider_horizontal = false;
         usrs->zslider_hidden     = false;
 
-        for (int i = 0; i < NUM_HOTKEYS; i++) usrs->hk_show_btn[i] = false;
         usrs->ctrl_swap_sides = false;
       }
       igSameLine(0, btn_gap);

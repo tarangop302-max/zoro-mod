@@ -8,6 +8,7 @@
 #include "ui/settings.h"
 #include "ui/controls.h"
 #include "ui/hud_layout_editor.h"
+#include "ui/key_buttons.h"
 #include "ui/viewport.h"
 
 #include "user.h"
@@ -237,6 +238,11 @@ void tinit(tenv* env) {
   }
 
 
+  ui_key_buttons_init(
+      env
+  );
+
+
   ntl_team_init(
       env
   );
@@ -277,6 +283,11 @@ void tdestroy(tenv* env) {
   // Destroy new Global Chat
 
   global_chat_destroy(
+      env
+  );
+
+
+  ui_key_buttons_destroy(
       env
   );
 
@@ -595,6 +606,9 @@ void trender(tenv* env) {
             gdata->curr_screen ==
                 HUD_LAYOUT_EDITOR ||
 
+            gdata->curr_screen ==
+                KEYBOARD_EDITOR ||
+
             igGetIO_Nil()
                 ->WantTextInput
         );
@@ -779,6 +793,16 @@ void trender(tenv* env) {
             PLAYING
     ) {
 
+      ui_key_buttons(
+          env
+      );
+    }
+
+    if (
+        gdata->curr_screen ==
+            PLAYING
+    ) {
+
       ntl_team_consume_ui_touch(
           env
       );
@@ -893,6 +917,17 @@ void trender(tenv* env) {
 
 
         ui_hud_layout_editor(
+            env
+        );
+
+        break;
+
+
+      case KEYBOARD_EDITOR:
+
+        // Dedicated black-screen editor for user-created keyboard buttons.
+
+        ui_key_buttons(
             env
         );
 

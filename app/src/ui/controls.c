@@ -8,7 +8,7 @@
 
 static const char* const ARROW_STYLE_NAMES[ARROW_STYLE_COUNT] = {
     "Red Arrow", "Red 3D", "Blue 3D", "Blue Neon", "Colourful",
-    "Wing 3D", "Yellow Double", "Purple", "Magenta",
+    "Wing 3D", "Yellow Double", "Purple", "Magenta", "Crimson Dart",
 };
 
 void ui_controls_init(tenv* env) {}

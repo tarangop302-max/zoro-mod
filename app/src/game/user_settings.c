@@ -66,7 +66,7 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->zoom_sensitivity    = 1.0f;
   usr_settings->arrow_size          = 1.0f;
   usr_settings->arrow_sensitivity   = 1.0f;
-  usr_settings->boost_arrow_anim    = true;
+  usr_settings->boost_arrow_anim    = false;
   usr_settings->arrow_invisible     = false;
   usr_settings->bot_vis             = true;
   usr_settings->zslider_rel_x       = 0.968f;

@@ -10,6 +10,7 @@
 
 #include <math.h>
 #include "../user.h"
+#include "../arrow_styles.h"
 #include "user_settings.h"
 #include "sbot.h"
 #include "ntl_team.h"
@@ -811,37 +812,71 @@ void ui_overlay(tenv* env) {
 
         ImU32 border_col = IM_COL32((int)(ar*178),(int)(ag*178),(int)(ab*178), 255);
 
-        ImVec2 body[4] = {
-          ARPT(-0.10f*aw, -0.25f*ah),
-          ARPT( 0.50f*aw, -0.25f*ah),
-          ARPT( 0.50f*aw,  0.25f*ah),
-          ARPT(-0.10f*aw,  0.25f*ah),
-        };
-        ImDrawList_AddConvexPolyFilled(dl, body, 4, fill_col);
+        if (usr->r && usr->r->arrow_atlas_ds) {
+          /* Textured steering arrow: whichever design is picked in
+             Settings > Controls > Arrow design (usrs->arrow_style) is
+             what actually gets drawn here now. qw/qh keep the same
+             overall footprint the old hand-drawn shape used, but
+             qh is derived from the source image's real aspect ratio
+             instead of a fixed constant, so non-square designs (like
+             the newest one) aren't stretched. */
+          float style_aspect = arrow_style_aspect(usrs->arrow_style);
+          float qw = aw;
+          float qh = aw / style_aspect;
 
-        ImDrawList_AddTriangleFilled(dl,
-          ARPT(-0.10f*aw, -0.50f*ah),
-          ARPT(-0.10f*aw, -0.25f*ah),
-          ARPT(-0.50f*aw,  0.00f   ),
-          fill_col);
+          float u0, v0, u1, v1;
+          arrow_style_uv_bounds(usrs->arrow_style, &u0, &v0, &u1, &v1);
 
-        ImDrawList_AddTriangleFilled(dl,
-          ARPT(-0.10f*aw,  0.25f*ah),
-          ARPT(-0.10f*aw,  0.50f*ah),
-          ARPT(-0.50f*aw,  0.00f   ),
-          fill_col);
+          ImVec2 p_tl = ARPT(-0.5f*qw, -0.5f*qh);
+          ImVec2 p_tr = ARPT( 0.5f*qw, -0.5f*qh);
+          ImVec2 p_br = ARPT( 0.5f*qw,  0.5f*qh);
+          ImVec2 p_bl = ARPT(-0.5f*qw,  0.5f*qh);
 
-        ImVec2 outline[7] = {
-          ARPT(-0.10f*aw, -0.50f*ah),
-          ARPT(-0.10f*aw, -0.25f*ah),
-          ARPT( 0.50f*aw, -0.25f*ah),
-          ARPT( 0.50f*aw,  0.25f*ah),
-          ARPT(-0.10f*aw,  0.25f*ah),
-          ARPT(-0.10f*aw,  0.50f*ah),
-          ARPT(-0.50f*aw,  0.00f   ),
-        };
-        ImDrawList_AddPolyline(dl, outline, 7, border_col,
-          ImDrawFlags_Closed, 3.0f);
+          ImTextureRef arrow_tex = {NULL, (ImTextureID)usr->r->arrow_atlas_ds};
+
+          /* Every design in the atlas is drawn pointing left (low u =
+             tip), but this HUD's rotation convention puts the tip at
+             local +X -- so the U axis is flipped here rather than
+             re-exporting every atlas cell mirrored. */
+          ImDrawList_AddImageQuad(dl, arrow_tex, p_tl, p_tr, p_br, p_bl,
+            (ImVec2){u1, v0}, (ImVec2){u0, v0},
+            (ImVec2){u0, v1}, (ImVec2){u1, v1},
+            IM_COL32(255, 255, 255, 230));
+        } else {
+          /* Fallback if the atlas texture failed to load for any
+             reason: the original hand-drawn dart shape. */
+          ImVec2 body[4] = {
+            ARPT(-0.10f*aw, -0.25f*ah),
+            ARPT( 0.50f*aw, -0.25f*ah),
+            ARPT( 0.50f*aw,  0.25f*ah),
+            ARPT(-0.10f*aw,  0.25f*ah),
+          };
+          ImDrawList_AddConvexPolyFilled(dl, body, 4, fill_col);
+
+          ImDrawList_AddTriangleFilled(dl,
+            ARPT(-0.10f*aw, -0.50f*ah),
+            ARPT(-0.10f*aw, -0.25f*ah),
+            ARPT(-0.50f*aw,  0.00f   ),
+            fill_col);
+
+          ImDrawList_AddTriangleFilled(dl,
+            ARPT(-0.10f*aw,  0.25f*ah),
+            ARPT(-0.10f*aw,  0.50f*ah),
+            ARPT(-0.50f*aw,  0.00f   ),
+            fill_col);
+
+          ImVec2 outline[7] = {
+            ARPT(-0.10f*aw, -0.50f*ah),
+            ARPT(-0.10f*aw, -0.25f*ah),
+            ARPT( 0.50f*aw, -0.25f*ah),
+            ARPT( 0.50f*aw,  0.25f*ah),
+            ARPT(-0.10f*aw,  0.25f*ah),
+            ARPT(-0.10f*aw,  0.50f*ah),
+            ARPT(-0.50f*aw,  0.00f   ),
+          };
+          ImDrawList_AddPolyline(dl, outline, 7, border_col,
+            ImDrawFlags_Closed, 3.0f);
+        }
 
         /* Boost pulse-glow layer removed: the arrow used to grow a
            second, brighter copy of itself behind it (pulsing opacity

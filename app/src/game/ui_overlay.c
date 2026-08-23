@@ -843,31 +843,11 @@ void ui_overlay(tenv* env) {
         ImDrawList_AddPolyline(dl, outline, 7, border_col,
           ImDrawFlags_Closed, 3.0f);
 
-        if (s_accel_a > 0.0f && usrs->boost_arrow_anim) {
-          float pulse = s_accel_a * (0.5f + 0.5f * cosf(s_accel_fr));
-          int   ga    = (int)(pulse * 200.0f);
-          if (ga > 0) {
-            ImU32 glow_col = IM_COL32((int)(ar*255),(int)(ag*255),(int)(ab*255), ga);
-            float gaw = aw * 1.15f;
-            float gah = ah * 1.15f;
-
-            ImVec2 gbody[4] = {
-              ARPT(-0.10f*gaw, -0.25f*gah),
-              ARPT( 0.50f*gaw, -0.25f*gah),
-              ARPT( 0.50f*gaw,  0.25f*gah),
-              ARPT(-0.10f*gaw,  0.25f*gah),
-            };
-            ImDrawList_AddConvexPolyFilled(dl, gbody, 4, glow_col);
-            ImDrawList_AddTriangleFilled(dl,
-              ARPT(-0.10f*gaw, -0.50f*gah),
-              ARPT(-0.10f*gaw, -0.25f*gah),
-              ARPT(-0.50f*gaw,  0.00f    ), glow_col);
-            ImDrawList_AddTriangleFilled(dl,
-              ARPT(-0.10f*gaw,  0.25f*gah),
-              ARPT(-0.10f*gaw,  0.50f*gah),
-              ARPT(-0.50f*gaw,  0.00f    ), glow_col);
-          }
-        }
+        /* Boost pulse-glow layer removed: the arrow used to grow a
+           second, brighter copy of itself behind it (pulsing opacity
+           via s_accel_a/s_accel_fr) whenever boosting. The arrow
+           itself still grows slightly on boost (see boost_sz above) --
+           only the extra glow silhouette is gone. */
 
         #undef ARPT
       }

@@ -173,11 +173,16 @@ texture* create_mipmap_texture(tcontext* ctx, const char* filename) {
                                .baseArrayLayer = 0,
                                .layerCount = 1}});
 
+    int mw0 = w >> (i - 1); if (mw0 < 1) mw0 = 1;
+    int mh0 = h >> (i - 1); if (mh0 < 1) mh0 = 1;
+    int mw1 = w >> i; if (mw1 < 1) mw1 = 1;
+    int mh1 = h >> i; if (mh1 < 1) mh1 = 1;
+
     vkCmdBlitImage(ctx->transfer_cmd, r->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, r->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &(VkImageBlit){
       .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 0, 1},
-      .srcOffsets = {{0, 0, 0}, {(int32_t)(w >> (i - 1)), (int32_t)(h >> (i - 1)), 1}},
+      .srcOffsets = {{0, 0, 0}, {mw0, mh0, 1}},
       .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1},
-      .dstOffsets = {{0, 0, 0}, {(int32_t)(w >> i), (int32_t)(h >> i), 1}}
+      .dstOffsets = {{0, 0, 0}, {mw1, mh1, 1}}
     }, VK_FILTER_LINEAR);
 
     vkCmdPipelineBarrier(

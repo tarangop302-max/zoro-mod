@@ -224,13 +224,17 @@ static void begin_ui_touch(twindow* wnd, float x, float y, int pid) {
     wnd->ui_touch.y = y;
     wnd->ui_touch.down = true;
     wnd->ui_touch.just_down = true;
+    wnd->ui_touch.just_up = false;
     wnd->ui_touch.move_ptr_id = pid;
 }
 
 static void end_ui_touch(twindow* wnd, int pid) {
     if (pid != wnd->ui_touch.move_ptr_id) return;
+    /* Keep just_down latched until the render pass. A quick Android tap can
+       deliver ACTION_DOWN and ACTION_UP in one input poll; clearing just_down
+       here made small/top on-screen buttons miss the gesture completely. */
     wnd->ui_touch.down = false;
-    wnd->ui_touch.just_down = false;
+    wnd->ui_touch.just_up = true;
     wnd->ui_touch.move_ptr_id = -1;
 }
 
@@ -544,8 +548,9 @@ static int32_t handle_input(struct android_app* app, AInputEvent* event) {
 
             case AMOTION_EVENT_ACTION_CANCEL:
                 g_ui_owned_pointer_mask      = 0;
+                wnd->ui_touch.just_up        = wnd->ui_touch.down ||
+                                                  wnd->ui_touch.just_down;
                 wnd->ui_touch.down           = false;
-                wnd->ui_touch.just_down      = false;
                 wnd->ui_touch.move_ptr_id    = -1;
                 wnd->touch.down              = false;
                 wnd->touch.just_down         = false;
@@ -606,6 +611,7 @@ void twindow_poll_input(twindow* window) {
     window->touch.just_down       = false;
     window->touch.boost_just_down = false;
     window->ui_touch.just_down    = false;
+    window->ui_touch.just_up      = false;
 
     int events;
     struct android_poll_source* source;
@@ -628,6 +634,7 @@ void twindow_wait_input(twindow* window) {
     window->touch.just_down       = false;
     window->touch.boost_just_down = false;
     window->ui_touch.just_down    = false;
+    window->ui_touch.just_up      = false;
 
     int events;
     struct android_poll_source* source;

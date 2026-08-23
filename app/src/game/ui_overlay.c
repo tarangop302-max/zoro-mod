@@ -842,6 +842,16 @@ void ui_overlay(tenv* env) {
             (ImVec2){u1, v0}, (ImVec2){u0, v0},
             (ImVec2){u0, v1}, (ImVec2){u1, v1},
             IM_COL32(255, 255, 255, 230));
+
+          /* TEMPORARY DEBUG -- remove once orientation is confirmed.
+             Green dot marks local +X (p_tr), magenta marks local -X
+             (p_tl), independent of any texture/UV mapping, so we can
+             see directly which side the game considers "+X" without
+             the arrow's own texture in the way. */
+          ImDrawList_AddCircleFilled(dl, p_tr, 10.0f,
+            IM_COL32(0, 255, 0, 255), 16);
+          ImDrawList_AddCircleFilled(dl, p_tl, 10.0f,
+            IM_COL32(255, 0, 255, 255), 16);
         } else {
           /* Fallback if the atlas texture failed to load for any
              reason: the original hand-drawn dart shape. */

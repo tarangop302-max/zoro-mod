@@ -231,6 +231,19 @@ typedef struct user_settings {
   int   arrow_style;
   bool  arrow_sync_with_zoom;
   vec3  head_dot_color;
+
+  /* v2.10 extension field, appended after head_dot_color so pre-v2.10
+     files remain a compatible prefix (see v210_prefix in
+     read_user_settings).
+
+     white_skin_enemies: per-mode ([0]=Normal, [1]=Assist), mirrors
+     transparent_skin_opacity's per-mode array layout above. When true,
+     every OTHER snake's body renders as a flat white silhouette instead
+     of its real skin/pattern (the local player's own snake is never
+     touched). Only exposed in Controls for Assist mode -- index [1] is
+     the one actually wired up in redraw.c; index [0] exists purely for
+     layout symmetry and isn't read anywhere. */
+  bool  white_skin_enemies[2];
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

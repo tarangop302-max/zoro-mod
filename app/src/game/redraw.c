@@ -670,59 +670,7 @@ void redraw(tenv* env) {
                                    o->id != gdata->data.snake_id &&
                                    usrs->white_skin_enemies[1];
 
-        if (assist_force_white) {
-          /* A capsule chain along consecutive body points, instead of
-           * many overlapping circle sprites. This is the same primitive
-           * mode->center_line already uses below, chosen for the same
-           * reason: chained capsules only overlap at their small rounded
-           * end-caps, not across their whole width like the per-point
-           * circle fill above does. That circle-overlap is what caused
-           * the "still shows the segments" look when this was translucent
-           * white -- every overlap region got double alpha-blended,
-           * scalloping the whole body. A texture/pattern skin can't be
-           * drawn this way (no per-segment UV to place along a capsule),
-           * which is why this path is white-silhouette only; real-skin
-           * transparency still uses the circle fill below when this
-           * toggle is off.
-           */
-          float capsule_thickness = gdata->data.gsc * 2 * lsz;
-          for (j = 1; j < bp; j++) {
-            if (gdata->data.pbu[(int)j] < 1 || gdata->data.pbu[(int)j - 1] < 1)
-              continue;
-
-            float px1 = gdata->data.pbx[(int)j - 1];
-            float py1 = gdata->data.pby[(int)j - 1];
-            float px2 = gdata->data.pbx[(int)j];
-            float py2 = gdata->data.pby[(int)j];
-
-            float fix1 = ((px1 - gdata->data.view_xx) * gdata->data.gsc) + mww2;
-            float fiy1 = ((py1 - gdata->data.view_yy) * gdata->data.gsc) + mhh2;
-            float fix2 = ((px2 - gdata->data.view_xx) * gdata->data.gsc) + mww2;
-            float fiy2 = ((py2 - gdata->data.view_yy) * gdata->data.gsc) + mhh2;
-
-            float dx_seg = fix2 - fix1;
-            float dy_seg = fiy2 - fiy1;
-            float seg_len = sqrtf(dx_seg * dx_seg + dy_seg * dy_seg);
-            if (seg_len <= 0.01f) continue;
-
-            float capsule_length = seg_len + capsule_thickness;
-            float ccx = (fix1 + fix2) * 0.5f;
-            float ccy = (fiy1 + fiy2) * 0.5f;
-            float seg_angle = atan2f(dy_seg, dx_seg);
-            float seg_a = fminf(gdata->data.pba[(int)j - 1],
-                                 gdata->data.pba[(int)j]);
-
-            bp_renderer_push(
-                usr->r->bpr,
-                &(bp_instance){
-                    {ccx - capsule_length * 0.5f,
-                     ccy - capsule_thickness * 0.5f, capsule_length,
-                     seg_angle},
-                    gdata->cg_uvs[BLANK_UV],
-                    {1, 1, 1, a * skin_alpha * seg_a},
-                    {capsule_thickness, 1}});
-          }
-        } else if (mode->render_mode == 0) {
+        if (mode->render_mode == 0) {
           float shadow_strength = 0.25f;
 
           if (render_shadows) {
@@ -787,7 +735,9 @@ void redraw(tenv* env) {
                                                  fiy - (gdata->data.gsc * lsz),
                                                  gdata->data.gsc * 2 * lsz,
                                                  gdata->data.pba[(int)j]},
-                                                gdata->cg_uvs[cg_id],
+                                                assist_force_white
+                                                    ? gdata->cg_uvs[BLANK_UV]
+                                                    : gdata->cg_uvs[cg_id],
                                                 {1, 1, 1, a * skin_alpha}});
               }
           } else {
@@ -833,8 +783,12 @@ void redraw(tenv* env) {
                                                  fiy - (gdata->data.gsc * lsz),
                                                  gdata->data.gsc * 2 * lsz,
                                                  gdata->data.pba[(int)j]},
-                                                gdata->cg_uvs[cg_id],
-                                                {se, se, se, a * skin_alpha}});
+                                                assist_force_white
+                                                    ? gdata->cg_uvs[BLANK_UV]
+                                                    : gdata->cg_uvs[cg_id],
+                                                assist_force_white
+                                                    ? (vec4s){1, 1, 1, a * skin_alpha}
+                                                    : (vec4s){se, se, se, a * skin_alpha}});
               }
           }
         } else if (mode->render_mode == 1) {
@@ -908,7 +862,9 @@ void redraw(tenv* env) {
                          fiy - (gdata->data.gsc * lsz),
                          gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
                         gdata->cg_uvs[BLANK_UV],
-                        {cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                        assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
               }
           } else {
             for (j = bp - 1; j >= 0; j--)
@@ -957,7 +913,9 @@ void redraw(tenv* env) {
                          fiy - (gdata->data.gsc * lsz),
                          gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
                         gdata->cg_uvs[BLANK_UV],
-                        {cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                        assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
               }
           }
         } else if (mode->render_mode == 2) {
@@ -1031,7 +989,9 @@ void redraw(tenv* env) {
                          fiy - (gdata->data.gsc * lsz),
                          gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
                         gdata->cg_uvs[BLANK_UV],
-                        {cg_col->r, cg_col->g, cg_col->b, a * a * skinless_a}});
+                        assist_force_white
+                            ? (vec4s){1, 1, 1, a * a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * a * skinless_a}});
               }
           } else {
             for (j = bp - 1; j >= 0; j--)
@@ -1078,7 +1038,9 @@ void redraw(tenv* env) {
                          fiy - (gdata->data.gsc * lsz),
                          gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
                         gdata->cg_uvs[BLANK_UV],
-                        {cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                        assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
               }
           }
         }

@@ -211,6 +211,10 @@ void ui_settings(tenv* env) {
         igText("Skin opacity");
         igAlignTextToFramePadding();
         igText("Center line (your snake)");
+        if (i == 1) {
+          igAlignTextToFramePadding();
+          igText("White skin (enemies)");
+        }
         igAlignTextToFramePadding();
         igText("Boost effect");
         igAlignTextToFramePadding();
@@ -253,6 +257,7 @@ void ui_settings(tenv* env) {
           usrs->transparent_skin_opacity[i] = opacity_percent / 100.0f;
         igEndDisabled();
         igCheckbox("##center line", &mode->center_line);
+        if (i == 1) igCheckbox("##white skin enemies", &usrs->white_skin_enemies[1]);
 
         igCheckbox("##boost", &mode->show_boost);
         igSameLine(0, -1);

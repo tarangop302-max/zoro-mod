@@ -657,6 +657,18 @@ void redraw(tenv* env) {
                                ? usrs->transparent_skin_opacity[mode_index]
                                : 1.0f;
 
+        /* Assist mode only, and never for the local player's own snake:
+         * every other snake's body renders as a flat white silhouette
+         * instead of its real skin/pattern, regardless of the
+         * transparent skin toggle above -- that toggle still only
+         * controls this white silhouette's opacity. This also sidesteps
+         * the old texture-mode transparency bug entirely: a solid
+         * white fill has no pattern to misalign at segment overlaps,
+         * so there's nothing to show "segments" or look blurry the way
+         * the real skin texture did at reduced alpha. */
+        bool assist_force_white =
+            mode_index == 1 && o->id != gdata->data.snake_id;
+
         if (mode->render_mode == 0) {
           float shadow_strength = 0.25f;
 
@@ -722,7 +734,9 @@ void redraw(tenv* env) {
                                                  fiy - (gdata->data.gsc * lsz),
                                                  gdata->data.gsc * 2 * lsz,
                                                  gdata->data.pba[(int)j]},
-                                                gdata->cg_uvs[cg_id],
+                                                assist_force_white
+                                                    ? gdata->cg_uvs[BLANK_UV]
+                                                    : gdata->cg_uvs[cg_id],
                                                 {1, 1, 1, a * skin_alpha}});
               }
           } else {
@@ -768,8 +782,12 @@ void redraw(tenv* env) {
                                                  fiy - (gdata->data.gsc * lsz),
                                                  gdata->data.gsc * 2 * lsz,
                                                  gdata->data.pba[(int)j]},
-                                                gdata->cg_uvs[cg_id],
-                                                {se, se, se, a * skin_alpha}});
+                                                assist_force_white
+                                                    ? gdata->cg_uvs[BLANK_UV]
+                                                    : gdata->cg_uvs[cg_id],
+                                                assist_force_white
+                                                    ? (vec4s){1, 1, 1, a * skin_alpha}
+                                                    : (vec4s){se, se, se, a * skin_alpha}});
               }
           }
         } else if (mode->render_mode == 1) {
@@ -843,7 +861,9 @@ void redraw(tenv* env) {
                          fiy - (gdata->data.gsc * lsz),
                          gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
                         gdata->cg_uvs[BLANK_UV],
-                        {cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                        assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
               }
           } else {
             for (j = bp - 1; j >= 0; j--)
@@ -892,7 +912,9 @@ void redraw(tenv* env) {
                          fiy - (gdata->data.gsc * lsz),
                          gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
                         gdata->cg_uvs[BLANK_UV],
-                        {cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                        assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
               }
           }
         } else if (mode->render_mode == 2) {
@@ -966,7 +988,9 @@ void redraw(tenv* env) {
                          fiy - (gdata->data.gsc * lsz),
                          gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
                         gdata->cg_uvs[BLANK_UV],
-                        {cg_col->r, cg_col->g, cg_col->b, a * a * skinless_a}});
+                        assist_force_white
+                            ? (vec4s){1, 1, 1, a * a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * a * skinless_a}});
               }
           } else {
             for (j = bp - 1; j >= 0; j--)
@@ -1013,7 +1037,9 @@ void redraw(tenv* env) {
                          fiy - (gdata->data.gsc * lsz),
                          gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
                         gdata->cg_uvs[BLANK_UV],
-                        {cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                        assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
               }
           }
         }

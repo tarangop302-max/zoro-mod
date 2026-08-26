@@ -38,26 +38,6 @@ void global_chat_set_adjust_mode(tenv* env, global_chat_adjust_mode mode);
  * to highlight teammates' in-game name labels. */
 bool global_chat_is_teammate(const char* nickname);
 
-/* One entry from global_chat_get_teammates(). */
-typedef struct {
-    char nickname[32];
-    int shape;
-    float color[3];
-    int score;
-} global_chat_teammate;
-
-/* Fill out_teammates (capacity max_count) with every teammate
- * currently known to be on our own game server -- using the same
- * location broadcast that already powers the minimap markers, so
- * this works regardless of how far away they are, not only while
- * they're close enough for the game server to include them in our
- * local snake list. Returns the number of entries written. */
-int global_chat_get_teammates(
-    tenv* env,
-    global_chat_teammate* out_teammates,
-    int max_count
-);
-
 /* Draw a dot on the minimap for every Public Chat player
  * on the same game server as us. Call this right after
  * ntl_team_draw_minimap() with the same x/y/size. */

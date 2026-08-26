@@ -254,18 +254,6 @@ void global_chat_init(tenv* env) {
         sizeof(global_chat_input)
     );
 
-    global_chat_add_message(
-        "ZORO",
-        NULL,
-        "Welcome to Public Chat!"
-    );
-
-    global_chat_add_message(
-        "ZORO",
-        NULL,
-        "Everyone using this mod can chat here."
-    );
-
     /* Figure out the nickname to chat under. */
     const char* nickname = "Player";
 

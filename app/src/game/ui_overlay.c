@@ -432,31 +432,38 @@ void ui_overlay(tenv* env) {
     }
 
     /*
-     * Teammates list: every JSR-authenticated teammate on our own
-     * game server (see the green name-label highlight elsewhere in
-     * this file), with their own chosen dot and live score --
-     * sourced from the same location broadcast that already powers
-     * the minimap markers, so a teammate shows up here no matter
-     * where they are on the map, not only while they're close
-     * enough for the game server to include them in our local
-     * snake list. Drawn just below the leaderboard, at the same
-     * reduced scale. Skipped entirely if no teammate is currently
-     * detected, so it never takes up space for nothing.
+     * Teammates list: JSR-authenticated players (see the green
+     * name-label highlight elsewhere in this file) who are also
+     * currently present as a snake in this game session, with
+     * their live score. Drawn just below the leaderboard, at the
+     * same reduced scale. Skipped entirely if no teammate is
+     * currently detected, so it never takes up space for nothing.
      */
     {
-      global_chat_teammate teammates[16];
-      int teammate_count =
-          global_chat_get_teammates(env, teammates, 16);
+      typedef struct {
+        const char* nick;
+        int score;
+      } teammate_row;
 
-      /* Highest score first, like the leaderboard above it. */
-      for (int a = 0; a < teammate_count - 1; a++) {
-        for (int b = 0; b < teammate_count - 1 - a; b++) {
-          if (teammates[b].score < teammates[b + 1].score) {
-            global_chat_teammate tmp = teammates[b];
-            teammates[b] = teammates[b + 1];
-            teammates[b + 1] = tmp;
-          }
-        }
+      teammate_row teammates[16];
+      int teammate_count = 0;
+
+      for (int i = snakes_len - 1; i >= 0 && teammate_count < 16; i--) {
+        snake* o = gdata->data.snakes + i;
+        if (o->id == gdata->data.snake_id) continue;
+        if (!global_chat_is_teammate(o->nk)) continue;
+
+        int sct = o->sct + o->rsc;
+        int score = (int)floorf((gdata->data.fpsls[sct] +
+                                 o->fam / gdata->data.fmlts[sct] - 1) *
+                                    15 -
+                                5) /
+                    1;
+        score = GLM_MIN(GLM_MAX(score, 0), 999999);
+
+        teammates[teammate_count].nick = o->nk;
+        teammates[teammate_count].score = score;
+        teammate_count++;
       }
 
       if (teammate_count > 0) {
@@ -471,10 +478,8 @@ void ui_overlay(tenv* env) {
         ImVec2 tm_scsize;
         igCalcTextSize(&tm_scsize, "999999", NULL, false, -1);
 
-        float tm_dot_w = igGetFrameHeight() * 0.9f;
-
-        float tm_width = tm_dot_w + tm_nksize.x + tm_scsize.x +
-                         (style->CellPadding.x * 2 * 3);
+        float tm_width =
+            tm_nksize.x + tm_scsize.x + (style->CellPadding.x * 2 * 2);
 
         float tm_x, tm_y;
         if (usrs->teammates_pos_custom) {
@@ -494,10 +499,8 @@ void ui_overlay(tenv* env) {
 
         igSetCursorPosX(tm_x);
 
-        if (igBeginTable("teammates_table", 3, ImGuiTableFlags_NoHostExtendX,
+        if (igBeginTable("teammates_table", 2, ImGuiTableFlags_NoHostExtendX,
                          (ImVec2){}, 0)) {
-          igTableSetupColumn("##tm_dot", ImGuiTableColumnFlags_WidthFixed,
-                             tm_dot_w, 0);
           igTableSetupColumn("##tm_nickname", ImGuiTableColumnFlags_WidthFixed,
                              tm_nksize.x, 0);
           igTableSetupColumn("##tm_score", ImGuiTableColumnFlags_WidthFixed,
@@ -505,23 +508,10 @@ void ui_overlay(tenv* env) {
 
           for (int row = 0; row < teammate_count; row++) {
             igTableNextRow(ImGuiTableRowFlags_None, 0);
-
             igTableSetColumnIndex(0);
-            ImVec2 dot_cursor;
-            igGetCursorScreenPos(&dot_cursor);
-            float dot_r = tm_dot_w * 0.32f;
-            ImVec2 dot_center = {dot_cursor.x + tm_dot_w * 0.5f,
-                                 dot_cursor.y + igGetTextLineHeight() * 0.5f};
-            ImU32 dot_col = igColorConvertFloat4ToU32((ImVec4){
-                teammates[row].color[0], teammates[row].color[1],
-                teammates[row].color[2], 1.0f});
-            ntl_draw_marker(igGetWindowDrawList(), dot_center, dot_r,
-                            teammates[row].shape, dot_col);
-
-            igTableSetColumnIndex(1);
             igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%s",
-                          teammates[row].nickname);
-            igTableSetColumnIndex(2);
+                          teammates[row].nick);
+            igTableSetColumnIndex(1);
             igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%d",
                           teammates[row].score);
           }
@@ -805,12 +795,17 @@ void ui_overlay(tenv* env) {
         float acx = gdata->touch_ctrl.tp_cursor_x;
         float acy = gdata->touch_ctrl.tp_cursor_y;
 
-        float dir_angle = atan2f(sh * 0.5f - acy, sw * 0.5f - acx);
+        /* Must match the real steering vector in input.c (xm/ym =
+         * cursor - center, i.e. "point toward where you're dragging").
+         * This used to be computed the other way around (center -
+         * cursor), which pointed the arrow back at the player instead
+         * of in the direction of travel. */
+        float dir_angle = atan2f(acy - sh * 0.5f, acx - sw * 0.5f);
         float rot  = dir_angle;
         float cs   = cosf(rot);
         float sn_v = sinf(rot);
 
-        float boost_sz = 1.0f + 0.5f * s_accel_a;
+        float boost_sz = usrs->boost_arrow_anim ? (1.0f + 0.5f * s_accel_a) : 1.0f;
         float aw = sh * 0.11f  * usrs->arrow_size * boost_sz;
         float ah = sh * 0.066f * usrs->arrow_size * boost_sz;
 
@@ -853,15 +848,6 @@ void ui_overlay(tenv* env) {
             (ImVec2){u0, v1}, (ImVec2){u1, v1},
             IM_COL32(255, 255, 255, 230));
 
-          /* TEMPORARY DEBUG -- remove once orientation is confirmed.
-             Green dot marks local +X (p_tr), magenta marks local -X
-             (p_tl), independent of any texture/UV mapping, so we can
-             see directly which side the game considers "+X" without
-             the arrow's own texture in the way. */
-          ImDrawList_AddCircleFilled(dl, p_tr, 10.0f,
-            IM_COL32(0, 255, 0, 255), 16);
-          ImDrawList_AddCircleFilled(dl, p_tl, 10.0f,
-            IM_COL32(255, 0, 255, 255), 16);
         } else {
           /* Fallback if the atlas texture failed to load for any
              reason: the original hand-drawn dart shape. */
@@ -900,9 +886,10 @@ void ui_overlay(tenv* env) {
 
         /* Boost pulse-glow layer removed: the arrow used to grow a
            second, brighter copy of itself behind it (pulsing opacity
-           via s_accel_a/s_accel_fr) whenever boosting. The arrow
-           itself still grows slightly on boost (see boost_sz above) --
-           only the extra glow silhouette is gone. */
+           via s_accel_a/s_accel_fr) whenever boosting. That glow
+           silhouette is gone for good; the arrow's own size on boost
+           is controlled separately by boost_arrow_anim above (off by
+           default, toggle in Controls > Touch Arrow Cursor). */
 
         #undef ARPT
       }

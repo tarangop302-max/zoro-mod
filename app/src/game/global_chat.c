@@ -481,11 +481,17 @@ void global_chat_update(tenv* env) {
                     gdata->data.snakes + i;
 
                 if (s->id == gdata->data.snake_id) {
+                    user_settings* own_usrs = &env->usr->usrs;
+
                     jsr_network_send_location(
                         global_chat_net,
                         s->xx + s->fx,
                         s->yy + s->fy,
-                        env->usr->usrs.ipv4
+                        own_usrs->ipv4,
+                        own_usrs->own_marker_shape,
+                        own_usrs->own_marker_color[0],
+                        own_usrs->own_marker_color[1],
+                        own_usrs->own_marker_color[2]
                     );
 
                     break;
@@ -1722,16 +1728,6 @@ void global_chat_draw_minimap_markers(
         y + radius
     };
 
-    ImU32 col =
-        igColorConvertFloat4ToU32(
-            (ImVec4){
-                u->usrs.ntl_marker_color[0],
-                u->usrs.ntl_marker_color[1],
-                u->usrs.ntl_marker_color[2],
-                u->usrs.ntl_marker_color[3]
-            }
-        );
-
     int count =
         jsr_network_location_count(
             global_chat_net
@@ -1746,6 +1742,8 @@ void global_chat_draw_minimap_markers(
         char pname[32];
         float lx;
         float ly;
+        int shape;
+        float cr, cg, cb;
 
         if (
             !jsr_network_get_location(
@@ -1756,11 +1754,24 @@ void global_chat_draw_minimap_markers(
                 srv,
                 sizeof(srv),
                 &lx,
-                &ly
+                &ly,
+                &shape,
+                &cr,
+                &cg,
+                &cb
             )
         ) {
             continue;
         }
+
+        /* Each teammate's own chosen marker color/shape --
+         * see jsr_network_send_location -- rather than a
+         * single local override, so e.g. a blue diamond they
+         * picked shows up as a blue diamond here. */
+        ImU32 col =
+            igColorConvertFloat4ToU32(
+                (ImVec4){cr, cg, cb, 1.0f}
+            );
 
         if (
             strcmp(srv, u->usrs.ipv4) != 0
@@ -1792,7 +1803,7 @@ void global_chat_draw_minimap_markers(
             dl,
             p,
             u->usrs.ntl_marker_size,
-            u->usrs.ntl_marker_shape,
+            shape,
             col
         );
 

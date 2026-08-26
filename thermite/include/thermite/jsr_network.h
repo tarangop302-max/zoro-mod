@@ -102,14 +102,6 @@ typedef struct jsr_network {
     // preference rather than a single local override. Older
     // peers that don't send this default to shape 0 (circle)
     // and a neutral color.
-    //
-    // score is that player's own current in-game score, sent
-    // the same way -- since this whole broadcast already goes
-    // out regardless of distance (it's how far-away teammates
-    // show up on the minimap at all), reusing it means a
-    // teammate's name/dot/score can all be shown anywhere on
-    // the map, not just while they're close enough for the
-    // game server to include them in your local snake list.
     struct {
         char username[32];
         char server_ip[64];
@@ -117,7 +109,6 @@ typedef struct jsr_network {
         float y;
         uint8_t shape;
         float color[3];
-        int score;
     } locations[64];
     int location_count;
 
@@ -221,13 +212,6 @@ bool jsr_network_roster_owner(
 // wants their own marker to look on other players' minimaps
 // -- e.g. a blue diamond -- so teammates render it exactly
 // as chosen instead of using their own local override.
-//
-// score is this player's own current in-game score. It rides
-// along on the same broadcast (already sent regardless of
-// distance) so UI like a "Teammates" list can show a
-// teammate's score anywhere on the map, not only while
-// they're close enough for the game server to include them
-// locally.
 bool jsr_network_send_location(
     jsr_network *net,
     float x,
@@ -236,8 +220,7 @@ bool jsr_network_send_location(
     int shape,
     float color_r,
     float color_g,
-    float color_b,
-    int score
+    float color_b
 );
 
 // Number of other players whose last known position we
@@ -252,8 +235,7 @@ int jsr_network_location_count(
 // index is out of range.
 //
 // out_shape/out_color_* return that player's own chosen
-// marker appearance, and out_score their own current score
-// (see jsr_network_send_location).
+// marker appearance (see jsr_network_send_location).
 bool jsr_network_get_location(
     jsr_network *net,
     int index,
@@ -266,8 +248,7 @@ bool jsr_network_get_location(
     int *out_shape,
     float *out_color_r,
     float *out_color_g,
-    float *out_color_b,
-    int *out_score
+    float *out_color_b
 );
 
 // Send the team synchronization request.

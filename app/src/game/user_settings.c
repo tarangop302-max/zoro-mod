@@ -66,7 +66,7 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->zoom_sensitivity    = 1.0f;
   usr_settings->arrow_size          = 1.0f;
   usr_settings->arrow_sensitivity   = 1.0f;
-  usr_settings->boost_arrow_anim    = false;
+  usr_settings->boost_arrow_anim    = true;
   usr_settings->arrow_invisible     = false;
   usr_settings->bot_vis             = true;
   usr_settings->zslider_rel_x       = 0.968f;
@@ -213,9 +213,6 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->head_dot_color[0] = 1.0f;
   usr_settings->head_dot_color[1] = 1.0f;
   usr_settings->head_dot_color[2] = 1.0f;
-
-  usr_settings->white_skin_enemies[0] = true;
-  usr_settings->white_skin_enemies[1] = true;
 }
 
 void write_default_settings(user_settings* usr_settings) {
@@ -280,15 +277,9 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v27_prefix = offsetof(user_settings, public_chat_pos_custom);
   size_t v28_prefix = offsetof(user_settings, hud_layout_edit_mode);
   size_t v29_prefix = offsetof(user_settings, key_btn_shape);
-  size_t v210_prefix = offsetof(user_settings, white_skin_enemies);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
-  else if ((size_t)file_size >= v210_prefix)
-    /* A file saved before the assist-mode white-skin-for-enemies toggle
-       existed ends at v210_prefix, possibly followed only by compiler
-       tail padding. Do not copy that padding into the new field. */
-    bytes_to_read = v210_prefix;
   else if ((size_t)file_size >= v29_prefix)
     /* A file saved before the Vlither-ported arrow/head-dot/key-shape
        fields existed ends at v29_prefix, possibly followed only by
@@ -356,9 +347,9 @@ void read_user_settings(user_settings* usr_settings) {
         ntl_values[i] > max_value)
       ntl_values[i] = ntl_defaults[i];
   }
-  if (loaded.ntl_marker_shape < 0 || loaded.ntl_marker_shape > 2)
+  if (loaded.ntl_marker_shape < 0 || loaded.ntl_marker_shape > 5)
     loaded.ntl_marker_shape = 0;
-  if (loaded.own_marker_shape < 0 || loaded.own_marker_shape > 2)
+  if (loaded.own_marker_shape < 0 || loaded.own_marker_shape > 5)
     loaded.own_marker_shape = 0;
   if (!isfinite(loaded.ntl_marker_size) || loaded.ntl_marker_size < 2.0f ||
       loaded.ntl_marker_size > 14.0f)

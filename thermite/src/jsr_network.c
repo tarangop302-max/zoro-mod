@@ -346,7 +346,8 @@ static void jsr_location_set(
     uint8_t shape,
     float color_r,
     float color_g,
-    float color_b
+    float color_b,
+    int score
 ) {
     int index;
 
@@ -399,6 +400,7 @@ static void jsr_location_set(
     net->locations[index].color[0] = color_r;
     net->locations[index].color[1] = color_g;
     net->locations[index].color[2] = color_b;
+    net->locations[index].score = score;
 }
 
 static void jsr_location_remove(
@@ -602,13 +604,13 @@ static void jsr_parse_message(
          * LOCATION broadcast, relayed by the server as:
          * [7][username_len][username][x:f32][y:f32]
          * [server_ip_len][server_ip][shape:u8][r:u8][g:u8][b:u8]
+         * [score:i32]
          *
-         * The trailing marker fields are appended after
+         * The trailing marker/score fields are appended after
          * everything the relay already understood how to
          * rebuild (see jsr_network_send_location), so older
-         * relays/peers that only forward the first part of
-         * the payload still work -- they're read only if
-         * present.
+         * relays/peers that only forward part of the payload
+         * still work -- each is read only if present.
          */
         size_t offset;
         size_t name_len;
@@ -617,6 +619,7 @@ static void jsr_parse_message(
         size_t srv_len;
         uint8_t shape = 0;
         float color_r = 0.05f, color_g = 1.0f, color_b = 0.55f;
+        int score = 0;
 
         offset = 1;
 
@@ -665,6 +668,13 @@ static void jsr_parse_message(
             color_r = (uint8_t) data[offset + 1] / 255.0f;
             color_g = (uint8_t) data[offset + 2] / 255.0f;
             color_b = (uint8_t) data[offset + 3] / 255.0f;
+            offset += 4;
+
+            if (data_len >= offset + 4) {
+                int32_t raw_score;
+                memcpy(&raw_score, data + offset, 4);
+                score = (int) raw_score;
+            }
         }
 
         bool is_self =
@@ -697,7 +707,8 @@ static void jsr_parse_message(
                 shape,
                 color_r,
                 color_g,
-                color_b
+                color_b,
+                score
             );
         }
     }
@@ -1415,9 +1426,10 @@ bool jsr_network_send_location(
     int shape,
     float color_r,
     float color_g,
-    float color_b
+    float color_b,
+    int score
 ) {
-    uint8_t buffer[1 + 4 + 4 + 1 + 64 + 4];
+    uint8_t buffer[1 + 4 + 4 + 1 + 64 + 4 + 4];
     size_t srv_len;
     size_t offset;
 
@@ -1475,6 +1487,18 @@ bool jsr_network_send_location(
     buffer[offset] = (uint8_t) (color_b * 255.0f + 0.5f);
     offset += 1;
 
+    /*
+     * Own current score, same idea -- this broadcast already
+     * goes out regardless of distance (it's what lets far-away
+     * teammates show up on the minimap at all), so UI like a
+     * "Teammates" list can reuse it to show a teammate's score
+     * anywhere on the map instead of only while they're close
+     * enough for the game server to report them locally.
+     */
+    int32_t score32 = (int32_t) score;
+    memcpy(buffer + offset, &score32, 4);
+    offset += 4;
+
     mg_ws_send(
         net->ws_connection,
         buffer,
@@ -1507,7 +1531,8 @@ bool jsr_network_get_location(
     int *out_shape,
     float *out_color_r,
     float *out_color_g,
-    float *out_color_b
+    float *out_color_b,
+    int *out_score
 ) {
     if (net == NULL ||
         index < 0 ||
@@ -1559,6 +1584,10 @@ bool jsr_network_get_location(
 
     if (out_color_b != NULL) {
         *out_color_b = net->locations[index].color[2];
+    }
+
+    if (out_score != NULL) {
+        *out_score = net->locations[index].score;
     }
 
     return true;

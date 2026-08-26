@@ -95,11 +95,20 @@ typedef struct jsr_network {
     // broadcast one (only meaningful for players on the
     // same slither.io server -- callers must filter by
     // server_ip themselves before drawing).
+    //
+    // shape/color carry that player's own chosen minimap
+    // marker appearance (see jsr_network_send_location),
+    // so everyone renders teammates using each player's own
+    // preference rather than a single local override. Older
+    // peers that don't send this default to shape 0 (circle)
+    // and a neutral color.
     struct {
         char username[32];
         char server_ip[64];
         float x;
         float y;
+        uint8_t shape;
+        float color[3];
     } locations[64];
     int location_count;
 
@@ -198,11 +207,20 @@ bool jsr_network_roster_owner(
 // receivers can tell whether a position is meaningful to
 // them (positions only make sense between players on the
 // same game server).
+//
+// shape and color (RGB, 0..1 each) describe how this player
+// wants their own marker to look on other players' minimaps
+// -- e.g. a blue diamond -- so teammates render it exactly
+// as chosen instead of using their own local override.
 bool jsr_network_send_location(
     jsr_network *net,
     float x,
     float y,
-    const char *server_ip
+    const char *server_ip,
+    int shape,
+    float color_r,
+    float color_g,
+    float color_b
 );
 
 // Number of other players whose last known position we
@@ -215,6 +233,9 @@ int jsr_network_location_count(
 // jsr_network_location_count()-1). Any out_* pointer may
 // be NULL if that field isn't needed. Returns false if the
 // index is out of range.
+//
+// out_shape/out_color_* return that player's own chosen
+// marker appearance (see jsr_network_send_location).
 bool jsr_network_get_location(
     jsr_network *net,
     int index,
@@ -223,7 +244,11 @@ bool jsr_network_get_location(
     char *out_server_ip,
     size_t server_ip_size,
     float *out_x,
-    float *out_y
+    float *out_y,
+    int *out_shape,
+    float *out_color_r,
+    float *out_color_g,
+    float *out_color_b
 );
 
 // Send the team synchronization request.

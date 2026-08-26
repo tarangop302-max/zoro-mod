@@ -342,7 +342,11 @@ static void jsr_location_set(
     const char *server_ip,
     size_t server_ip_len,
     float x,
-    float y
+    float y,
+    uint8_t shape,
+    float color_r,
+    float color_g,
+    float color_b
 ) {
     int index;
 
@@ -391,6 +395,10 @@ static void jsr_location_set(
 
     net->locations[index].x = x;
     net->locations[index].y = y;
+    net->locations[index].shape = shape;
+    net->locations[index].color[0] = color_r;
+    net->locations[index].color[1] = color_g;
+    net->locations[index].color[2] = color_b;
 }
 
 static void jsr_location_remove(
@@ -593,13 +601,22 @@ static void jsr_parse_message(
         /*
          * LOCATION broadcast, relayed by the server as:
          * [7][username_len][username][x:f32][y:f32]
-         * [server_ip_len][server_ip]
+         * [server_ip_len][server_ip][shape:u8][r:u8][g:u8][b:u8]
+         *
+         * The trailing marker fields are appended after
+         * everything the relay already understood how to
+         * rebuild (see jsr_network_send_location), so older
+         * relays/peers that only forward the first part of
+         * the payload still work -- they're read only if
+         * present.
          */
         size_t offset;
         size_t name_len;
         float x;
         float y;
         size_t srv_len;
+        uint8_t shape = 0;
+        float color_r = 0.05f, color_g = 1.0f, color_b = 0.55f;
 
         offset = 1;
 
@@ -641,6 +658,14 @@ static void jsr_parse_message(
         }
 
         const char *srv = data + offset;
+        offset += srv_len;
+
+        if (data_len >= offset + 4) {
+            shape = (uint8_t) data[offset];
+            color_r = (uint8_t) data[offset + 1] / 255.0f;
+            color_g = (uint8_t) data[offset + 2] / 255.0f;
+            color_b = (uint8_t) data[offset + 3] / 255.0f;
+        }
 
         bool is_self =
             jsr_safe_strlen(
@@ -668,7 +693,11 @@ static void jsr_parse_message(
                 srv,
                 srv_len,
                 x,
-                y
+                y,
+                shape,
+                color_r,
+                color_g,
+                color_b
             );
         }
     }
@@ -1382,9 +1411,13 @@ bool jsr_network_send_location(
     jsr_network *net,
     float x,
     float y,
-    const char *server_ip
+    const char *server_ip,
+    int shape,
+    float color_r,
+    float color_g,
+    float color_b
 ) {
-    uint8_t buffer[1 + 4 + 4 + 1 + 64];
+    uint8_t buffer[1 + 4 + 4 + 1 + 64 + 4];
     size_t srv_len;
     size_t offset;
 
@@ -1420,6 +1453,28 @@ bool jsr_network_send_location(
     );
     offset += srv_len;
 
+    /*
+     * Own marker appearance, tacked on after the fields the
+     * relay already knows how to rebuild with our username in
+     * front (see the receive side above) -- shape byte plus an
+     * RGB byte triple so teammates can render this player's dot
+     * exactly as chosen (e.g. a blue diamond).
+     */
+    if (shape < 0) shape = 0;
+    if (shape > 255) shape = 255;
+    if (color_r < 0.0f) color_r = 0.0f; else if (color_r > 1.0f) color_r = 1.0f;
+    if (color_g < 0.0f) color_g = 0.0f; else if (color_g > 1.0f) color_g = 1.0f;
+    if (color_b < 0.0f) color_b = 0.0f; else if (color_b > 1.0f) color_b = 1.0f;
+
+    buffer[offset] = (uint8_t) shape;
+    offset += 1;
+    buffer[offset] = (uint8_t) (color_r * 255.0f + 0.5f);
+    offset += 1;
+    buffer[offset] = (uint8_t) (color_g * 255.0f + 0.5f);
+    offset += 1;
+    buffer[offset] = (uint8_t) (color_b * 255.0f + 0.5f);
+    offset += 1;
+
     mg_ws_send(
         net->ws_connection,
         buffer,
@@ -1448,7 +1503,11 @@ bool jsr_network_get_location(
     char *out_server_ip,
     size_t server_ip_size,
     float *out_x,
-    float *out_y
+    float *out_y,
+    int *out_shape,
+    float *out_color_r,
+    float *out_color_g,
+    float *out_color_b
 ) {
     if (net == NULL ||
         index < 0 ||
@@ -1484,6 +1543,22 @@ bool jsr_network_get_location(
 
     if (out_y != NULL) {
         *out_y = net->locations[index].y;
+    }
+
+    if (out_shape != NULL) {
+        *out_shape = net->locations[index].shape;
+    }
+
+    if (out_color_r != NULL) {
+        *out_color_r = net->locations[index].color[0];
+    }
+
+    if (out_color_g != NULL) {
+        *out_color_g = net->locations[index].color[1];
+    }
+
+    if (out_color_b != NULL) {
+        *out_color_b = net->locations[index].color[2];
     }
 
     return true;

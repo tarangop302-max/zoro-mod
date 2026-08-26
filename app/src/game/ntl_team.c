@@ -15,6 +15,9 @@
 #ifndef IM_COL32
 #define IM_COL32(R,G,B,A) (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)))
 #endif
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #define NTL_MAX_TEAM 64
 #define NTL_URL_MAX 2048
 #define NTL_POLL_SECONDS 1.0
@@ -930,6 +933,7 @@ void ntl_draw_marker(ImDrawList *dl, ImVec2 p, float radius,
   ImU32 border = IM_COL32(0, 0, 0, 210);
   float border_radius = radius + 1.4f;
   if (shape == 1) {
+    /* Diamond */
     ImVec2 outer[4] = {{p.x, p.y - border_radius},
                        {p.x + border_radius, p.y},
                        {p.x, p.y + border_radius},
@@ -939,6 +943,7 @@ void ntl_draw_marker(ImDrawList *dl, ImVec2 p, float radius,
     ImDrawList_AddConvexPolyFilled(dl, outer, 4, border);
     ImDrawList_AddConvexPolyFilled(dl, inner, 4, fill);
   } else if (shape == 2) {
+    /* Triangle (legacy -- kept so old saved settings still render) */
     ImVec2 o1 = {p.x, p.y - border_radius};
     ImVec2 o2 = {p.x + border_radius * 0.92f, p.y + border_radius * 0.80f};
     ImVec2 o3 = {p.x - border_radius * 0.92f, p.y + border_radius * 0.80f};
@@ -947,7 +952,46 @@ void ntl_draw_marker(ImDrawList *dl, ImVec2 p, float radius,
     ImVec2 i3 = {p.x - radius * 0.92f, p.y + radius * 0.80f};
     ImDrawList_AddTriangleFilled(dl, o1, o2, o3, border);
     ImDrawList_AddTriangleFilled(dl, i1, i2, i3, fill);
+  } else if (shape == 3) {
+    /* Square */
+    float bo = border_radius * 0.82f;
+    float bi = radius * 0.82f;
+    ImDrawList_AddRectFilled(
+        dl, (ImVec2){p.x - bo, p.y - bo}, (ImVec2){p.x + bo, p.y + bo},
+        border, 0, ImDrawFlags_None);
+    ImDrawList_AddRectFilled(
+        dl, (ImVec2){p.x - bi, p.y - bi}, (ImVec2){p.x + bi, p.y + bi},
+        fill, 0, ImDrawFlags_None);
+  } else if (shape == 4) {
+    /* Cross */
+    float bo_len = border_radius * 1.05f, bo_th = border_radius * 0.42f;
+    float bi_len = radius * 1.05f, bi_th = radius * 0.42f;
+    ImDrawList_AddRectFilled(
+        dl, (ImVec2){p.x - bo_len, p.y - bo_th}, (ImVec2){p.x + bo_len, p.y + bo_th},
+        border, 0, ImDrawFlags_None);
+    ImDrawList_AddRectFilled(
+        dl, (ImVec2){p.x - bo_th, p.y - bo_len}, (ImVec2){p.x + bo_th, p.y + bo_len},
+        border, 0, ImDrawFlags_None);
+    ImDrawList_AddRectFilled(
+        dl, (ImVec2){p.x - bi_len, p.y - bi_th}, (ImVec2){p.x + bi_len, p.y + bi_th},
+        fill, 0, ImDrawFlags_None);
+    ImDrawList_AddRectFilled(
+        dl, (ImVec2){p.x - bi_th, p.y - bi_len}, (ImVec2){p.x + bi_th, p.y + bi_len},
+        fill, 0, ImDrawFlags_None);
+  } else if (shape == 5) {
+    /* 5-point star */
+    ImVec2 outer_pts[10], inner_pts[10];
+    for (int i = 0; i < 10; i++) {
+      float ang = (float)M_PI / 2.0f + i * (float)M_PI / 5.0f;
+      float r_o = (i % 2 == 0) ? border_radius * 1.15f : border_radius * 0.45f;
+      float r_i = (i % 2 == 0) ? radius * 1.15f : radius * 0.45f;
+      outer_pts[i] = (ImVec2){p.x + cosf(ang) * r_o, p.y - sinf(ang) * r_o};
+      inner_pts[i] = (ImVec2){p.x + cosf(ang) * r_i, p.y - sinf(ang) * r_i};
+    }
+    ImDrawList_AddConvexPolyFilled(dl, outer_pts, 10, border);
+    ImDrawList_AddConvexPolyFilled(dl, inner_pts, 10, fill);
   } else {
+    /* Circle */
     ImDrawList_AddCircleFilled(dl, p, border_radius, border, 16);
     ImDrawList_AddCircleFilled(dl, p, radius, fill, 16);
   }
@@ -1118,71 +1162,115 @@ void ntl_team_panel(tenv *env) {
                    (ImVec2){avail.x, body_h},
                    ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
 
+  /* Three columns: Map dot customization (widest), Chat
+   * position (medium), Online players (narrowest -- it's
+   * just a name list). */
   float col_gap = style->ItemSpacing.x * 2.0f;
-  float left_col_w = (avail.x - col_gap) * 0.58f;
+  float remaining = avail.x - col_gap * 2.0f;
+  float map_col_w = remaining * 0.46f;
+  float chat_col_w = remaining * 0.32f;
+  float players_col_w = remaining - map_col_w - chat_col_w;
 
-  igBeginChild_Str("##ntl_left_col", (ImVec2){left_col_w, 0},
+  igBeginChild_Str("##ntl_map_col", (ImVec2){map_col_w, 0},
                    ImGuiChildFlags_None, ImGuiWindowFlags_None);
 
-  igSeparatorText("Minimap teammates");
+  igSeparatorText("Map dot customization");
   igCheckbox("Show teammates on minimap", &us->ntl_show_teammates);
   igCheckbox("Show teammate names", &us->ntl_marker_labels);
-  igText("My dot");
-  igSameLine(0, 8);
-  igSetNextItemWidth(120);
-  igCombo_Str_arr("##own_marker_shape", &us->own_marker_shape,
-                  (const char*[]){"Circle", "Diamond", "Triangle"}, 3, -1);
-  igSameLine(0, 8);
-  igSetNextItemWidth(120);
-  igSliderFloat("##own_marker_size", &us->own_marker_size, 2.0f, 14.0f,
-                "%.1f px", ImGuiSliderFlags_AlwaysClamp);
-  igSameLine(0, 8);
-  igColorEdit4("##own_marker_color", us->own_marker_color,
-               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
-  igText("Team dots");
-  igSameLine(0, 8);
-  igSetNextItemWidth(120);
-  igCombo_Str_arr("##team_marker_shape", &us->ntl_marker_shape,
-                  (const char*[]){"Circle", "Diamond", "Triangle"}, 3, -1);
-  igSameLine(0, 8);
-  igSetNextItemWidth(120);
-  igSliderFloat("##team_marker_size", &us->ntl_marker_size, 2.0f, 14.0f,
-                "%.1f px", ImGuiSliderFlags_AlwaysClamp);
-  igSameLine(0, 8);
-  igColorEdit4("##team_marker_color", us->ntl_marker_color,
-               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
   igSpacing();
 
-  igSeparatorText("Online players");
-  igBeginChild_Str("##ntl_members", (ImVec2){0, 0},
-                   ImGuiChildFlags_None,
-                   ImGuiWindowFlags_AlwaysVerticalScrollbar);
-  jsr_network *jnet = global_chat_get_network();
-  int jsr_count = jnet ? jsr_network_roster_count(jnet) : 0;
-  if (jsr_count == 0) {
-    igTextDisabled("No players online.");
-  } else {
-    for (int i = 0; i < jsr_count; ++i) {
-      char pname[32];
-      char powner[32];
-      if (!jsr_network_roster_name(jnet, i, pname, sizeof pname)) continue;
-      powner[0] = 0;
-      jsr_network_roster_owner(jnet, i, powner, sizeof powner);
-      if (powner[0]) {
-        igTextColored((ImVec4){0.95f, 0.3f, 0.3f, 1.0f}, "%s", powner);
-        igSameLine(0, 6);
-      }
-      igText("%s", pname);
-      igSpacing();
+  igText("My dot size");
+  igSameLine(0, 8);
+  igSetNextItemWidth(-1);
+  igSliderFloat("##own_marker_size", &us->own_marker_size, 2.0f, 14.0f,
+                "%.1f px", ImGuiSliderFlags_AlwaysClamp);
+  igText("Team dots size");
+  igSameLine(0, 8);
+  igSetNextItemWidth(-1);
+  igSliderFloat("##team_marker_size", &us->ntl_marker_size, 2.0f, 14.0f,
+                "%.1f px", ImGuiSliderFlags_AlwaysClamp);
+  igSpacing();
+
+  /* Dot colour/shape below describe MY OWN marker. They're sent
+   * to teammates over the same NTL/JSR relay that already carries
+   * position updates (see jsr_network_send_location), so a
+   * teammate who picks e.g. a blue diamond shows up as a blue
+   * diamond on everyone else's minimap -- not just their own. */
+  igSeparatorText("Dot colour");
+  igTextWrapped("How your dot appears on your teammates' minimaps.");
+
+  static const float ntl_color_presets[6][3] = {
+      {0.90f, 0.23f, 0.23f}, {0.20f, 0.80f, 0.35f}, {0.20f, 0.50f, 0.95f},
+      {0.95f, 0.85f, 0.20f}, {0.25f, 0.85f, 0.85f}, {0.85f, 0.30f, 0.85f}};
+  float swatch = igGetFrameHeight() * 1.2f;
+  for (int i = 0; i < 6; i++) {
+    igPushID_Int(i);
+    bool selected =
+        fabsf(us->own_marker_color[0] - ntl_color_presets[i][0]) < 0.01f &&
+        fabsf(us->own_marker_color[1] - ntl_color_presets[i][1]) < 0.01f &&
+        fabsf(us->own_marker_color[2] - ntl_color_presets[i][2]) < 0.01f;
+    ImVec4 c = {ntl_color_presets[i][0], ntl_color_presets[i][1],
+                ntl_color_presets[i][2], 1.0f};
+    igPushStyleColor_Vec4(ImGuiCol_Button, c);
+    igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, c);
+    igPushStyleColor_Vec4(ImGuiCol_ButtonActive, c);
+    if (selected) {
+      igPushStyleColor_Vec4(ImGuiCol_Border, (ImVec4){1.0f, 1.0f, 1.0f, 1.0f});
+      igPushStyleVar_Float(ImGuiStyleVar_FrameBorderSize, 2.0f);
     }
+    if (igButton("##swatch", (ImVec2){swatch, swatch})) {
+      us->own_marker_color[0] = ntl_color_presets[i][0];
+      us->own_marker_color[1] = ntl_color_presets[i][1];
+      us->own_marker_color[2] = ntl_color_presets[i][2];
+    }
+    if (selected) {
+      igPopStyleVar(1);
+      igPopStyleColor(1);
+    }
+    igPopStyleColor(3);
+    igPopID();
+    igSameLine(0, 6);
   }
-  igEndChild();
+  if (igButton("Custom##own_marker_custom", (ImVec2){swatch * 1.8f, swatch}))
+    igOpenPopup_Str("##own_marker_custom_popup", 0);
+  if (igBeginPopup("##own_marker_custom_popup", 0)) {
+    igColorPicker3("##own_marker_custom_picker", us->own_marker_color,
+                   ImGuiColorEditFlags_None);
+    igEndPopup();
+  }
+  igSpacing();
+
+  igSeparatorText("Dot shape");
+  static const int ntl_shape_values[5] = {0, 1, 3, 4, 5};
+  float shape_btn = igGetFrameHeight() * 1.9f;
+  for (int i = 0; i < 5; i++) {
+    igPushID_Int(10 + i);
+    bool selected = us->own_marker_shape == ntl_shape_values[i];
+    if (selected)
+      igPushStyleColor_Vec4(ImGuiCol_Button,
+                            (ImVec4){0.20f, 0.62f, 0.30f, 1.0f});
+    igButton("##shape_btn", (ImVec2){shape_btn, shape_btn});
+    if (igIsItemClicked(ImGuiMouseButton_Left))
+      us->own_marker_shape = ntl_shape_values[i];
+    ImVec2 rmin, rmax;
+    igGetItemRectMin(&rmin);
+    igGetItemRectMax(&rmax);
+    ImVec2 center = {(rmin.x + rmax.x) * 0.5f, (rmin.y + rmax.y) * 0.5f};
+    ImU32 preview_col = igColorConvertFloat4ToU32((ImVec4){
+        us->own_marker_color[0], us->own_marker_color[1],
+        us->own_marker_color[2], 1.0f});
+    ntl_draw_marker(igGetWindowDrawList(), center, shape_btn * 0.26f,
+                    ntl_shape_values[i], preview_col);
+    if (selected) igPopStyleColor(1);
+    igPopID();
+    if (i != 4) igSameLine(0, 6);
+  }
 
   igEndChild();
 
   igSameLine(0, col_gap);
 
-  igBeginChild_Str("##ntl_right_col", (ImVec2){0, 0},
+  igBeginChild_Str("##ntl_chat_col", (ImVec2){chat_col_w, 0},
                    ImGuiChildFlags_None, ImGuiWindowFlags_None);
 
   igSeparatorText("Chat position");
@@ -1224,6 +1312,38 @@ void ntl_team_panel(tenv *env) {
             "Drag the chat window's edge or corner, then tap "
             "Confirm size.");
   }
+
+  igEndChild();
+
+  igSameLine(0, col_gap);
+
+  igBeginChild_Str("##ntl_players_col", (ImVec2){players_col_w, 0},
+                   ImGuiChildFlags_None, ImGuiWindowFlags_None);
+
+  igSeparatorText("Online players");
+  igBeginChild_Str("##ntl_members", (ImVec2){0, 0},
+                   ImGuiChildFlags_None,
+                   ImGuiWindowFlags_AlwaysVerticalScrollbar);
+  jsr_network *jnet = global_chat_get_network();
+  int jsr_count = jnet ? jsr_network_roster_count(jnet) : 0;
+  if (jsr_count == 0) {
+    igTextDisabled("No players online.");
+  } else {
+    for (int i = 0; i < jsr_count; ++i) {
+      char pname[32];
+      char powner[32];
+      if (!jsr_network_roster_name(jnet, i, pname, sizeof pname)) continue;
+      powner[0] = 0;
+      jsr_network_roster_owner(jnet, i, powner, sizeof powner);
+      if (powner[0]) {
+        igTextColored((ImVec4){0.95f, 0.3f, 0.3f, 1.0f}, "%s", powner);
+        igSameLine(0, 6);
+      }
+      igText("%s", pname);
+      igSpacing();
+    }
+  }
+  igEndChild();
 
   igEndChild();
 

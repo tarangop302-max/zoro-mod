@@ -479,8 +479,7 @@ void global_chat_update(tenv* env) {
                         own_usrs->own_marker_shape,
                         own_usrs->own_marker_color[0],
                         own_usrs->own_marker_color[1],
-                        own_usrs->own_marker_color[2],
-                        gdata->data.score
+                        own_usrs->own_marker_color[2]
                     );
 
                     break;
@@ -1747,8 +1746,7 @@ void global_chat_draw_minimap_markers(
                 &shape,
                 &cr,
                 &cg,
-                &cb,
-                NULL
+                &cb
             )
         ) {
             continue;
@@ -1879,92 +1877,6 @@ bool global_chat_is_teammate(
     }
 
     return false;
-}
-
-int global_chat_get_teammates(
-    tenv* env,
-    global_chat_teammate* out_teammates,
-    int max_count
-) {
-    if (
-        global_chat_net == NULL ||
-        env == NULL ||
-        env->usr == NULL ||
-        out_teammates == NULL ||
-        max_count <= 0
-    ) {
-        return 0;
-    }
-
-    const char* own_server_ip = env->usr->usrs.ipv4;
-
-    int count =
-        jsr_network_location_count(
-            global_chat_net
-        );
-
-    int written = 0;
-
-    for (
-        int i = 0;
-        i < count && written < max_count;
-        i++
-    ) {
-        char username[32];
-        char server_ip[64];
-        int shape;
-        float r, g, b;
-        int score;
-
-        if (
-            !jsr_network_get_location(
-                global_chat_net,
-                i,
-                username,
-                sizeof(username),
-                server_ip,
-                sizeof(server_ip),
-                NULL,
-                NULL,
-                &shape,
-                &r,
-                &g,
-                &b,
-                &score
-            )
-        ) {
-            continue;
-        }
-
-        /* Only players we're actually teamed up with (authenticated
-         * on the shared relay key), on the same game server as us --
-         * positions/scores from a different match aren't meaningful
-         * to compare against, same filter used for the minimap
-         * markers. Distance is deliberately NOT filtered here. */
-        if (
-            !global_chat_is_teammate(username) ||
-            strcmp(server_ip, own_server_ip) != 0
-        ) {
-            continue;
-        }
-
-        strncpy(
-            out_teammates[written].nickname,
-            username,
-            sizeof(out_teammates[written].nickname) - 1
-        );
-        out_teammates[written].nickname[
-            sizeof(out_teammates[written].nickname) - 1
-        ] = '\0';
-        out_teammates[written].shape = shape;
-        out_teammates[written].color[0] = r;
-        out_teammates[written].color[1] = g;
-        out_teammates[written].color[2] = b;
-        out_teammates[written].score = score;
-        written++;
-    }
-
-    return written;
 }
 
 void global_chat_destroy(tenv* env) {

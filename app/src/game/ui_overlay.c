@@ -432,38 +432,31 @@ void ui_overlay(tenv* env) {
     }
 
     /*
-     * Teammates list: JSR-authenticated players (see the green
-     * name-label highlight elsewhere in this file) who are also
-     * currently present as a snake in this game session, with
-     * their live score. Drawn just below the leaderboard, at the
-     * same reduced scale. Skipped entirely if no teammate is
-     * currently detected, so it never takes up space for nothing.
+     * Teammates list: every JSR-authenticated teammate on our own
+     * game server (see the green name-label highlight elsewhere in
+     * this file), with their own chosen dot and live score --
+     * sourced from the same location broadcast that already powers
+     * the minimap markers, so a teammate shows up here no matter
+     * where they are on the map, not only while they're close
+     * enough for the game server to include them in our local
+     * snake list. Drawn just below the leaderboard, at the same
+     * reduced scale. Skipped entirely if no teammate is currently
+     * detected, so it never takes up space for nothing.
      */
     {
-      typedef struct {
-        const char* nick;
-        int score;
-      } teammate_row;
+      global_chat_teammate teammates[16];
+      int teammate_count =
+          global_chat_get_teammates(env, teammates, 16);
 
-      teammate_row teammates[16];
-      int teammate_count = 0;
-
-      for (int i = snakes_len - 1; i >= 0 && teammate_count < 16; i--) {
-        snake* o = gdata->data.snakes + i;
-        if (o->id == gdata->data.snake_id) continue;
-        if (!global_chat_is_teammate(o->nk)) continue;
-
-        int sct = o->sct + o->rsc;
-        int score = (int)floorf((gdata->data.fpsls[sct] +
-                                 o->fam / gdata->data.fmlts[sct] - 1) *
-                                    15 -
-                                5) /
-                    1;
-        score = GLM_MIN(GLM_MAX(score, 0), 999999);
-
-        teammates[teammate_count].nick = o->nk;
-        teammates[teammate_count].score = score;
-        teammate_count++;
+      /* Highest score first, like the leaderboard above it. */
+      for (int a = 0; a < teammate_count - 1; a++) {
+        for (int b = 0; b < teammate_count - 1 - a; b++) {
+          if (teammates[b].score < teammates[b + 1].score) {
+            global_chat_teammate tmp = teammates[b];
+            teammates[b] = teammates[b + 1];
+            teammates[b + 1] = tmp;
+          }
+        }
       }
 
       if (teammate_count > 0) {
@@ -478,8 +471,10 @@ void ui_overlay(tenv* env) {
         ImVec2 tm_scsize;
         igCalcTextSize(&tm_scsize, "999999", NULL, false, -1);
 
-        float tm_width =
-            tm_nksize.x + tm_scsize.x + (style->CellPadding.x * 2 * 2);
+        float tm_dot_w = igGetFrameHeight() * 0.9f;
+
+        float tm_width = tm_dot_w + tm_nksize.x + tm_scsize.x +
+                         (style->CellPadding.x * 2 * 3);
 
         float tm_x, tm_y;
         if (usrs->teammates_pos_custom) {
@@ -499,8 +494,10 @@ void ui_overlay(tenv* env) {
 
         igSetCursorPosX(tm_x);
 
-        if (igBeginTable("teammates_table", 2, ImGuiTableFlags_NoHostExtendX,
+        if (igBeginTable("teammates_table", 3, ImGuiTableFlags_NoHostExtendX,
                          (ImVec2){}, 0)) {
+          igTableSetupColumn("##tm_dot", ImGuiTableColumnFlags_WidthFixed,
+                             tm_dot_w, 0);
           igTableSetupColumn("##tm_nickname", ImGuiTableColumnFlags_WidthFixed,
                              tm_nksize.x, 0);
           igTableSetupColumn("##tm_score", ImGuiTableColumnFlags_WidthFixed,
@@ -508,10 +505,23 @@ void ui_overlay(tenv* env) {
 
           for (int row = 0; row < teammate_count; row++) {
             igTableNextRow(ImGuiTableRowFlags_None, 0);
+
             igTableSetColumnIndex(0);
-            igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%s",
-                          teammates[row].nick);
+            ImVec2 dot_cursor;
+            igGetCursorScreenPos(&dot_cursor);
+            float dot_r = tm_dot_w * 0.32f;
+            ImVec2 dot_center = {dot_cursor.x + tm_dot_w * 0.5f,
+                                 dot_cursor.y + igGetTextLineHeight() * 0.5f};
+            ImU32 dot_col = igColorConvertFloat4ToU32((ImVec4){
+                teammates[row].color[0], teammates[row].color[1],
+                teammates[row].color[2], 1.0f});
+            ntl_draw_marker(igGetWindowDrawList(), dot_center, dot_r,
+                            teammates[row].shape, dot_col);
+
             igTableSetColumnIndex(1);
+            igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%s",
+                          teammates[row].nickname);
+            igTableSetColumnIndex(2);
             igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%d",
                           teammates[row].score);
           }

@@ -680,20 +680,19 @@ static void follow_circle_self(game_data* gdata) {
   float offset_incr = 0.0625f * B.width;
 
   /*
-   * How close a point has to get to target_pt (a point on the bot's own
-   * upcoming path, not its current position) before it's even
-   * considered a threat at all. Below this, head_prox/body_prox stay at
-   * their default "nothing found" value and have zero effect on
-   * target_course -- distant or merely-nearby enemies are fully
-   * ignored, not just weighted low. Above it, the existing falloff
-   * below still applies, so the reaction right at the edge of this
-   * range is a dodge, not an instant snap. 4 body-widths is roughly
-   * "about to overlap," i.e. collision is close to certain, not just
-   * plausible -- this is deliberately tighter than the smooth,
-   * long-range influence this had before.
+   * Track the nearest enemy head and the nearest enemy body point
+   * separately, each as one plain min-distance scan (no per-point
+   * polygon-offset search -- that's what caused the earlier
+   * instability, not the general idea of reacting to proximity).
+   * Deliberately no tight "collision imminent" distance gate here: a
+   * gate tight enough to only fire once contact is nearly certain
+   * doesn't leave enough frames for target_course to actually turn the
+   * loop away in time, especially while the loop itself is actively
+   * expanding outward -- confirmed against real play, not assumed.
+   * The smooth falloff + hard cap below is what keeps this from
+   * overreacting to merely-nearby, harmless enemies; it doesn't need
+   * a hard range cutoff on top of that to behave.
    */
-  float collision_imminent_d2 = (4.0f * B.width) * (4.0f * B.width);
-
   float enemy_head_d2 = 64.0f * 64.0f * B.width * B.width;
   float enemy_body_d2 = 64.0f * 64.0f * B.width * B.width;
 
@@ -709,20 +708,14 @@ static void follow_circle_self(game_data* gdata) {
       float d1 = dist2(eh.x, eh.y, target_pt.x, target_pt.y);
       float d2_ = dist2(ea.x, ea.y, target_pt.x, target_pt.y);
       float dm = d1 < d2_ ? d1 : d2_;
-      if (dm < collision_imminent_d2 && dm < enemy_head_d2)
-        enemy_head_d2 = dm;
+      if (dm < enemy_head_d2) enemy_head_d2 = dm;
     }
 
     /*
      * Same idea as the head check above, but for the enemy's body --
-     * this is what was missing before: a snake trapping the loop by
-     * parking its body nearby while its head moves elsewhere (or leaves
-     * entirely) was invisible to head_prox alone. Deliberately kept to
-     * this same simple "nearest point, one distance, one capped
-     * correction" shape rather than the old per-point polygon-offset
-     * search over the whole body -- that search (in either its original
-     * or rewritten form) is what caused the past instability, not the
-     * general idea of reacting to body proximity.
+     * catches a snake trapping the loop by parking its body nearby
+     * while its head moves elsewhere (or leaves entirely), which was
+     * invisible to head_prox alone.
      */
     int pn = tdarray_length(sk->pts);
     for (int j = 0; j < pn; j++) {
@@ -732,8 +725,7 @@ static void follow_circle_self(game_data* gdata) {
       if (point_in_poly_large(pt, &inside_poly)) continue;
 
       float dbp = dist2(pt.x, pt.y, target_pt.x, target_pt.y);
-      if (dbp < collision_imminent_d2 && dbp < enemy_body_d2)
-        enemy_body_d2 = dbp;
+      if (dbp < enemy_body_d2) enemy_body_d2 = dbp;
     }
   }
 

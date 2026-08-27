@@ -679,6 +679,21 @@ static void follow_circle_self(game_data* gdata) {
 
   float offset_incr = 0.0625f * B.width;
 
+  /*
+   * How close a point has to get to target_pt (a point on the bot's own
+   * upcoming path, not its current position) before it's even
+   * considered a threat at all. Below this, head_prox/body_prox stay at
+   * their default "nothing found" value and have zero effect on
+   * target_course -- distant or merely-nearby enemies are fully
+   * ignored, not just weighted low. Above it, the existing falloff
+   * below still applies, so the reaction right at the edge of this
+   * range is a dodge, not an instant snap. 4 body-widths is roughly
+   * "about to overlap," i.e. collision is close to certain, not just
+   * plausible -- this is deliberately tighter than the smooth,
+   * long-range influence this had before.
+   */
+  float collision_imminent_d2 = (4.0f * B.width) * (4.0f * B.width);
+
   float enemy_head_d2 = 64.0f * 64.0f * B.width * B.width;
   float enemy_body_d2 = 64.0f * 64.0f * B.width * B.width;
 
@@ -694,7 +709,8 @@ static void follow_circle_self(game_data* gdata) {
       float d1 = dist2(eh.x, eh.y, target_pt.x, target_pt.y);
       float d2_ = dist2(ea.x, ea.y, target_pt.x, target_pt.y);
       float dm = d1 < d2_ ? d1 : d2_;
-      if (dm < enemy_head_d2) enemy_head_d2 = dm;
+      if (dm < collision_imminent_d2 && dm < enemy_head_d2)
+        enemy_head_d2 = dm;
     }
 
     /*
@@ -716,7 +732,8 @@ static void follow_circle_self(game_data* gdata) {
       if (point_in_poly_large(pt, &inside_poly)) continue;
 
       float dbp = dist2(pt.x, pt.y, target_pt.x, target_pt.y);
-      if (dbp < enemy_body_d2) enemy_body_d2 = dbp;
+      if (dbp < collision_imminent_d2 && dbp < enemy_body_d2)
+        enemy_body_d2 = dbp;
     }
   }
 
@@ -999,12 +1016,34 @@ void sbot_go(tenv* env) {
   if (B.stage == 2) {
     bot->output.accel = (bool)B.default_accel;
     follow_circle_self(gdata);
-  } else if (check_collision(gdata) || check_encircle(gdata)) {
-    if (B.delay_frame != -1) B.delay_frame = COLLISION_DELAY;
   } else {
+    /* Score-gated stage promotion runs every frame, regardless of
+     * whether a collision/encircle dodge is also active right now --
+     * previously this was only checked on a fully "clear" frame, which
+     * a persistently crowded area (lots of nearby bodies, not
+     * necessarily an actual collision course) could prevent from ever
+     * happening. That left the bot stuck reacting frame-to-frame with
+     * no coherent plan, unable to even attempt to_circle() -- so an
+     * already-formed loop was never recognized either. */
     if (B.snake_len > B.follow_circle_length) B.stage = 1;
-    if (B.delay_frame == -1) B.delay_frame = ACTION_FRAMES;
-    bot->output.accel = (bool)B.default_accel;
+
+    if (check_collision(gdata) || check_encircle(gdata)) {
+      /*
+       * Only start a fresh cooldown from idle (delay_frame == -1),
+       * matching the same idiom the non-colliding path below already
+       * uses -- don't keep refreshing an already-idle timer back to
+       * -1 forever. This still gives an active dodge time to finish
+       * (a countdown already in progress is left alone), but under
+       * sustained/continuous collision or encircle triggering -- like
+       * simply being in a crowded area -- it guarantees to_circle()
+       * still gets a chance to run roughly every COLLISION_DELAY
+       * frames instead of being starved indefinitely.
+       */
+      if (B.delay_frame == -1) B.delay_frame = COLLISION_DELAY;
+    } else {
+      if (B.delay_frame == -1) B.delay_frame = ACTION_FRAMES;
+      bot->output.accel = (bool)B.default_accel;
+    }
   }
 
   delay_action(gdata);

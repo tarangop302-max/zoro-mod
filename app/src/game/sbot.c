@@ -680,6 +680,7 @@ static void follow_circle_self(game_data* gdata) {
   float offset_incr = 0.0625f * B.width;
 
   float enemy_head_d2 = 64.0f * 64.0f * B.width * B.width;
+  float enemy_body_d2 = 64.0f * 64.0f * B.width * B.width;
 
   int ns = tdarray_length(gdata->data.snakes);
   for (int i = 0; i < ns; i++) {
@@ -697,19 +698,26 @@ static void follow_circle_self(game_data* gdata) {
     }
 
     /*
-     * bot_brain_exact.js's equivalent per-segment enemy-body loop
-     * computes a local offset/polygon per segment but never feeds it
-     * into steer/target_course anywhere -- it has no effect on the
-     * faithful bot's output. Two different custom attempts at wiring
-     * an equivalent "bend away from a squeezing enemy body" reaction
-     * into target_course here both caused real instability (one went
-     * inert exactly when it mattered, the other overreacted hard in
-     * crowds), so this is intentionally left out rather than guessed
-     * at a third time. Enemy avoidance while circling still comes
-     * from enemy_head_dist/head_prox below (unchanged) plus the
-     * reactive stage-1 check_collision()/check_encircle() that run
-     * before the snake ever reaches circle mode.
+     * Same idea as the head check above, but for the enemy's body --
+     * this is what was missing before: a snake trapping the loop by
+     * parking its body nearby while its head moves elsewhere (or leaves
+     * entirely) was invisible to head_prox alone. Deliberately kept to
+     * this same simple "nearest point, one distance, one capped
+     * correction" shape rather than the old per-point polygon-offset
+     * search over the whole body -- that search (in either its original
+     * or rewritten form) is what caused the past instability, not the
+     * general idea of reacting to body proximity.
      */
+    int pn = tdarray_length(sk->pts);
+    for (int j = 0; j < pn; j++) {
+      body_part* po = sk->pts + j;
+      if (po->dying) continue;
+      v2 pt = {po->xx, po->yy};
+      if (point_in_poly_large(pt, &inside_poly)) continue;
+
+      float dbp = dist2(pt.x, pt.y, target_pt.x, target_pt.y);
+      if (dbp < enemy_body_d2) enemy_body_d2 = dbp;
+    }
   }
 
   float dist_to_ctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
@@ -762,6 +770,19 @@ static void follow_circle_self(game_data* gdata) {
    * gets a strong reaction, but bystanders can't override circling. */
   head_prox = fmaxf(head_prox, -2.0f);
   target_course = fminf(target_course, head_prox);
+
+  float enemy_body_dist = sqrtf(enemy_body_d2);
+
+  float body_prox = -1.0f - (2.0f * target_far - enemy_body_dist) / B.width;
+  if (body_prox > 0)
+    body_prox = 0.125f * body_prox * body_prox;
+  else
+    body_prox = -0.500f * body_prox * body_prox;
+  /* Same reasoning as head_prox's cap: a body segment merely nearby in a
+   * crowd shouldn't override circling, only one actually on the
+   * approach line should pull the target hard. */
+  body_prox = fmaxf(body_prox, -2.0f);
+  target_course = fminf(target_course, body_prox);
 
   if (near_wall) {
     float adj_wall = (wall_od - 0.0625f * B.width) / B.width;
@@ -908,10 +929,12 @@ static void every(game_data* gdata) {
     B.id = me->id;
     /* We only land here when we don't have a live snake to track yet --
      * bot just turned on, or the previous snake died and this is a
-     * fresh one after respawn. Either way, start straight into
-     * loop-forming instead of the food-chasing grow stage, so a
-     * respawn doesn't send the bot roaming across the map again. */
-    B.stage = 1;
+     * fresh one after respawn. Start at the food-chasing grow stage,
+     * same as sbot_init -- the score check in sbot_go below is what
+     * actually decides when to switch into loop-forming, so this just
+     * needs to not be stage 2 (which would try to run circleControl
+     * with no body to loop yet). */
+    B.stage = 0;
   }
 
   B.x = me->xx;
@@ -938,10 +961,7 @@ void sbot_init(tenv* env) {
   tuser_data* usr = env->usr;
   game_data* gdata = &usr->gdata;
   memset(&B, 0, sizeof(B));
-  /* Skip the food-chasing grow stage entirely -- start straight into
-   * loop-forming so the bot only ever circles, never roams the map
-   * for food. */
-  B.stage = 1;
+  B.stage = 0;
   B.delay_frame = -1;
   B.default_accel = 0;
   B.circle_dir = +1;
@@ -967,9 +987,13 @@ void sbot_go(tenv* env) {
 
   every(gdata);
 
-  /* No score-threshold check here anymore -- "just circle" mode never
-   * drops back to the food-chasing grow stage. every() already resets
-   * to stage 1 (loop-forming) on respawn, above. */
+  /* Below the configured score (usrs->bot_follow_circle_score,
+   * B.follow_circle_length), stay in/return to the food-chasing grow
+   * stage -- normal reactive play, no forced loop-forming. Once past
+   * it, stage promotes to 1 (loop-forming) below and stays there via
+   * every()'s respawn handling using stage 0 as the restart point, not
+   * this check re-triggering mid-circle. */
+  if (B.snake_len < B.follow_circle_length) B.stage = 0;
   if (B.has_food && B.stage != 0) B.has_food = false;
 
   if (B.stage == 2) {

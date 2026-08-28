@@ -619,7 +619,14 @@ static void jsr_parse_message(
         size_t srv_len;
         uint8_t shape = 0;
         float color_r = 0.05f, color_g = 1.0f, color_b = 0.55f;
-        int score = 0;
+        /*
+         * -1 (not a real score) means "this peer/relay hop didn't
+         * include the score bytes at all" -- distinct from a
+         * genuinely-received score of 0 -- so callers can tell
+         * "unknown" apart from "actually zero" instead of both
+         * looking identical.
+         */
+        int score = -1;
 
         offset = 1;
 

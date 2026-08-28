@@ -522,8 +522,16 @@ void ui_overlay(tenv* env) {
             igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%s",
                           teammates[row].nickname);
             igTableSetColumnIndex(2);
-            igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%d",
-                          teammates[row].score);
+            /* score is -1 when this teammate's broadcast didn't
+             * carry a score at all (older client build, or a
+             * relay hop that dropped the trailing bytes) --
+             * show "--" instead of a misleading "0". */
+            if (teammates[row].score < 0) {
+              igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 0.6f}, "--");
+            } else {
+              igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%d",
+                            teammates[row].score);
+            }
           }
           igEndTable();
         }

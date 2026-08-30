@@ -653,7 +653,16 @@ void redraw(tenv* env) {
         float mr = 0;
         // NTL-style transparent snake body. This applies to textured, solid,
         // and flat render modes instead of only the skinless modes.
-        float skin_alpha = mode->transparent_skin
+        //
+        // In assist mode specifically, the point of this is to see through
+        // enemy bodies -- your own snake should stay fully opaque so it's
+        // never harder to track than anyone else's. Previously this had no
+        // such exclusion and applied to every snake uniformly, including
+        // your own, making it look like it "did nothing" whenever your own
+        // snake was what you were looking at.
+        bool skip_transparency_for_self =
+            mode_index == 1 && o->id == gdata->data.snake_id;
+        float skin_alpha = (mode->transparent_skin && !skip_transparency_for_self)
                                ? usrs->transparent_skin_opacity[mode_index]
                                : 1.0f;
 
@@ -730,15 +739,30 @@ void redraw(tenv* env) {
 
                 int cg_id = o->cusk_data[(int)j % o->cusk_len];
 
+                /* Transparency here reuses assist_force_white's "flat
+                 * fill, no texture" trick (with the real skin color
+                 * instead of forcing white) rather than fading the
+                 * actual textured pattern -- fading the texture left
+                 * each overlapping segment's pattern edge visible
+                 * through the next, which is what looked like
+                 * "segments" instead of one smooth transparent body. */
+                bool flatten = assist_force_white || skin_alpha < 1.0f;
+                vec3s* cg_col = gdata->cg_colors + cg_id;
+
                 bp_renderer_push(usr->r->bpr,
                                  &(bp_instance){{fix - (gdata->data.gsc * lsz),
                                                  fiy - (gdata->data.gsc * lsz),
                                                  gdata->data.gsc * 2 * lsz,
                                                  gdata->data.pba[(int)j]},
-                                                assist_force_white
+                                                flatten
                                                     ? gdata->cg_uvs[BLANK_UV]
                                                     : gdata->cg_uvs[cg_id],
-                                                {1, 1, 1, a * skin_alpha}});
+                                                assist_force_white
+                                                    ? (vec4s){1, 1, 1, a * skin_alpha}
+                                                : skin_alpha < 1.0f
+                                                    ? (vec4s){cg_col->r, cg_col->g,
+                                                              cg_col->b, a * skin_alpha}
+                                                    : (vec4s){1, 1, 1, a * skin_alpha}});
               }
           } else {
             for (j = bp - 1; j >= 0; j--)
@@ -778,16 +802,26 @@ void redraw(tenv* env) {
                         ->default_skins[o->cv][1 + ((int)j % default_skin_len)];
                 float se = gdata->worm_effect[(int)j % WORM_EFFECT_LEN];
 
+                /* Same flat-fill fallback as the cusk branch above --
+                 * also skips the worm_effect shimmer (se), since that
+                 * varies segment-to-segment and was equally visible
+                 * as "segments" once semi-transparent. */
+                bool flatten = assist_force_white || skin_alpha < 1.0f;
+                vec3s* cg_col = gdata->cg_colors + cg_id;
+
                 bp_renderer_push(usr->r->bpr,
                                  &(bp_instance){{fix - (gdata->data.gsc * lsz),
                                                  fiy - (gdata->data.gsc * lsz),
                                                  gdata->data.gsc * 2 * lsz,
                                                  gdata->data.pba[(int)j]},
-                                                assist_force_white
+                                                flatten
                                                     ? gdata->cg_uvs[BLANK_UV]
                                                     : gdata->cg_uvs[cg_id],
                                                 assist_force_white
                                                     ? (vec4s){1, 1, 1, a * skin_alpha}
+                                                : skin_alpha < 1.0f
+                                                    ? (vec4s){cg_col->r, cg_col->g,
+                                                              cg_col->b, a * skin_alpha}
                                                     : (vec4s){se, se, se, a * skin_alpha}});
               }
           }

@@ -12,13 +12,13 @@ typedef enum _tdarray_field {
 
 size_t* _tdarray_get_fields(void* darray);
 void* _tdarray_create(size_t stride);
-void _tdarray_insert(void** darray, size_t i, void* value_ptr);
-void _tdarray_push(void** darray_ptr, void* value_ptr);
+void _tdarray_insert(void** darray, size_t i, const void* value_ptr);
+void _tdarray_push(void** darray_ptr, const void* value_ptr);
 void _tdarray_pop(void* darray);
 void _tdarray_remove(void* darray, size_t i);
 size_t _tdarray_length(void* darray);
 size_t _tdarray_memory(void* darray);
-int _tdarray_find(void* darray, void* value_ptr);
+int _tdarray_find(void* darray, const void* value_ptr);
 void _tdarray_clear(void* darray);
 void _tdarray_destroy(void* darray);
 

@@ -39,6 +39,13 @@ typedef struct game_data {
      persisted stats. See game/bg_preview.h */
   bool preview_active;
 
+  /* True while the Skin editor's full color/accessory grid is open (the
+     "Custom" view). Deliberately NOT part of user_settings: it's a
+     transient UI state, not a preference, and always starts false so the
+     skin editor opens on the "Default skins" / "Saved skins" picker
+     rather than resuming mid-edit after a restart. See ui/skin_editor.c */
+  bool skin_editing;
+
   uint8_t default_skins[NUM_DEFAULT_SKINS][64];
   char ntl_cg_map[NUM_COLOR_GROUPS];
   vec4s cg_uvs[NUM_COLOR_GROUPS];

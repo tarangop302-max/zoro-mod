@@ -33,29 +33,49 @@ void ui_title_screen(tenv* env) {
 
   igPushFont(usr->imgui_data.mono_font[usrs->ui_font_size],
              usr->imgui_data.mono_font[usrs->ui_font_size]->LegacySize);
-  igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
-  igSetCursorPosY(ctx->size[1] / 2.0f -
-                  (igGetFrameHeight() - style->ItemSpacing.x) * 3);
+
+  /* Lobby-only stats block, bottom-left corner. Stacked upward from the
+     bottom edge so a 4th line just means one more row -- no other offsets
+     to touch. Order (bottom to top): best length, timer, kills, score. */
+  float stats_margin_x = style->WindowPadding.x;
+  float stats_margin_y = style->WindowPadding.y;
+  float stats_row = igGetFrameHeight() - style->ItemSpacing.x;
+
   int tot_sec = (int)usrs->play_time;
   int hours = tot_sec / 3600;
   int minutes = (tot_sec % 3600) / 60;
   int seconds = tot_sec % 60;
+
+  igSetCursorPosX(stats_margin_x);
+  igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 4);
   igTextColored((ImVec4){1, 1, 1, 0.5f}, "\ue99e");
   igSameLine(0, -1);
   igTextColored((ImVec4){1, 1, 1, 0.5f}, "%d", usrs->score);
-  igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
-  igSetCursorPosY(ctx->size[1] / 2.0f -
-                  (igGetFrameHeight() - style->ItemSpacing.x) * 2);
+
+  igSetCursorPosX(stats_margin_x);
+  igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 3);
   igTextColored((ImVec4){1, 1, 1, 0.5f}, "\ueaeb");
   igSameLine(0, -1);
   igTextColored((ImVec4){1, 1, 1, 0.5f}, "%d", usrs->kills);
-  igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
-  igSetCursorPosY(ctx->size[1] / 2.0f -
-                  (igGetFrameHeight() - style->ItemSpacing.x));
+
+  igSetCursorPosX(stats_margin_x);
+  igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 2);
   igTextColored((ImVec4){1, 1, 1, 0.6}, "\ue952");
   igSameLine(0, -1);
   igTextColored((ImVec4){1, 1, 1, 0.6}, "%02d:%02d:%02d", hours, minutes,
                 seconds);
+
+  /* NEW: 4th line, best-ever length. Reuses the trophy glyph (no dedicated
+     "length" icon exists in this atlas -- see ui_overlay.c's in-game HUD,
+     which treats score/length as the same computed quantity) but in gold
+     with a "Best" label so it doesn't read as a duplicate of the score
+     line above. */
+  igSetCursorPosX(stats_margin_x);
+  igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 1);
+  igTextColored((ImVec4){1, 0.85f, 0.4f, 0.7f}, "\ue99e");
+  igSameLine(0, -1);
+  igTextColored((ImVec4){1, 0.85f, 0.4f, 0.7f}, "Best %d", usrs->best_length);
+
   igPopFont();
 
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);

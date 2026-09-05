@@ -1273,6 +1273,8 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       usrs->kills = gdata->data.kills;
       usrs->score = gdata->data.score;
       usrs->play_time = gdata->data.play_etm;
+      if (gdata->data.score > usrs->best_length)
+        usrs->best_length = gdata->data.score;
 
       save_user_settings(usrs);
     }

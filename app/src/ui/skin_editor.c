@@ -42,8 +42,17 @@ void ui_skin_editor(tenv* env) {
 
   vec2 tot_size = {style->ItemSpacing.x * 6 + 7 * scale,
                    style->ItemSpacing.y * 5 + 6 * scale};
+
+  /* Row-units reserved above grid_y for the buttons/labels below the
+     preview. The full color/accessory grid (child panel starting at
+     grid_y) only ever shows while gdata->skin_editing is true, so the two
+     modes reserve a different number of rows:
+       editing:     [skin code input] [Save] [Default] [OK]        -> 4
+       not editing: [Default skins] [<>] [Saved skins] [<>]
+                    [Custom] [OK]                                   -> 6 */
+  int picker_rows = gdata->skin_editing ? 4 : 6;
   float min_grid_y = style->WindowPadding.y +
-                     (style->ItemSpacing.y + frame_height) * 3.0f +
+                     (style->ItemSpacing.y + frame_height) * picker_rows +
                      (scale + style->ItemSpacing.y) * 2.0f;
   float grid_y = ctx->size[1] * 0.5f - tot_size[1] * 0.5f;
   if (grid_y < min_grid_y) grid_y = min_grid_y;
@@ -52,7 +61,7 @@ void ui_skin_editor(tenv* env) {
 
   igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
   igSetCursorPosY((grid_y) -
-                  ((style->ItemSpacing.y + frame_height) * 3 + scale +
+                  ((style->ItemSpacing.y + frame_height) * picker_rows + scale +
                    style->ItemSpacing.y));
 
   for (int i = strlen(usrs->skin_code); i < MAX_SKIN_CODE_LEN + 1; i++)
@@ -98,7 +107,7 @@ void ui_skin_editor(tenv* env) {
 
   igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
   igSetCursorPosY((grid_y) -
-                  ((style->ItemSpacing.y + frame_height) * 3 +
+                  ((style->ItemSpacing.y + frame_height) * picker_rows +
                    2 * (scale + style->ItemSpacing.y)));
 
   for (int i = 0; i < MAX_SKIN_CODE_LEN / 2; i++) {
@@ -207,10 +216,14 @@ void ui_skin_editor(tenv* env) {
         &(bp_instance){{acx - m, acy - m, m * 2, 0}, acc->uv, {1, 1, 1, 1}});
   }
 
-  igSetCursorPosX(ctx->size[0] * 0.5 - tot_size[0] * 0.5f);
-  igSetCursorPosY((grid_y) -
-                  ((style->ItemSpacing.y + frame_height) * 3));
-  if (usrs->custom_skin) {
+  float row_h = style->ItemSpacing.y + frame_height;
+  float picker_x = ctx->size[0] * 0.5 - tot_size[0] * 0.5f;
+  float half_w = tot_size[0] / 2 - style->ItemSpacing.x / 2;
+
+  if (gdata->skin_editing) {
+    /* Rows 4-3: skin code input, then Save (image 2). */
+    igSetCursorPosX(picker_x);
+    igSetCursorPosY((grid_y) - row_h * 4);
     igSetNextItemWidth(tot_size[0] - 2 * (frame_height + style->ItemSpacing.x));
     igInputTextWithHint("##ss", "Skin code", usrs->skin_code,
                         MAX_SKIN_CODE_LEN + 1,
@@ -229,33 +242,99 @@ void ui_skin_editor(tenv* env) {
       usrs->skin_code[0] = 0;
     }
     igPopStyleVar(1);
+
+    igSetCursorPosX(picker_x);
+    igSetCursorPosY((grid_y) - row_h * 3);
+    bool can_save =
+        usrs->skin_code[0] != 0 && usrs->saved_skin_count < MAX_SAVED_SKINS;
+    igBeginDisabled(!can_save);
+    if (igButton("Save", (ImVec2){tot_size[0]})) {
+      int idx = usrs->saved_skin_count++;
+      snprintf(usrs->saved_skins[idx].name, MAX_SAVED_SKIN_NAME + 1, "Skin %d",
+               idx + 1);
+      strncpy(usrs->saved_skins[idx].skin_code, usrs->skin_code,
+              MAX_SKIN_CODE_LEN + 1);
+      usrs->saved_skins[idx].skin_code[MAX_SKIN_CODE_LEN] = 0;
+      usrs->saved_skins[idx].accessory = usrs->accessory;
+      usrs->active_saved_skin = idx;
+    }
+    igEndDisabled();
   } else {
-    if (igButton("\uea38",
-                 (ImVec2){tot_size[0] / 2 - style->ItemSpacing.x / 2, 0}))
+    /* Row 6-5: "Default skins" label + arrows (image 1, unchanged). */
+    igSetCursorPosX(picker_x);
+    igSetCursorPosY((grid_y) - row_h * 6);
+    igTextDisabled("Default skins");
+
+    igSetCursorPosX(picker_x);
+    igSetCursorPosY((grid_y) - row_h * 5);
+    if (igButton("\uea38##default_prev", (ImVec2){half_w, 0})) {
       usrs->default_skin =
           (usrs->default_skin + (NUM_DEFAULT_SKINS - 1)) % NUM_DEFAULT_SKINS;
+      usrs->custom_skin = false;
+    }
     igSameLine(0, -1);
-    if (igButton("\uea34",
-                 (ImVec2){tot_size[0] / 2 - style->ItemSpacing.x / 2, 0}))
+    if (igButton("\uea34##default_next", (ImVec2){half_w, 0})) {
       usrs->default_skin = (usrs->default_skin + 1) % NUM_DEFAULT_SKINS;
-  }
-  igSetCursorPosX(ctx->size[0] * 0.5 - tot_size[0] * 0.5f);
-  igSetCursorPosY((grid_y) -
-                  ((style->ItemSpacing.y + frame_height) * 2));
-  if (igButton(usrs->custom_skin ? "\uea40 Default" : "\ue905 Custom",
-               (ImVec2){tot_size[0]}))
-    usrs->custom_skin = !usrs->custom_skin;
+      usrs->custom_skin = false;
+    }
 
-  igSetCursorPosX(ctx->size[0] * 0.5 - tot_size[0] * 0.5f);
-  igSetCursorPosY((grid_y) -
-                  ((style->ItemSpacing.y + frame_height) * 1));
+    /* Row 4-3: "Saved skins" label + arrows (NEW). Cycles usrs->saved_skins
+       and, on change, loads that entry's code/accessory as the active skin
+       -- exactly like picking a default, just sourced from your own saved
+       list instead of the built-ins. Disabled until you've saved at least
+       one (via Custom > Save). */
+    igSetCursorPosX(picker_x);
+    igSetCursorPosY((grid_y) - row_h * 4);
+    igTextDisabled("Saved skins");
+
+    igSetCursorPosX(picker_x);
+    igSetCursorPosY((grid_y) - row_h * 3);
+    bool has_saved = usrs->saved_skin_count > 0;
+    int base = usrs->active_saved_skin < 0 ? 0 : usrs->active_saved_skin;
+    igBeginDisabled(!has_saved);
+    if (igButton("\uea38##saved_prev", (ImVec2){half_w, 0}) && has_saved) {
+      usrs->active_saved_skin =
+          (base + usrs->saved_skin_count - 1) % usrs->saved_skin_count;
+      saved_skin* s = &usrs->saved_skins[usrs->active_saved_skin];
+      strncpy(usrs->skin_code, s->skin_code, MAX_SKIN_CODE_LEN + 1);
+      usrs->accessory = s->accessory;
+      usrs->custom_skin = true;
+    }
+    igSameLine(0, -1);
+    if (igButton("\uea34##saved_next", (ImVec2){half_w, 0}) && has_saved) {
+      usrs->active_saved_skin = (base + 1) % usrs->saved_skin_count;
+      saved_skin* s = &usrs->saved_skins[usrs->active_saved_skin];
+      strncpy(usrs->skin_code, s->skin_code, MAX_SKIN_CODE_LEN + 1);
+      usrs->accessory = s->accessory;
+      usrs->custom_skin = true;
+    }
+    igEndDisabled();
+  }
+
+  igSetCursorPosX(picker_x);
+  igSetCursorPosY((grid_y) - row_h * 2);
+  if (gdata->skin_editing) {
+    if (igButton("\uea40 Default", (ImVec2){tot_size[0]})) {
+      gdata->skin_editing = false;
+      usrs->custom_skin = false;
+    }
+  } else {
+    if (igButton("\ue905 Custom", (ImVec2){tot_size[0]})) {
+      gdata->skin_editing = true;
+      usrs->custom_skin = true;
+    }
+  }
+
+  igSetCursorPosX(picker_x);
+  igSetCursorPosY((grid_y) - row_h * 1);
   if (igButton("OK", (ImVec2){tot_size[0]})) {
     if (usrs->skin_code[0] == 0) usrs->custom_skin = false;
+    gdata->skin_editing = false;
     gdata->curr_screen = TITLE_SCREEN;
     save_user_settings(usrs);
   }
 
-  if (usrs->custom_skin) {
+  if (usrs->custom_skin && gdata->skin_editing) {
     float panel_w = tot_size[0] + style->ScrollbarSize + style->WindowPadding.x * 2.0f;
     if (panel_w > ctx->size[0] - style->WindowPadding.x * 2.0f)
       panel_w = ctx->size[0] - style->WindowPadding.x * 2.0f;

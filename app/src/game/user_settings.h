@@ -10,6 +10,9 @@
 #define MAX_NTL_TEAM_PROFILES 12
 #define MAX_NTL_TEAM_NAME 47
 
+#define MAX_SAVED_SKINS 30
+#define MAX_SAVED_SKIN_NAME 23
+
 typedef struct hotkey {
   int key;
   bool active;
@@ -45,6 +48,12 @@ typedef struct ntl_team_profile {
   char team_id[96];
   char auth_key[96];
 } ntl_team_profile;
+
+typedef struct saved_skin {
+  char name[MAX_SAVED_SKIN_NAME + 1];
+  char skin_code[MAX_SKIN_CODE_LEN + 1];
+  uint8_t accessory;
+} saved_skin;
 
 typedef struct custom_key_btn {
   bool  active;
@@ -244,6 +253,22 @@ typedef struct user_settings {
      the one actually wired up in redraw.c; index [0] exists purely for
      layout symmetry and isn't read anywhere. */
   bool  white_skin_enemies[2];
+
+  /* v2.11 extension fields. Player-saved custom skins (Skin editor > Custom
+     > Save), browsable from the skin picker's "Saved skins" row alongside
+     the built-in "Default skins" row. Kept at the end so pre-v2.11 files
+     remain a compatible prefix (see v211_prefix in read_user_settings). */
+  int saved_skin_count;
+  int active_saved_skin;
+  saved_skin saved_skins[MAX_SAVED_SKINS];
+
+  /* v2.12 extension field. Tracks the highest score ever reached (see
+     best_length in read_user_settings/callback.c) -- unlike `score`
+     above, which is overwritten with the last game's result on every
+     death, this one only ever goes up. Shown as a 4th line in the
+     lobby stats (title_screen.c). Kept at the end so pre-v2.12 files
+     remain a compatible prefix (see v212_prefix in read_user_settings). */
+  int best_length;
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

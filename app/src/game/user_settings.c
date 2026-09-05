@@ -213,6 +213,12 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->head_dot_color[0] = 1.0f;
   usr_settings->head_dot_color[1] = 1.0f;
   usr_settings->head_dot_color[2] = 1.0f;
+
+  usr_settings->saved_skin_count = 0;
+  usr_settings->active_saved_skin = -1;
+  memset(usr_settings->saved_skins, 0, sizeof usr_settings->saved_skins);
+
+  usr_settings->best_length = 0;
 }
 
 void write_default_settings(user_settings* usr_settings) {
@@ -277,9 +283,21 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v27_prefix = offsetof(user_settings, public_chat_pos_custom);
   size_t v28_prefix = offsetof(user_settings, hud_layout_edit_mode);
   size_t v29_prefix = offsetof(user_settings, key_btn_shape);
+  size_t v211_prefix = offsetof(user_settings, saved_skin_count);
+  size_t v212_prefix = offsetof(user_settings, best_length);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v212_prefix)
+    /* A file saved before best_length existed ends at v212_prefix, possibly
+       followed only by compiler tail padding. Do not copy that padding into
+       the new field. */
+    bytes_to_read = v212_prefix;
+  else if ((size_t)file_size >= v211_prefix)
+    /* A file saved before saved skins existed ends at v211_prefix, possibly
+       followed only by compiler tail padding. Do not copy that padding into
+       the new saved-skins fields. */
+    bytes_to_read = v211_prefix;
   else if ((size_t)file_size >= v29_prefix)
     /* A file saved before the Vlither-ported arrow/head-dot/key-shape
        fields existed ends at v29_prefix, possibly followed only by
@@ -448,6 +466,28 @@ void read_user_settings(user_settings* usr_settings) {
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     if (loaded.key_btn_shape[i] > 1) loaded.key_btn_shape[i] = 0;
   }
+
+  if (loaded.saved_skin_count < 0 || loaded.saved_skin_count > MAX_SAVED_SKINS)
+    loaded.saved_skin_count = 0;
+  if (loaded.active_saved_skin < -1 ||
+      loaded.active_saved_skin >= loaded.saved_skin_count)
+    loaded.active_saved_skin = -1;
+  for (int i = 0; i < loaded.saved_skin_count; ++i) {
+    loaded.saved_skins[i].name[MAX_SAVED_SKIN_NAME] = 0;
+    loaded.saved_skins[i].skin_code[MAX_SKIN_CODE_LEN] = 0;
+    if (!loaded.saved_skins[i].skin_code[0]) {
+      if (loaded.active_saved_skin == i)
+        loaded.active_saved_skin = -1;
+      else if (loaded.active_saved_skin > i)
+        --loaded.active_saved_skin;
+      for (int j = i + 1; j < loaded.saved_skin_count; ++j)
+        loaded.saved_skins[j - 1] = loaded.saved_skins[j];
+      --loaded.saved_skin_count;
+      --i;
+    }
+  }
+
+  if (loaded.best_length < 0) loaded.best_length = 0;
 
   *usr_settings = loaded;
 }

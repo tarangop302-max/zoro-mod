@@ -3,6 +3,92 @@
 #include "../user.h"
 #include "global_chat.h"
 
+/*
+ * Draws a snake's body as a smooth, continuous stroke for Flat render
+ * mode, instead of stamping one full circle at every closely-spaced
+ * body sample point. Circle-only stamping leaves two visible
+ * artifacts: on any bend, the circles' union has a scalloped/faceted
+ * outer edge (the circles don't line up to form a smooth curve), and
+ * when the body is semi-transparent, overlapping circles double up
+ * their alpha blending at every single point along the body, showing
+ * as visible ring-shaped seams.
+ *
+ * This connects each pair of kept body points with a capsule sprite
+ * -- a flat-sided pill shape the renderer already supports -- whose
+ * straight middle exactly spans the gap between them with no overlap
+ * and no gap, following the body's actual direction there instead of
+ * relying on circles to approximate it. A circle is still drawn at
+ * each kept point to round off the joins between capsules, the same
+ * technique standard 2D vector-graphics libraries use for smooth
+ * ("round join") thick line rendering.
+ *
+ * This doesn't erase every seam -- the capsule primitive always
+ * rounds both of its ends (there's no flat-cap option in the
+ * shader), so adjacent joins still double-cover a small area if the
+ * body is transparent -- but joins are now far less frequent
+ * (BODY_STROKE_STRIDE apart instead of one for every sampled point),
+ * and the scalloped-edge problem on bends is gone entirely: the
+ * capsule's straight sides match the path exactly between any two
+ * kept points regardless of how sharply the body curves there.
+ */
+#define BODY_STROKE_STRIDE 3
+
+static void draw_flat_body_stroke(tuser_data* usr, game_data* gdata, int bp,
+                                  float lsz, float mww2, float mhh2,
+                                  vec4s color) {
+  float gsc = gdata->data.gsc;
+  float radius = gsc * lsz;
+  float thickness = radius * 2.0f;
+  bool have_prev = false;
+  float prev_x = 0.0f, prev_y = 0.0f;
+  int kept = 0;
+
+  for (int j = bp - 1; j >= 0; j--) {
+    if (gdata->data.pbu[(int)j] < 1) continue;
+
+    bool is_last = (j == 0);
+    bool keep = (kept % BODY_STROKE_STRIDE == 0) || is_last;
+    kept++;
+    if (!keep) continue;
+
+    float px = gdata->data.pbx[(int)j];
+    float py = gdata->data.pby[(int)j];
+    float fix = ((px - gdata->data.view_xx) * gsc) + mww2;
+    float fiy = ((py - gdata->data.view_yy) * gsc) + mhh2;
+
+    if (have_prev) {
+      float dx = fix - prev_x;
+      float dy = fiy - prev_y;
+      float dist = sqrtf(dx * dx + dy * dy);
+
+      if (dist > 0.01f) {
+        float mx = (prev_x + fix) * 0.5f;
+        float my = (prev_y + fiy) * 0.5f;
+        float length = dist + thickness;
+        float angle = atan2f(dy, dx);
+
+        bp_renderer_push(
+            usr->r->bpr,
+            &(bp_instance){{mx - length * 0.5f, my - thickness * 0.5f, length,
+                            angle},
+                           {0, 0, 0, 0},
+                           color,
+                           {thickness, 1.0f}});
+      }
+    }
+
+    bp_renderer_push(
+        usr->r->bpr,
+        &(bp_instance){{fix - radius, fiy - radius, radius * 2.0f, 0},
+                       gdata->cg_uvs[BLANK_UV],
+                       color});
+
+    prev_x = fix;
+    prev_y = fiy;
+    have_prev = true;
+  }
+}
+
 void lerp_minimap_float(float* dst, const uint8_t* src, int mmsz, float alpha) {
   int stride = MAX_MINIMAP_SIZE;
 
@@ -982,9 +1068,6 @@ void redraw(tenv* env) {
           if (o->cusk) {
             for (j = bp - 1; j >= 0; j--)
               if (gdata->data.pbu[(int)j] >= 1) {
-                px = gdata->data.pbx[(int)j];
-                py = gdata->data.pby[(int)j];
-
                 if (j >= 4 && render_shadows) {
                   k = j - 4;
                   if (gdata->data.pbu[(int)k] == 2) {
@@ -1007,32 +1090,18 @@ void redraw(tenv* env) {
                                        {0, 0, 0, a * a}});
                   }
                 }
-
-                float fix =
-                    ((px - gdata->data.view_xx) * gdata->data.gsc) + mww2;
-                float fiy =
-                    ((py - gdata->data.view_yy) * gdata->data.gsc) + mhh2;
-
-                int cg_id = o->cusk_data[0];
-                vec3s* cg_col = gdata->cg_colors + cg_id;
-
-                bp_renderer_push(
-                    usr->r->bpr,
-                    &(bp_instance){
-                        {fix - (gdata->data.gsc * lsz),
-                         fiy - (gdata->data.gsc * lsz),
-                         gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
-                        gdata->cg_uvs[BLANK_UV],
-                        assist_force_white
-                            ? (vec4s){1, 1, 1, a * a * skinless_a}
-                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * a * skinless_a}});
               }
+
+            int cg_id = o->cusk_data[0];
+            vec3s* cg_col = gdata->cg_colors + cg_id;
+            vec4s body_color =
+                assist_force_white
+                    ? (vec4s){1, 1, 1, a * a * skinless_a}
+                    : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * a * skinless_a};
+            draw_flat_body_stroke(usr, gdata, bp, lsz, mww2, mhh2, body_color);
           } else {
             for (j = bp - 1; j >= 0; j--)
               if (gdata->data.pbu[(int)j] >= 1) {
-                px = gdata->data.pbx[(int)j];
-                py = gdata->data.pby[(int)j];
-
                 if (j >= 4 && render_shadows) {
                   k = j - 4;
                   if (gdata->data.pbu[(int)k] == 2) {
@@ -1055,27 +1124,15 @@ void redraw(tenv* env) {
                                        {0, 0, 0, a}});
                   }
                 }
-
-                float fix =
-                    ((px - gdata->data.view_xx) * gdata->data.gsc) + mww2;
-                float fiy =
-                    ((py - gdata->data.view_yy) * gdata->data.gsc) + mhh2;
-
-                int default_skin_len = gdata->default_skins[o->cv][0];
-                int cg_id = gdata->default_skins[o->cv][1];
-                vec3s* cg_col = gdata->cg_colors + cg_id;
-
-                bp_renderer_push(
-                    usr->r->bpr,
-                    &(bp_instance){
-                        {fix - (gdata->data.gsc * lsz),
-                         fiy - (gdata->data.gsc * lsz),
-                         gdata->data.gsc * 2 * lsz, gdata->data.pba[(int)j]},
-                        gdata->cg_uvs[BLANK_UV],
-                        assist_force_white
-                            ? (vec4s){1, 1, 1, a * skinless_a}
-                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
               }
+
+            int cg_id = gdata->default_skins[o->cv][1];
+            vec3s* cg_col = gdata->cg_colors + cg_id;
+            vec4s body_color =
+                assist_force_white
+                    ? (vec4s){1, 1, 1, a * skinless_a}
+                    : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a};
+            draw_flat_body_stroke(usr, gdata, bp, lsz, mww2, mhh2, body_color);
           }
         }
 

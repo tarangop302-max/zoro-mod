@@ -17,10 +17,14 @@
  * -- a flat-sided pill shape the renderer already supports -- whose
  * straight middle exactly spans the gap between them with no overlap
  * and no gap, following the body's actual direction there instead of
- * relying on circles to approximate it. A circle is still drawn at
- * each kept point to round off the joins between capsules, the same
- * technique standard 2D vector-graphics libraries use for smooth
- * ("round join") thick line rendering.
+ * relying on circles to approximate it. Consecutive capsules share an
+ * exact endpoint, and the capsule shape's own ends are already
+ * rounded, so the joins between them are self-rounding -- no separate
+ * circle is needed there (an earlier version of this drew one anyway,
+ * which just stacked a third overlapping layer on top of the two
+ * capsule end-caps already meeting there, making every joint visibly
+ * denser than the plain capsule middle whenever the body was
+ * semi-transparent).
  *
  * This doesn't erase every seam -- the capsule primitive always
  * rounds both of its ends (there's no flat-cap option in the
@@ -40,6 +44,7 @@ static void draw_flat_body_stroke(tuser_data* usr, game_data* gdata, int bp,
   float radius = gsc * lsz;
   float thickness = radius * 2.0f;
   bool have_prev = false;
+  bool drew_anything = false;
   float prev_x = 0.0f, prev_y = 0.0f;
   int kept = 0;
 
@@ -74,18 +79,25 @@ static void draw_flat_body_stroke(tuser_data* usr, game_data* gdata, int bp,
                            {0, 0, 0, 0},
                            color,
                            {thickness, 1.0f}});
+        drew_anything = true;
       }
     }
-
-    bp_renderer_push(
-        usr->r->bpr,
-        &(bp_instance){{fix - radius, fiy - radius, radius * 2.0f, 0},
-                       gdata->cg_uvs[BLANK_UV],
-                       color});
 
     prev_x = fix;
     prev_y = fiy;
     have_prev = true;
+  }
+
+  /* Rare edge case: a snake with only a single visible body point
+   * (e.g. just spawned) never forms a capsule at all, since a
+   * capsule needs two points -- draw one plain circle as a fallback
+   * so it's never left completely invisible for that one frame. */
+  if (!drew_anything && have_prev) {
+    bp_renderer_push(
+        usr->r->bpr,
+        &(bp_instance){{prev_x - radius, prev_y - radius, radius * 2.0f, 0},
+                       gdata->cg_uvs[BLANK_UV],
+                       color});
   }
 }
 

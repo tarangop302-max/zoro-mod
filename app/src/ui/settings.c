@@ -252,8 +252,12 @@ void ui_settings(tenv* env) {
         int opacity_percent =
             (int)(usrs->transparent_skin_opacity[i] * 100.0f + 0.5f);
         igSetNextItemWidth(-1);
-        if (igSliderInt("##skin opacity", &opacity_percent, 15, 85, "%d%%",
-                        ImGuiSliderFlags_AlwaysClamp))
+        /* Assist mode's Flat render mode has no per-segment pattern to
+           misalign at zero opacity (see redraw.c's flatten comment), so
+           its floor is relaxed to 0% instead of the usual 15% minimum. */
+        int opacity_min = (i == 1 && mode->render_mode == 2) ? 0 : 15;
+        if (igSliderInt("##skin opacity", &opacity_percent, opacity_min, 85,
+                        "%d%%", ImGuiSliderFlags_AlwaysClamp))
           usrs->transparent_skin_opacity[i] = opacity_percent / 100.0f;
         igEndDisabled();
         igCheckbox("##center line", &mode->center_line);

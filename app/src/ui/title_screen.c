@@ -9,6 +9,118 @@
 
 bool g_sl_popup_open = false;
 
+/* ============================================================================
+ * Crystal / purple glass theme -- this screen only.
+ *
+ * ImGui doesn't have real gradient fills or blur, so "glass" is faked with:
+ *   - a 4-corner gradient background rect + a couple of soft layered-circle
+ *     glow blobs, drawn once before any widgets so they sit behind everything
+ *   - flat translucent-purple frame/button colors (pushed for the whole
+ *     screen, popped at the end -- other screens are unaffected)
+ *   - a thin light "sheen" line along each widget's top edge afterward, to
+ *     read as a glass catch-light rather than a flat color swatch
+ *   - for the Play button specifically, a soft rounded glow drawn behind it
+ *     (several translucent rounded rects of increasing size) plus a brighter
+ *     fill, since it's meant to be the one standout action on the screen
+ * ============================================================================
+ */
+
+static ImU32 crystal_col(float r, float g, float b, float a) {
+  return igColorConvertFloat4ToU32((ImVec4){r, g, b, a});
+}
+
+static void crystal_draw_background(tenv* env) {
+  tcontext* ctx = env->ctx;
+  ImDrawList* dl = igGetWindowDrawList();
+  float w = ctx->size[0];
+  float h = ctx->size[1];
+
+  ImDrawList_AddRectFilledMultiColor(
+      dl, (ImVec2){0, 0}, (ImVec2){w, h},
+      crystal_col(0.078f, 0.039f, 0.141f, 1.0f) /* top-left */,
+      crystal_col(0.176f, 0.106f, 0.306f, 1.0f) /* top-right */,
+      crystal_col(0.141f, 0.082f, 0.259f, 1.0f) /* bottom-right */,
+      crystal_col(0.114f, 0.063f, 0.212f, 1.0f) /* bottom-left */);
+
+  /* Two soft purple glow blobs (fake radial gradients via layered,
+     decreasing-alpha circles), roughly matching the approved mockup's
+     glow positions. */
+  ImVec2 glow_a = {w * 0.72f, h * 0.30f};
+  ImVec2 glow_b = {w * 0.20f, h * 0.80f};
+  for (int i = 6; i >= 1; i--) {
+    ImDrawList_AddCircleFilled(dl, glow_a, 70.0f + i * 55.0f,
+                                crystal_col(0.592f, 0.353f, 1.0f, 0.02f * i),
+                                48);
+    ImDrawList_AddCircleFilled(dl, glow_b, 60.0f + i * 48.0f,
+                                crystal_col(0.353f, 0.235f, 0.784f, 0.016f * i),
+                                48);
+  }
+}
+
+/* Thin light line along a widget's top edge -- call right after drawing it
+   (uses the last item's rect). */
+static void crystal_sheen(void) {
+  ImVec2 mn, mx;
+  igGetItemRectMin(&mn);
+  igGetItemRectMax(&mx);
+  if (mx.x - mn.x < 20) return;
+  ImDrawList* dl = igGetWindowDrawList();
+  ImDrawList_AddLine(dl, (ImVec2){mn.x + 10, mn.y + 1.5f},
+                      (ImVec2){mx.x - 10, mn.y + 1.5f},
+                      crystal_col(1.0f, 1.0f, 1.0f, 0.12f), 1.5f);
+}
+
+/* Soft rounded glow behind an upcoming widget -- call BEFORE drawing it,
+   with its known screen-space position/size, so the glow ends up behind. */
+static void crystal_glow_rect(ImVec2 pos, ImVec2 size, float r, float g,
+                               float b) {
+  ImDrawList* dl = igGetWindowDrawList();
+  for (int i = 6; i >= 1; i--) {
+    float expand = i * 5.5f;
+    ImDrawList_AddRectFilled(
+        dl, (ImVec2){pos.x - expand, pos.y - expand},
+        (ImVec2){pos.x + size.x + expand, pos.y + size.y + expand},
+        crystal_col(r, g, b, 0.045f * i), 14.0f + expand * 0.4f,
+        ImDrawFlags_None);
+  }
+}
+
+/* Pushes the ambient glass colors used by most widgets on this screen.
+   Must be matched with crystal_pop_theme(). Returns nothing; caller just
+   needs to pop the same fixed counts. */
+static void crystal_push_theme(void) {
+  igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, 12.0f);
+
+  igPushStyleColor_Vec4(ImGuiCol_Border,
+                        (ImVec4){0.690f, 0.580f, 0.960f, 0.35f});
+  igPushStyleColor_Vec4(ImGuiCol_FrameBg,
+                        (ImVec4){0.373f, 0.290f, 0.607f, 0.28f});
+  igPushStyleColor_Vec4(ImGuiCol_FrameBgHovered,
+                        (ImVec4){0.430f, 0.330f, 0.680f, 0.34f});
+  igPushStyleColor_Vec4(ImGuiCol_FrameBgActive,
+                        (ImVec4){0.470f, 0.360f, 0.720f, 0.42f});
+  igPushStyleColor_Vec4(ImGuiCol_Button,
+                        (ImVec4){0.373f, 0.290f, 0.607f, 0.28f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                        (ImVec4){0.430f, 0.330f, 0.680f, 0.34f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                        (ImVec4){0.470f, 0.360f, 0.720f, 0.42f});
+  igPushStyleColor_Vec4(ImGuiCol_Header,
+                        (ImVec4){0.430f, 0.330f, 0.680f, 0.34f});
+  igPushStyleColor_Vec4(ImGuiCol_HeaderHovered,
+                        (ImVec4){0.470f, 0.360f, 0.720f, 0.42f});
+  igPushStyleColor_Vec4(ImGuiCol_Text,
+                        (ImVec4){0.945f, 0.925f, 1.0f, 1.0f});
+}
+
+#define CRYSTAL_COLOR_COUNT 10
+#define CRYSTAL_STYLEVAR_COUNT 1
+
+static void crystal_pop_theme(void) {
+  igPopStyleColor(CRYSTAL_COLOR_COUNT);
+  igPopStyleVar(CRYSTAL_STYLEVAR_COUNT);
+}
+
 void ui_title_screen_init(tenv* env) {}
 
 void ui_title_screen(tenv* env) {
@@ -25,6 +137,9 @@ void ui_title_screen(tenv* env) {
   usr->r->global.bg_opacity = 0;
   usr->r->global.bd_opacity = 0;
   usr->r->global.minimap_opacity = 0;
+
+  crystal_draw_background(env);
+  crystal_push_theme();
 
   float frame_height = igGetFrameHeight();
 
@@ -48,22 +163,22 @@ void ui_title_screen(tenv* env) {
 
   igSetCursorPosX(stats_margin_x);
   igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 4);
-  igTextColored((ImVec4){1, 1, 1, 0.5f}, "\ue99e");
+  igTextColored((ImVec4){0.85f, 0.80f, 1.0f, 0.55f}, "\ue99e");
   igSameLine(0, -1);
-  igTextColored((ImVec4){1, 1, 1, 0.5f}, "%d", usrs->score);
+  igTextColored((ImVec4){0.85f, 0.80f, 1.0f, 0.55f}, "%d", usrs->score);
 
   igSetCursorPosX(stats_margin_x);
   igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 3);
-  igTextColored((ImVec4){1, 1, 1, 0.5f}, "\ueaeb");
+  igTextColored((ImVec4){0.85f, 0.80f, 1.0f, 0.55f}, "\ueaeb");
   igSameLine(0, -1);
-  igTextColored((ImVec4){1, 1, 1, 0.5f}, "%d", usrs->kills);
+  igTextColored((ImVec4){0.85f, 0.80f, 1.0f, 0.55f}, "%d", usrs->kills);
 
   igSetCursorPosX(stats_margin_x);
   igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 2);
-  igTextColored((ImVec4){1, 1, 1, 0.6}, "\ue952");
+  igTextColored((ImVec4){0.85f, 0.80f, 1.0f, 0.65f}, "\ue952");
   igSameLine(0, -1);
-  igTextColored((ImVec4){1, 1, 1, 0.6}, "%02d:%02d:%02d", hours, minutes,
-                seconds);
+  igTextColored((ImVec4){0.85f, 0.80f, 1.0f, 0.65f}, "%02d:%02d:%02d", hours,
+                minutes, seconds);
 
   /* NEW: 4th line, best-ever length. Reuses the trophy glyph (no dedicated
      "length" icon exists in this atlas -- see ui_overlay.c's in-game HUD,
@@ -81,11 +196,10 @@ void ui_title_screen(tenv* env) {
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y);
   igPushItemWidth(logo_size);
-  igPushStyleColor_Vec4(ImGuiCol_FrameBg,
-                        (ImVec4){0.297f, 0.265f, 0.484f, 1.0f});
   igInputTextWithHint("##nickname_input", "Nickname", usrs->nickname,
                       MAX_NICKNAME_LEN + 1, ImGuiInputTextFlags_None, NULL,
                       NULL);
+  crystal_sheen();
 
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 2 +
@@ -94,8 +208,8 @@ void ui_title_screen(tenv* env) {
   igPushItemWidth(logo_size - sl_btn_w - style->ItemSpacing.x);
   igInputTextWithHint("##ipv4_input", "IPv4:Port", usrs->ipv4, MAX_IPV4_LEN + 1,
                       ImGuiInputTextFlags_None, NULL, NULL);
+  crystal_sheen();
   igPopItemWidth();
-  igPopStyleColor(1);
   igPopItemWidth();
 
   igSameLine(0, style->ItemSpacing.x);
@@ -106,6 +220,7 @@ void ui_title_screen(tenv* env) {
       server_list_fetch(env);
     igOpenPopup_Str("##sl_popup", 0);
   }
+  crystal_sheen();
   igPopFont();
 
   server_list_poll(env);
@@ -215,23 +330,40 @@ void ui_title_screen(tenv* env) {
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 3 +
                   frame_height * 2);
 
+  {
+    ImVec2 play_pos;
+    igGetCursorScreenPos(&play_pos);
+    crystal_glow_rect(play_pos, (ImVec2){logo_size, frame_height}, 0.647f,
+                      0.420f, 1.0f);
+  }
+  igPushStyleColor_Vec4(ImGuiCol_Button,
+                        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
   if (igButton("\uea1c Play", (ImVec2){logo_size})) {
     usr->gdata.conn = CONNECTING;
     usr->gdata.curr_screen = PLAYING;
     glfwSetTime(0);
     server_connect(env);
   }
+  crystal_sheen();
+  igPopStyleColor(3);
+
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 4 +
                   frame_height * 3);
   if (igButton("\ue90c Skin editor",
                (ImVec2){logo_size / 2 - style->ItemSpacing.x / 2}))
     usr->gdata.curr_screen = SKIN_EDITOR;
+  crystal_sheen();
   igSameLine(0, -1);
   if (igButton("\ue991 Settings",
                (ImVec2){logo_size / 2 - style->ItemSpacing.x / 2})) {
     usr->gdata.curr_screen = SETTINGS;
   }
+  crystal_sheen();
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 5 +
                   frame_height * 4);
@@ -239,11 +371,13 @@ void ui_title_screen(tenv* env) {
                (ImVec2){logo_size / 2 - style->ItemSpacing.x / 2})) {
     usr->gdata.curr_screen = CONTROLS;
   }
+  crystal_sheen();
   igSameLine(0, -1);
   if (igButton("Chat",
                (ImVec2){logo_size / 2 - style->ItemSpacing.x / 2})) {
     usr->gdata.curr_screen = NTL_PANEL;
   }
+  crystal_sheen();
 
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 6 +
@@ -256,13 +390,40 @@ void ui_title_screen(tenv* env) {
   if (igButton("Voice Chat", (ImVec2){logo_size})) {
     usr->gdata.curr_screen = NTL_PANEL;
   }
+  crystal_sheen();
 
-  igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
-  igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 7 +
-                  frame_height * 6);
-  if (igButton("\ue9b6 Quit", (ImVec2){logo_size})) {
-    env->config.running = false;
-    save_user_settings(usrs);
+  crystal_pop_theme();
+
+  /* Quit: deliberately NOT part of the main column above (same idea as the
+     approved mockup) -- it's the one action you don't want accidentally
+     emphasized alongside Play, so it lives in its own quiet corner with
+     muted colors instead of the ambient glass theme. */
+  {
+    float quit_w = 130.0f;
+    float quit_h = frame_height;
+    float quit_x = ctx->size[0] - quit_w - style->WindowPadding.x * 4;
+    float quit_y = style->WindowPadding.y * 4;
+
+    igPushStyleColor_Vec4(ImGuiCol_Border,
+                          (ImVec4){0.545f, 0.470f, 0.720f, 0.18f});
+    igPushStyleColor_Vec4(ImGuiCol_Button,
+                          (ImVec4){0.353f, 0.294f, 0.510f, 0.10f});
+    igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                          (ImVec4){0.400f, 0.340f, 0.560f, 0.16f});
+    igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                          (ImVec4){0.430f, 0.360f, 0.600f, 0.22f});
+    igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){0.600f, 0.560f, 0.700f, 1.0f});
+    igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, 10.0f);
+
+    igSetCursorPosX(quit_x);
+    igSetCursorPosY(quit_y);
+    if (igButton("\ue9b6 Quit", (ImVec2){quit_w, quit_h})) {
+      env->config.running = false;
+      save_user_settings(usrs);
+    }
+
+    igPopStyleVar(1);
+    igPopStyleColor(5);
   }
 
   igPopFont();

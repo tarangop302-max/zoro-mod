@@ -1,4 +1,3 @@
-
 #include "title_screen.h"
 #ifdef ANDROID
 #include "../android_glfw_shim.h"

@@ -583,31 +583,6 @@ Changes made by Lucky
                     android.view.Gravity.CENTER
             }
 
-        // Title
-
-        val title = TextView(this)
-
-        title.text = "VLITHER"
-
-        title.textSize = 40f
-
-        title.setTextColor(
-            0xFF2BAA60.toInt()
-        )
-
-        title.typeface =
-            android.graphics.Typeface.DEFAULT_BOLD
-
-        title.gravity =
-            android.view.Gravity.CENTER
-
-        title.setPadding(
-            0,
-            0,
-            0,
-            48
-        )
-
         val buttonParams =
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -814,10 +789,6 @@ Changes made by Lucky
         )
 
         // Add everything to the menu
-
-        column.addView(
-            title
-        )
 
         column.addView(
             btnPlay

@@ -610,9 +610,9 @@ Changes made by Lucky
         btnPlay.textSize = 18f
 
         btnPlay.setPadding(
-            0,
+            56,
             28,
-            0,
+            56,
             28
         )
 
@@ -637,9 +637,9 @@ Changes made by Lucky
         btnChangelog.textSize = 13f
 
         btnChangelog.setPadding(
-            0,
+            40,
             16,
-            0,
+            40,
             16
         )
 
@@ -725,9 +725,9 @@ Changes made by Lucky
         btnDownload.textSize = 14f
 
         btnDownload.setPadding(
-            0,
+            40,
             20,
-            0,
+            40,
             20
         )
 
@@ -754,9 +754,9 @@ Changes made by Lucky
         btnLater.textSize = 13f
 
         btnLater.setPadding(
-            0,
+            32,
             16,
-            0,
+            32,
             16
         )
 

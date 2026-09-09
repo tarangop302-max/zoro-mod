@@ -1,3 +1,4 @@
+
 #include "title_screen.h"
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
@@ -29,6 +30,32 @@ static ImU32 crystal_col(float r, float g, float b, float a) {
   return igColorConvertFloat4ToU32((ImVec4){r, g, b, a});
 }
 
+/* A soft circular glow with a smooth falloff, built from many thin,
+   NON-overlapping stroked rings (each ring's alpha directly IS the visible
+   alpha there -- no compounding blend math to get wrong) rather than a
+   handful of overlapping filled discs. A small number of overlapping filled
+   circles very visibly banded into hard concentric rings on-device (their
+   alphas compound where they overlap, and that compounded total jumps in
+   big, increasingly large steps toward the outer edge -- exactly the
+   "target/bullseye" artifact seen in testing), since ImGui has no real
+   gradient fill to fall back on. Many thin rings with a smoothly-decreasing
+   alpha curve is the standard workaround and reads as an actual soft glow
+   instead of stacked circles. */
+static void crystal_draw_glow_blob(ImDrawList* dl, ImVec2 center,
+                                    float radius, float r, float g, float b,
+                                    float peak_alpha) {
+  const int RINGS = 40;
+  float step = radius / RINGS;
+  for (int i = RINGS; i >= 1; i--) {
+    float t = (float)i / RINGS;             /* 1.0 at edge, ~0 at center */
+    float falloff = (1.0f - t) * (1.0f - t); /* smooth, 0 at edge */
+    float alpha = peak_alpha * falloff;
+    if (alpha < 0.002f) continue;
+    ImDrawList_AddCircle(dl, center, step * i, crystal_col(r, g, b, alpha),
+                        64, step * 1.6f);
+  }
+}
+
 static void crystal_draw_background(tenv* env) {
   tcontext* ctx = env->ctx;
   ImDrawList* dl = igGetWindowDrawList();
@@ -42,19 +69,12 @@ static void crystal_draw_background(tenv* env) {
       crystal_col(0.141f, 0.082f, 0.259f, 1.0f) /* bottom-right */,
       crystal_col(0.114f, 0.063f, 0.212f, 1.0f) /* bottom-left */);
 
-  /* Two soft purple glow blobs (fake radial gradients via layered,
-     decreasing-alpha circles), roughly matching the approved mockup's
+  /* Two soft purple glow blobs, roughly matching the approved mockup's
      glow positions. */
   ImVec2 glow_a = {w * 0.72f, h * 0.30f};
   ImVec2 glow_b = {w * 0.20f, h * 0.80f};
-  for (int i = 6; i >= 1; i--) {
-    ImDrawList_AddCircleFilled(dl, glow_a, 70.0f + i * 55.0f,
-                                crystal_col(0.592f, 0.353f, 1.0f, 0.02f * i),
-                                48);
-    ImDrawList_AddCircleFilled(dl, glow_b, 60.0f + i * 48.0f,
-                                crystal_col(0.353f, 0.235f, 0.784f, 0.016f * i),
-                                48);
-  }
+  crystal_draw_glow_blob(dl, glow_a, 400.0f, 0.592f, 0.353f, 1.0f, 0.30f);
+  crystal_draw_glow_blob(dl, glow_b, 340.0f, 0.353f, 0.235f, 0.784f, 0.24f);
 }
 
 /* Thin light line along a widget's top edge -- call right after drawing it
@@ -71,16 +91,20 @@ static void crystal_sheen(void) {
 }
 
 /* Soft rounded glow behind an upcoming widget -- call BEFORE drawing it,
-   with its known screen-space position/size, so the glow ends up behind. */
+   with its known screen-space position/size, so the glow ends up behind.
+   Kept deliberately tight: this UI packs button rows close together (only
+   style->ItemSpacing.y apart), so a wide glow visibly bleeds into the row
+   below/above instead of reading as a glow around just this one button --
+   that's exactly what a too-large expand distance caused in testing. */
 static void crystal_glow_rect(ImVec2 pos, ImVec2 size, float r, float g,
                                float b) {
   ImDrawList* dl = igGetWindowDrawList();
-  for (int i = 6; i >= 1; i--) {
-    float expand = i * 5.5f;
+  for (int i = 4; i >= 1; i--) {
+    float expand = i * 2.5f;
     ImDrawList_AddRectFilled(
         dl, (ImVec2){pos.x - expand, pos.y - expand},
         (ImVec2){pos.x + size.x + expand, pos.y + size.y + expand},
-        crystal_col(r, g, b, 0.045f * i), 14.0f + expand * 0.4f,
+        crystal_col(r, g, b, 0.05f * i), 14.0f + expand * 0.4f,
         ImDrawFlags_None);
   }
 }

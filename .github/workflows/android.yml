@@ -56,7 +56,7 @@ jobs:
           # the *latest* release actually is avoids ever needing to bump
           # this by hand again.
           ASSET_URL=$(curl -s https://api.github.com/repos/shader-slang/slang/releases/latest \
-            | grep -o '"browser_download_url": *"[^"]*linux-x86_64[^"]*\.tar\.gz"' \
+            | grep -o '"browser_download_url": *"[^"]*-linux-x86_64\.tar\.gz"' \
             | head -n 1 \
             | grep -o 'https://[^"]*')
 
@@ -79,7 +79,8 @@ jobs:
           SLANG_BIN=$(find . -type f -name "slangc" | head -n 1)
 
           if [ -z "$SLANG_BIN" ]; then
-            echo "ERROR: slangc was not found"
+            echo "ERROR: slangc was not found. Extracted contents:"
+            find . -maxdepth 3 -type f
             exit 1
           fi
 

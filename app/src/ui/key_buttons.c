@@ -622,12 +622,20 @@ static void draw_editor(tenv *env) {
   s_kb.env = env;
   android_ui_capture_rect(0, 0, sw, sh);
 #endif
-  /* The editor canvas must be on the background layer. Drawing the black
-     rectangle on the foreground layer hides every ImGui window (toolbar and
-     picker/edit panel) even though the custom-drawn keys remain visible. */
+  /* The editor canvas must be on the background layer. Drawing on the
+     foreground layer hides every ImGui window (toolbar and picker/edit
+     panel) even though the custom-drawn keys remain visible.
+
+     This used to be a fully opaque black fill, which is why the real
+     leaderboard/minimap/teammates list were never visible here even
+     though HUD_LAYOUT_EDITOR (this screen's sibling) already rendered
+     the real game underneath its own overlay. Now that KEYBOARD_EDITOR
+     also renders the real game first (see main.c), this only needs to
+     be a dimming scrim -- enough to keep the white title/edit-badge
+     text readable, not enough to hide where the HUD actually sits. */
   ImDrawList *bg = igGetBackgroundDrawList(igGetMainViewport());
   ImDrawList_AddRectFilled(bg, (ImVec2){0, 0}, (ImVec2){sw, sh},
-                           IM_COL32(0, 0, 0, 255), 0, 0);
+                           IM_COL32(0, 0, 0, 130), 0, 0);
 
   bool mouse_down, mouse_clicked, mouse_released;
   float mx, my;

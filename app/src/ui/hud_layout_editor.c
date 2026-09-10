@@ -131,6 +131,27 @@ void ui_hud_layout_editor(tenv* env) {
       exit_editor(env, false);
     }
     igPopStyleColor(1);
+
+    igSameLine(0, style->ItemSpacing.x);
+
+    /* Only affordance for putting the leaderboard/teammates/minimap back to
+     * their factory positions -- applies live so the preview updates right
+     * away, but still goes through Back/Confirm like any other drag. */
+    if (igButton("Reset all##hud_layout_editor", (ImVec2){btn_w, 0})) {
+      usrs->leaderboard_pos_custom = false;
+      usrs->leaderboard_rel_x = 0.80f;
+      usrs->leaderboard_rel_y = 0.02f;
+      usrs->leaderboard_scale = 0.72f;
+
+      usrs->teammates_pos_custom = false;
+      usrs->teammates_rel_x = 0.80f;
+      usrs->teammates_rel_y = 0.30f;
+
+      usrs->minimap_pos_custom = false;
+      usrs->minimap_rel_x = 0.84f;
+      usrs->minimap_rel_y = 0.78f;
+      usrs->minimap_size = 300;
+    }
   }
 
   igEnd();

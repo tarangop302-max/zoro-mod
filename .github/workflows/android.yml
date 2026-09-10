@@ -49,11 +49,25 @@ jobs:
 
       - name: Install Slang shader compiler
         run: |
-          SLANG_VERSION="2024.14.3"
+          # Was pinned to a fixed SLANG_VERSION, which breaks the moment
+          # that specific release/asset is no longer available on GitHub
+          # (exactly what happened: v2024.14.3 -- the project has since
+          # moved on to newer releases, e.g. v2026.x). Fetching whatever
+          # the *latest* release actually is avoids ever needing to bump
+          # this by hand again.
+          ASSET_URL=$(curl -s https://api.github.com/repos/shader-slang/slang/releases/latest \
+            | grep -o '"browser_download_url": *"[^"]*linux-x86_64[^"]*\.tar\.gz"' \
+            | head -n 1 \
+            | grep -o 'https://[^"]*')
 
-          wget -q \
-            "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.tar.gz" \
-            -O slang.tar.gz
+          if [ -z "$ASSET_URL" ]; then
+            echo "ERROR: couldn't find a linux-x86_64 Slang release asset"
+            exit 1
+          fi
+
+          echo "Downloading: $ASSET_URL"
+
+          wget -q "$ASSET_URL" -O slang.tar.gz
 
           if [ ! -s slang.tar.gz ]; then
             echo "ERROR: Slang download failed"
@@ -148,4 +162,3 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           overwrite: true
-

@@ -64,18 +64,6 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Border color");
       igAlignTextToFramePadding();
-      igText("Minimap size");
-      igAlignTextToFramePadding();
-      igText("Custom minimap position");
-      igAlignTextToFramePadding();
-      igText("Drag/resize minimap");
-      igAlignTextToFramePadding();
-      igText("Minimap X");
-      igAlignTextToFramePadding();
-      igText("Minimap Y");
-      igAlignTextToFramePadding();
-      igText("Reset minimap position");
-      igAlignTextToFramePadding();
       igText("Adjust HUD Layout");
       igAlignTextToFramePadding();
       igText("Instant restart");
@@ -130,24 +118,6 @@ void ui_settings(tenv* env) {
                     ImGuiSliderFlags_AlwaysClamp);
       igSetNextItemWidth(-1);
       igColorEdit3("##border color", usrs->bd_color, ImGuiColorEditFlags_None);
-      igSetNextItemWidth(-1);
-      igSliderInt("##minimap size", &usrs->minimap_size, 96, 512, "%d px",
-                  ImGuiSliderFlags_AlwaysClamp);
-      igCheckbox("##minimap custom", &usrs->minimap_pos_custom);
-      igCheckbox("##minimap drag", &usrs->minimap_drag_enabled);
-      igBeginDisabled(!usrs->minimap_pos_custom);
-      igSetNextItemWidth(-1);
-      igSliderFloat("##minimap x", &usrs->minimap_rel_x, 0.0f, 1.0f, "%.2f",
-                    ImGuiSliderFlags_AlwaysClamp);
-      igSetNextItemWidth(-1);
-      igSliderFloat("##minimap y", &usrs->minimap_rel_y, 0.0f, 1.0f, "%.2f",
-                    ImGuiSliderFlags_AlwaysClamp);
-      igEndDisabled();
-      if (igButton("Reset##minimap", (ImVec2){-1, 0})) {
-        usrs->minimap_pos_custom = false;
-        usrs->minimap_rel_x = 0.84f;
-        usrs->minimap_rel_y = 0.78f;
-      }
       if (igButton("Open editor##hud_layout", (ImVec2){-1, 0})) {
         ui_hud_layout_editor_enter(env);
       }

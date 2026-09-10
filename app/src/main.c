@@ -925,7 +925,30 @@ void trender(tenv* env) {
 
       case KEYBOARD_EDITOR:
 
-        // Dedicated black-screen editor for user-created keyboard buttons.
+        // Show the real game HUD (leaderboard, minimap, teammates list)
+        // behind the editor, same as HUD_LAYOUT_EDITOR just above, so
+        // custom buttons can be placed relative to where those actually
+        // sit on-screen instead of against a blank black canvas.
+
+        if (
+            !bg_preview_visible(
+                env
+            ) &&
+
+            (
+                gdata->conn ==
+                    CONNECTED ||
+
+                gdata->conn ==
+                    CONNECTING
+            )
+        ) {
+
+          game_loop(
+              env
+          );
+        }
+
 
         ui_key_buttons(
             env

@@ -13,6 +13,27 @@
 #include "../user.h"
 #include "../cimgui/cimgui_impl.h"
 
+/* Depth/stencil format for r->body_dedup's stencil-based dedup
+ * pipeline (see bp_renderer_create_dedup) -- picks whichever of the
+ * two formats the Vulkan spec guarantees at least one of is
+ * supported everywhere. Only the stencil aspect is actually used;
+ * depth is along for the ride since Vulkan doesn't expose a
+ * stencil-only combined format on most implementations. */
+static VkFormat _pick_body_stencil_format(tcontext* ctx) {
+  VkFormat candidates[2] = {VK_FORMAT_D24_UNORM_S8_UINT,
+                            VK_FORMAT_D32_SFLOAT_S8_UINT};
+  for (int i = 0; i < 2; i++) {
+    VkFormatProperties props;
+    vkGetPhysicalDeviceFormatProperties(ctx->ph_device, candidates[i],
+                                        &props);
+    if (props.optimalTilingFeatures &
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+      return candidates[i];
+    }
+  }
+  return VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
 void _create_image_data(renderer* r, tcontext* ctx, ivec2 size) {
   glm_ivec2_copy(size, r->size);
   for (int i = 0; i < ctx->fif; i++) {
@@ -80,14 +101,66 @@ void _create_image_data(renderer* r, tcontext* ctx, ivec2 size) {
                                  .layerCount = 1}},
         NULL, &r->images[i].color_view_alpha);
 
+    /* Stencil target for r->body_dedup -- see bp_renderer_render_batched.
+     * Only the stencil aspect is meaningfully used; depth is unused
+     * (the pipeline has depthTestEnable = VK_FALSE) but has to exist
+     * since the format is a combined depth/stencil one. */
+    vmaCreateImage(
+        ctx->allocator,
+        &(VkImageCreateInfo){
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = r->body_stencil_format,
+            .extent = {.width = size[0], .height = size[1], .depth = 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = NULL,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED},
+        &(VmaAllocationCreateInfo){
+            .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO,
+            .priority = 1.0f},
+        &r->images[i].depth_stencil, &r->images[i].depth_stencil_memory,
+        NULL);
+
+    vkCreateImageView(
+        ctx->device,
+        &(VkImageViewCreateInfo){
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0,
+            .image = r->images[i].depth_stencil,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = r->body_stencil_format,
+            .components = {.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                           .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                           .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                           .a = VK_COMPONENT_SWIZZLE_IDENTITY},
+            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT |
+                                               VK_IMAGE_ASPECT_STENCIL_BIT,
+                                 .baseMipLevel = 0,
+                                 .levelCount = 1,
+                                 .baseArrayLayer = 0,
+                                 .layerCount = 1}},
+        NULL, &r->images[i].depth_stencil_view);
+
     vkCreateFramebuffer(ctx->device,
                         &(VkFramebufferCreateInfo){
                             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
                             .pNext = NULL,
                             .flags = 0,
                             .renderPass = r->render_pass,
-                            .attachmentCount = 1,
-                            .pAttachments = &r->images[i].color_view,
+                            .attachmentCount = 2,
+                            .pAttachments =
+                                (VkImageView[]){r->images[i].color_view,
+                                               r->images[i].depth_stencil_view},
                             .width = size[0],
                             .height = size[1],
                             .layers = 1},
@@ -98,6 +171,9 @@ void _create_image_data(renderer* r, tcontext* ctx, ivec2 size) {
 void _destroy_image_data(renderer* r, tcontext* ctx) {
   for (int i = 0; i < ctx->fif; i++) {
     vkDestroyFramebuffer(ctx->device, r->images[i].framebuffer, NULL);
+    vkDestroyImageView(ctx->device, r->images[i].depth_stencil_view, NULL);
+    vmaDestroyImage(ctx->allocator, r->images[i].depth_stencil,
+                    r->images[i].depth_stencil_memory);
     vkDestroyImageView(ctx->device, r->images[i].color_view_alpha, NULL);
     vkDestroyImageView(ctx->device, r->images[i].color_view, NULL);
     vmaDestroyImage(ctx->allocator, r->images[i].color, r->images[i].memory);
@@ -108,6 +184,8 @@ renderer* renderer_create(tenv* env) {
   tcontext* ctx = env->ctx;
   tuser_data* usr = env->usr;
   renderer* r = malloc(sizeof(renderer));
+
+  r->body_stencil_format = _pick_body_stencil_format(ctx);
 
   vkCreateSampler(
       ctx->device,
@@ -185,18 +263,35 @@ renderer* renderer_create(tenv* env) {
           .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
           .pNext = NULL,
           .flags = 0,
-          .attachmentCount = 1,
+          .attachmentCount = 2,
           .pAttachments =
-              &(VkAttachmentDescription){
-                  .flags = 0,
-                  .format = VK_FORMAT_R8G8B8A8_UNORM,
-                  .samples = VK_SAMPLE_COUNT_1_BIT,
-                  .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                  .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                  .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-                  .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-                  .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-                  .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+              (VkAttachmentDescription[]){
+                  {.flags = 0,
+                   .format = VK_FORMAT_R8G8B8A8_UNORM,
+                   .samples = VK_SAMPLE_COUNT_1_BIT,
+                   .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                   .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                   .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                   .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                   .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                   .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                  /* r->body_dedup's stencil target -- see
+                   * bp_renderer_render_batched. Cleared once at the
+                   * start of the pass (mirroring the color
+                   * attachment); bp_renderer_render_batched clears
+                   * it again, mid-pass, before each batch it draws,
+                   * via vkCmdClearAttachments. Nothing needs to read
+                   * it back afterward, so storeOp is DONT_CARE. */
+                  {.flags = 0,
+                   .format = r->body_stencil_format,
+                   .samples = VK_SAMPLE_COUNT_1_BIT,
+                   .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                   .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                   .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                   .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                   .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                   .finalLayout =
+                       VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}},
           .subpassCount = 1,
           .pSubpasses =
               &(VkSubpassDescription){
@@ -208,7 +303,12 @@ renderer* renderer_create(tenv* env) {
                   .pColorAttachments =
                       &(VkAttachmentReference){
                           .attachment = 0,
-                          .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}},
+                          .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                  .pDepthStencilAttachment =
+                      &(VkAttachmentReference){
+                          .attachment = 1,
+                          .layout =
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}},
           .dependencyCount = 0,
           .pDependencies = NULL},
       NULL, &r->render_pass);
@@ -373,6 +473,11 @@ renderer* renderer_create(tenv* env) {
   r->fdr = fd_renderer_create(ctx, MAX_FOOD_INSTANCES, MAX_PREYS, r->pipeline_layout, r->render_pass);
   r->bdr = bd_renderer_create(ctx, r->pipeline_layout, r->render_pass);
   r->astr = bp_renderer_create(ctx, 2, r->pipeline_layout, r->render_pass);
+  /* Up to 16 separate transparent/force-white bodies per frame --
+   * see bp_renderer_create_dedup. Plenty for assist mode, where this
+   * is the only place it's used. */
+  r->body_dedup = bp_renderer_create_dedup(ctx, MAX_SPRITE_INSTANCES, 16,
+                                           r->pipeline_layout, r->render_pass);
   r->cr = spr_renderer_create(ctx, 1, r->pipeline_layout, ctx->renderpass);
 
   return r;
@@ -396,11 +501,12 @@ void renderer_render(renderer* r, tcontext* ctx, vec4 clear_color) {
           .renderPass = r->render_pass,
           .framebuffer = r->images[ctx->current_frame].framebuffer,
           .renderArea = {.offset = {0, 0}, .extent = {r->size[0], r->size[1]}},
-          .clearValueCount = 1,
+          .clearValueCount = 2,
           .pClearValues =
-              &(VkClearValue){
-                  .color = {.float32 = {clear_color[0], clear_color[1],
-                                        clear_color[2], clear_color[3]}}}},
+              (VkClearValue[]){
+                  {.color = {.float32 = {clear_color[0], clear_color[1],
+                                         clear_color[2], clear_color[3]}}},
+                  {.depthStencil = {.depth = 0.0f, .stencil = 0}}}},
       VK_SUBPASS_CONTENTS_INLINE);
   vkCmdBindVertexBuffers(fr->cmd, 0, 1, &r->quad_buffer->handle,
                          (VkDeviceSize[]){0});
@@ -414,6 +520,7 @@ void renderer_render(renderer* r, tcontext* ctx, vec4 clear_color) {
   fd_renderer_render(r->fdr, ctx);
   bst_renderer_render(r->bstb, ctx);
   bp_renderer_render(r->bpr, ctx);
+  bp_renderer_render_batched(r->body_dedup, ctx, r->size);
   bst_renderer_render(r->bsta, ctx);
   bd_renderer_render(r->bdr, ctx);
   bp_renderer_render(r->astr, ctx);
@@ -455,6 +562,7 @@ void renderer_render_cursor(renderer* r, tcontext* ctx) {
 
 void renderer_destroy(renderer* r, tcontext* ctx) {
   spr_renderer_destroy(r->cr, ctx);
+  bp_renderer_destroy(r->body_dedup, ctx);
   bd_renderer_destroy(r->bdr, ctx);
   bp_renderer_destroy(r->astr, ctx);
   bst_renderer_destroy(r->bsta, ctx);
@@ -495,5 +603,8 @@ void renderer_clear_instances(renderer* r) {
   r->bpr->num_instances = 0;
   r->bstb->num_instances = 0;
   r->astr->num_instances = 0;
+  r->body_dedup->num_instances = 0;
+  r->body_dedup->num_batches = 0;
+  r->body_dedup->in_batch = false;
   r->cr->num_instances = 0;
 }

@@ -18,6 +18,11 @@ typedef struct renderer_image_data {
   VkImageView color_view;
   VkImageView color_view_alpha;
   VmaAllocation memory;
+  /* Stencil target for r->body_dedup -- see bp_renderer_render_batched
+   * in bp_renderer.h. */
+  VkImage depth_stencil;
+  VkImageView depth_stencil_view;
+  VmaAllocation depth_stencil_memory;
 } renderer_image_data;
 
 typedef struct renderer {
@@ -55,6 +60,9 @@ typedef struct renderer {
   VkSampler nearest_sampler;
 
   VkRenderPass render_pass;
+  /* Format chosen for renderer_image_data.depth_stencil -- picked
+   * once in renderer_create, reused by renderer_resize. */
+  VkFormat body_stencil_format;
   VkDescriptorSetLayout global_set_layout;
   VkDescriptorSet* global_set;
   tdbuffer* global_buffer;
@@ -70,6 +78,13 @@ typedef struct renderer {
   bst_renderer* bstb;
   bd_renderer* bdr;
   bp_renderer* astr;
+  /* Assist mode's Flat render mode, transparent/force-white bodies
+   * only -- draws each such body as its own stencil-deduped batch so
+   * overlapping segments don't double up their alpha at the seams.
+   * See bp_renderer_create_dedup. Everything else (opaque bodies,
+   * Texture/Solid render modes, non-assist play) still goes through
+   * the normal bpr above, unchanged. */
+  bp_renderer* body_dedup;
   mm_renderer* mmr;
   spr_renderer* cr;
 } renderer;

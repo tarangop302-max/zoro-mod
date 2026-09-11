@@ -1,14 +1,55 @@
 #include "bp_renderer.h"
 #include <string.h>
 
-bp_renderer* bp_renderer_create(tcontext* ctx, int max_instances,
-                                VkPipelineLayout layout, VkRenderPass pass) {
+static bp_renderer* _bp_renderer_create(tcontext* ctx, int max_instances,
+                                        int max_batches, bool stencil_dedup,
+                                        VkPipelineLayout layout,
+                                        VkRenderPass pass) {
   bp_renderer* r = malloc(sizeof(bp_renderer));
 
   VkShaderModule vertex_shader =
       tcontext_create_shader(ctx, "app/res/shaders/bin/bpv.spv");
   VkShaderModule fragment_shader =
       tcontext_create_shader(ctx, "app/res/shaders/bin/bpf.spv");
+
+  /* Everything below matches the plain (non-dedup) pipeline exactly,
+   * with one exception: pDepthStencilState. The dedup variant enables
+   * a stencil test (compare NOT_EQUAL against reference 1, pass op
+   * REPLACE) so that within one bp_renderer_begin_batch/end_batch
+   * group, a pixel an earlier instance in that same batch already
+   * touched is skipped by later ones instead of blending again on
+   * top -- see bp_renderer.h for why. */
+  VkPipelineDepthStencilStateCreateInfo plain_depth_stencil = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+      .pNext = NULL,
+      .flags = 0,
+      .depthTestEnable = VK_FALSE,
+  };
+
+  VkStencilOpState dedup_stencil_op = {
+      .failOp = VK_STENCIL_OP_KEEP,
+      .passOp = VK_STENCIL_OP_REPLACE,
+      .depthFailOp = VK_STENCIL_OP_KEEP,
+      .compareOp = VK_COMPARE_OP_NOT_EQUAL,
+      .compareMask = 0xFF,
+      .writeMask = 0xFF,
+      .reference = 1,
+  };
+
+  VkPipelineDepthStencilStateCreateInfo dedup_depth_stencil = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+      .pNext = NULL,
+      .flags = 0,
+      .depthTestEnable = VK_FALSE,
+      .depthWriteEnable = VK_FALSE,
+      .depthCompareOp = VK_COMPARE_OP_ALWAYS,
+      .depthBoundsTestEnable = VK_FALSE,
+      .stencilTestEnable = VK_TRUE,
+      .front = dedup_stencil_op,
+      .back = dedup_stencil_op,
+      .minDepthBounds = 0.0f,
+      .maxDepthBounds = 1.0f,
+  };
 
   vkCreateGraphicsPipelines(
       ctx->device, NULL, 1,
@@ -118,13 +159,7 @@ bp_renderer* bp_renderer_create(tcontext* ctx, int max_instances,
                   .alphaToCoverageEnable = VK_FALSE,
                   .alphaToOneEnable = VK_FALSE},
           .pDepthStencilState =
-              &(VkPipelineDepthStencilStateCreateInfo){
-                  .sType =
-                      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-                  .pNext = NULL,
-                  .flags = 0,
-                  .depthTestEnable = VK_FALSE,
-              },
+              stencil_dedup ? &dedup_depth_stencil : &plain_depth_stencil,
           .pColorBlendState =
               &(VkPipelineColorBlendStateCreateInfo){
                   .sType =
@@ -173,7 +208,25 @@ bp_renderer* bp_renderer_create(tcontext* ctx, int max_instances,
   r->max_instances = max_instances;
   r->num_instances = 0;
 
+  r->batches = max_batches > 0 ? malloc(max_batches * sizeof(bp_batch)) : NULL;
+  r->max_batches = max_batches;
+  r->num_batches = 0;
+  r->in_batch = false;
+
   return r;
+}
+
+bp_renderer* bp_renderer_create(tcontext* ctx, int max_instances,
+                                VkPipelineLayout layout, VkRenderPass pass) {
+  return _bp_renderer_create(ctx, max_instances, 0, false, layout, pass);
+}
+
+bp_renderer* bp_renderer_create_dedup(tcontext* ctx, int max_instances,
+                                      int max_batches,
+                                      VkPipelineLayout layout,
+                                      VkRenderPass pass) {
+  return _bp_renderer_create(ctx, max_instances, max_batches, true, layout,
+                             pass);
 }
 
 void bp_renderer_push(bp_renderer* r, const bp_instance* instance) {
@@ -181,6 +234,21 @@ void bp_renderer_push(bp_renderer* r, const bp_instance* instance) {
     return;
   }
   r->instances[r->num_instances++] = *instance;
+}
+
+void bp_renderer_begin_batch(bp_renderer* r) {
+  if (r->batches == NULL || r->num_batches >= r->max_batches) return;
+  r->batches[r->num_batches].start = r->num_instances;
+  r->in_batch = true;
+}
+
+void bp_renderer_end_batch(bp_renderer* r) {
+  if (r->batches == NULL || !r->in_batch || r->num_batches >= r->max_batches)
+    return;
+  r->batches[r->num_batches].count =
+      r->num_instances - r->batches[r->num_batches].start;
+  r->num_batches++;
+  r->in_batch = false;
 }
 
 void bp_renderer_render(bp_renderer* r, tcontext* ctx) {
@@ -191,8 +259,43 @@ void bp_renderer_render(bp_renderer* r, tcontext* ctx) {
   vkCmdDraw(fr->cmd, 4, r->num_instances, 0, 0);
 }
 
+void bp_renderer_render_batched(bp_renderer* r, tcontext* ctx, ivec2 size) {
+  if (r->num_batches == 0) return;
+
+  tcontext_frame* fr = ctx->frames + ctx->current_frame;
+  memcpy(r->instance_buffer[ctx->current_frame].data, r->instances, r->num_instances * sizeof(bp_instance));
+  vkCmdBindPipeline(fr->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline);
+  vkCmdBindVertexBuffers(fr->cmd, 1, 1, &r->instance_buffer[ctx->current_frame].handle, (VkDeviceSize[]){0});
+
+  for (int i = 0; i < r->num_batches; i++) {
+    bp_batch* b = r->batches + i;
+    if (b->count <= 0) continue;
+
+    /* Reset the whole target's stencil before this batch's draw, so
+     * this body's coverage can't be affected by (or affect) any
+     * other batch's. Clearing the whole target rather than just this
+     * body's on-screen bounds is simpler and safe -- this is only
+     * ever called for a small number of batches per frame. */
+    vkCmdClearAttachments(
+        fr->cmd, 1,
+        &(VkClearAttachment){
+            .aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT,
+            .colorAttachment = 0,
+            .clearValue = {.depthStencil = {.depth = 0.0f, .stencil = 0}}},
+        1,
+        &(VkClearRect){
+            .rect = {.offset = {0, 0},
+                     .extent = {(uint32_t)size[0], (uint32_t)size[1]}},
+            .baseArrayLayer = 0,
+            .layerCount = 1});
+
+    vkCmdDraw(fr->cmd, 4, b->count, 0, b->start);
+  }
+}
+
 void bp_renderer_destroy(bp_renderer* r, tcontext* ctx) {
   free(r->instances);
+  if (r->batches != NULL) free(r->batches);
   tdbuffer_destroy(ctx, r->instance_buffer);
   vkDestroyPipeline(ctx->device, r->pipeline, NULL);
   free(r);

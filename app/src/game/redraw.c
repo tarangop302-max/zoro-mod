@@ -991,7 +991,18 @@ void redraw(tenv* env) {
              * every capsule's rounded ends are centered exactly on a body
              * point, adjacent capsules sharing an endpoint tile together
              * with no seam, and the first/last capsule's rounded end gives
-             * the head/tail a rounded cap for free. */
+             * the head/tail a rounded cap for free.
+             *
+             * When this body actually needs to look transparent or is
+             * being force-white'd (assist_force_white), every capsule
+             * instance goes through r->body_dedup instead of the normal
+             * r->bpr -- its stencil-based pipeline makes sure a pixel
+             * covered by an earlier capsule in this same body doesn't get
+             * blended again by a later one, which is what stopped the
+             * joints between capsules (where two rounded ends meet and
+             * necessarily overlap a little) from visibly double-darkening.
+             * Fully opaque bodies don't need this (overlap is invisible at
+             * alpha 1), so they still go through the plain r->bpr. */
             int cg_id =
                 o->cusk ? o->cusk_data[0] : gdata->default_skins[o->cv][1];
             vec3s* cg_col = gdata->cg_colors + cg_id;
@@ -1000,6 +1011,11 @@ void redraw(tenv* env) {
                 assist_force_white
                     ? (vec4s){1, 1, 1, a * skinless_a}
                     : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a};
+
+            bool needs_dedup = assist_force_white || skin_alpha < 1.0f;
+            bp_renderer* body_r = needs_dedup ? usr->r->body_dedup : usr->r->bpr;
+
+            if (needs_dedup) bp_renderer_begin_batch(body_r);
 
             for (j = bp - 1; j >= 1; j--)
               if (gdata->data.pbu[(int)j] >= 1 &&
@@ -1022,13 +1038,15 @@ void redraw(tenv* env) {
                     gdata->data.gsc * sqrtf(dx * dx + dy * dy) + thickness;
 
                 bp_renderer_push(
-                    usr->r->bpr,
+                    body_r,
                     &(bp_instance){{fix - seg_len * 0.5f,
                                     fiy - thickness * 0.5f, seg_len,
                                     gdata->data.pba[(int)j]},
                                    gdata->cg_uvs[BLANK_UV], fill_color,
                                    {thickness, 1.0f}});
               }
+
+            if (needs_dedup) bp_renderer_end_batch(body_r);
           } else if (o->cusk) {
             for (j = bp - 1; j >= 0; j--)
               if (gdata->data.pbu[(int)j] >= 1) {

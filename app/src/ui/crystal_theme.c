@@ -30,7 +30,7 @@ static void crystal_draw_glow_blob(ImDrawList* dl, ImVec2 center,
   }
 }
 
-void crystal_draw_background(tenv* env) {
+void crystal_draw_background_alpha(tenv* env, float alpha) {
   tcontext* ctx = env->ctx;
   ImDrawList* dl = igGetWindowDrawList();
   float w = ctx->size[0];
@@ -38,17 +38,26 @@ void crystal_draw_background(tenv* env) {
 
   ImDrawList_AddRectFilledMultiColor(
       dl, (ImVec2){0, 0}, (ImVec2){w, h},
-      crystal_col(0.078f, 0.039f, 0.141f, 1.0f) /* top-left */,
-      crystal_col(0.176f, 0.106f, 0.306f, 1.0f) /* top-right */,
-      crystal_col(0.141f, 0.082f, 0.259f, 1.0f) /* bottom-right */,
-      crystal_col(0.114f, 0.063f, 0.212f, 1.0f) /* bottom-left */);
+      crystal_col(0.078f, 0.039f, 0.141f, alpha) /* top-left */,
+      crystal_col(0.176f, 0.106f, 0.306f, alpha) /* top-right */,
+      crystal_col(0.141f, 0.082f, 0.259f, alpha) /* bottom-right */,
+      crystal_col(0.114f, 0.063f, 0.212f, alpha) /* bottom-left */);
 
   /* Two soft purple glow blobs, roughly matching the approved mockup's
-     glow positions. */
+     glow positions. Scaled by the same alpha so a translucent background
+     (e.g. the skin editor, which has a live preview sitting underneath)
+     gets a proportionally subtler glow rather than two full-strength
+     blobs sitting on top of a faint wash. */
   ImVec2 glow_a = {w * 0.72f, h * 0.30f};
   ImVec2 glow_b = {w * 0.20f, h * 0.80f};
-  crystal_draw_glow_blob(dl, glow_a, 400.0f, 0.592f, 0.353f, 1.0f, 0.30f);
-  crystal_draw_glow_blob(dl, glow_b, 340.0f, 0.353f, 0.235f, 0.784f, 0.24f);
+  crystal_draw_glow_blob(dl, glow_a, 400.0f, 0.592f, 0.353f, 1.0f,
+                        0.30f * alpha);
+  crystal_draw_glow_blob(dl, glow_b, 340.0f, 0.353f, 0.235f, 0.784f,
+                        0.24f * alpha);
+}
+
+void crystal_draw_background(tenv* env) {
+  crystal_draw_background_alpha(env, 1.0f);
 }
 
 /* Thin light line along a widget's top edge -- call right after drawing it

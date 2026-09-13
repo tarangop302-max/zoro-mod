@@ -197,12 +197,6 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
     m += 2;
     gdata->data.mamu2 = (a[m] << 8 | a[m + 1]) / 1e3;
     m += 2;
-    /* TEMP SMOOTHNESS DIAG: this server's actual turn-rate constants,
-     * logged once per connection so we can compare servers directly.
-     *   adb logcat -s vlither:E | grep SERVER_DIAG
-     * Safe to delete once done comparing. */
-    DLOG("[SERVER_DIAG] mamu=%.5f mamu2=%.5f spangdv=%.2f",
-         gdata->data.mamu, gdata->data.mamu2, gdata->data.spangdv);
     gdata->data.cst = (a[m] << 8 | a[m + 1]) / 1e3;
     m += 2;
 
@@ -1288,6 +1282,14 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
     if (usrs->instant_restart) {
       gdata->restart_req = true;
       c->is_closing = true;
+    } else if (!gdata->preview_active && !gdata->death_pending) {
+      /* Start the short, fixed death delay instead of immediately closing
+         the connection (see the field comment in game_data.h) -- the
+         death popup itself appears once that delay elapses (loop.c) and
+         is what actually closes the connection, once the player picks
+         Lobby or Restart. */
+      gdata->death_pending = true;
+      gdata->death_anim_start = glfwGetTime();
     }
   }
 }

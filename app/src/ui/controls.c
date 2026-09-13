@@ -5,6 +5,7 @@
 #include "../arrow_styles.h"
 #include "../user.h"
 #include "key_buttons.h"
+#include "crystal_theme.h"
 
 static const char* const ARROW_STYLE_NAMES[ARROW_STYLE_COUNT] = {
     "Red Arrow", "Red 3D", "Blue 3D", "Blue Neon", "Colourful",
@@ -22,6 +23,13 @@ void ui_controls(tenv* env) {
 
   igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
              usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
+
+  usr->r->global.bg_opacity = 0;
+  usr->r->global.bd_opacity = 0;
+  usr->r->global.minimap_opacity = 0;
+
+  crystal_draw_background(env);
+  crystal_push_theme();
 
   float frame_height = igGetFrameHeight();
 #ifdef ANDROID
@@ -54,11 +62,11 @@ void ui_controls(tenv* env) {
   igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){18.0f, 16.0f});
   igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, 8.0f);
   igPushStyleColor_Vec4(ImGuiCol_ChildBg,
-                        (ImVec4){0.03f, 0.06f, 0.10f, 0.58f});
+                        (ImVec4){0.176f, 0.106f, 0.306f, 0.42f});
   igPushStyleColor_Vec4(ImGuiCol_Border,
-                        (ImVec4){0.19f, 0.40f, 0.78f, 0.38f});
+                        (ImVec4){0.690f, 0.580f, 0.960f, 0.38f});
   igPushStyleColor_Vec4(ImGuiCol_Separator,
-                        (ImVec4){0.28f, 0.42f, 0.63f, 0.38f});
+                        (ImVec4){0.470f, 0.360f, 0.720f, 0.42f});
 
   if (igBeginChild_Str("controls_panel_root", (ImVec2){panel_w, panel_h},
                        ImGuiChildFlags_Borders,
@@ -474,16 +482,31 @@ void ui_controls(tenv* env) {
         usrs->ctrl_swap_sides = false;
       }
       igSameLine(0, btn_gap);
+      {
+        ImVec2 ok_pos;
+        igGetCursorScreenPos(&ok_pos);
+        crystal_glow_rect(ok_pos, (ImVec2){btn_w, btn_h}, 0.647f, 0.420f,
+                          1.0f);
+      }
+      igPushStyleColor_Vec4(ImGuiCol_Button,
+                            (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+      igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                            (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+      igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                            (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
       if (igButton("OK", (ImVec2){btn_w, btn_h})) {
         save_user_settings(usrs);
         gdata->curr_screen = TITLE_SCREEN;
       }
+      crystal_sheen();
+      igPopStyleColor(3);
     }
   }
   igEndChild();
 
   igPopStyleColor(3);
   igPopStyleVar(4);
+  crystal_pop_theme();
   igPopFont();
 }
 

@@ -12,6 +12,8 @@
 #include "../android_glfw_shim.h"
 #endif
 
+#include "../ui/crystal_theme.h"
+
 #ifndef IM_COL32
 #define IM_COL32(R,G,B,A) (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)))
 #endif
@@ -1127,6 +1129,13 @@ void ntl_team_panel(tenv *env) {
   igPushFont(u->imgui_data.regular_font[us->ui_font_size],
              u->imgui_data.regular_font[us->ui_font_size]->LegacySize);
 
+  u->r->global.bg_opacity = 0;
+  u->r->global.bd_opacity = 0;
+  u->r->global.minimap_opacity = 0;
+
+  crystal_draw_background(env);
+  crystal_push_theme();
+
   igText("NTL Chat");
   igSameLine(0, 12);
   if (!us->ntl_enabled)
@@ -1158,6 +1167,8 @@ void ntl_team_panel(tenv *env) {
   float body_h = avail.y - footer_h - igGetFrameHeight() - style->ItemSpacing.y * 2.0f;
   if (body_h < 260) body_h = 260;
 
+  igPushStyleColor_Vec4(ImGuiCol_ChildBg,
+                        (ImVec4){0.176f, 0.106f, 0.306f, 0.30f});
   igBeginChild_Str("##ntl_team_and_chat",
                    (ImVec2){avail.x, body_h},
                    ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
@@ -1348,11 +1359,24 @@ void ntl_team_panel(tenv *env) {
   igEndChild();
 
   igEndChild();
+  igPopStyleColor(1);
 
   /* Leaving the panel (Save/Back below) always locks the chat
    * window back down first, so it can't be left stuck in a
    * draggable state with no controls visible to confirm it. */
   float btn_w = (avail.x - style->ItemSpacing.x) * 0.5f;
+  {
+    ImVec2 save_pos;
+    igGetCursorScreenPos(&save_pos);
+    crystal_glow_rect(save_pos, (ImVec2){btn_w, igGetFrameHeight() * 1.6f},
+                      0.647f, 0.420f, 1.0f);
+  }
+  igPushStyleColor_Vec4(ImGuiCol_Button,
+                        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
   if (igButton("Save", (ImVec2){btn_w, igGetFrameHeight() * 1.6f})) {
     if (chat_adjust_mode != GLOBAL_CHAT_ADJUST_NONE)
       global_chat_set_adjust_mode(env, GLOBAL_CHAT_ADJUST_NONE);
@@ -1360,6 +1384,8 @@ void ntl_team_panel(tenv *env) {
     save_user_settings(us);
     S.next_poll = 0;
   }
+  crystal_sheen();
+  igPopStyleColor(3);
   igSameLine(0, style->ItemSpacing.x);
   if (igButton("Back", (ImVec2){btn_w, igGetFrameHeight() * 1.6f})) {
     if (chat_adjust_mode != GLOBAL_CHAT_ADJUST_NONE)
@@ -1367,6 +1393,9 @@ void ntl_team_panel(tenv *env) {
     save_user_settings(us);
     g->curr_screen = TITLE_SCREEN;
   }
+  crystal_sheen();
+
+  crystal_pop_theme();
 
   igPopFont();
 }

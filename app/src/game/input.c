@@ -1,6 +1,10 @@
 #include <string.h>    
 #ifdef ANDROID    
 #include "../android_glfw_shim.h"    
+#include <android/log.h>
+#define DLOG(fmt,...) do{char _b[256];snprintf(_b,sizeof(_b),fmt,##__VA_ARGS__);    __android_log_print(ANDROID_LOG_ERROR,"vlither","%s",_b);}while(0)
+#else
+#define DLOG(fmt,...) do{}while(0)
 #endif    
 #include "input.h"    
     
@@ -243,6 +247,15 @@ void input(tenv* env) {
       if (sang != gdata->data.lsang) {    
         gdata->data.lsang = sang;    
         mg_ws_send(connection, (uint8_t[]){sang & 255}, 1, WEBSOCKET_OP_BINARY);    
+        /* TEMP SMOOTHNESS DIAG: real gap since the last angle send. The
+         * throttle above targets 50ms; if this logs much more than that
+         * (e.g. 80-150ms) it means frames are too sparse/uneven to even
+         * hit the 50ms check on time -- delete once done comparing.
+         *   adb logcat -s vlither:E | grep SEND_DIAG */
+        static double s_last_send_ctm = 0;
+        DLOG("[SEND_DIAG] gap=%.1fms sang=%d",
+             gdata->data.ctm - s_last_send_ctm, sang);
+        s_last_send_ctm = gdata->data.ctm;
       }    
     }    
   }    

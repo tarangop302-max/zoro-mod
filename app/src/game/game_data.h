@@ -107,6 +107,23 @@ typedef struct game_data {
   bool restart_req;
   bool closed;
 
+  /* Set the instant the player's own death is detected (see the 'v'
+   * command in network/callback.c). The connection is deliberately kept
+   * open and gameplay keeps rendering normally behind the scenes for a
+   * short, fixed delay (see DEATH_ANIM_SECONDS in loop.c) instead of
+   * waiting an indeterminate amount of time for the server to close the
+   * socket -- that indeterminate wait was the "freeze" players saw
+   * before landing back in the lobby with no explanation. Once that
+   * delay elapses, the death popup (Final length / kills / time, with
+   * Lobby and Restart) is drawn on top of the still-live game view and
+   * stays until the player picks one -- only then does the connection
+   * actually close and the existing disconnect/reconnect logic run.
+   * usrs->score/kills/play_time already hold that run's final values by
+   * the time this is set (see the 'v' handler), so the popup doesn't
+   * need its own separate copy of them. */
+  bool death_pending;
+  double death_anim_start;
+
   struct {
     float grd;
     float sector_size;

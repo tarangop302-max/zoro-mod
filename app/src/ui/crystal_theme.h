@@ -2,6 +2,7 @@
 #define CRYSTAL_THEME_H
 
 #include <thermite.h>
+#include "cimgui/cimgui.h"
 
 /* ============================================================================
  * Shared crystal / purple glass theme.

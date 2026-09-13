@@ -29,7 +29,11 @@ void ui_skin_editor(tenv* env) {
   usr->r->global.bd_opacity = 0;
   usr->r->global.minimap_opacity = 0;
 
-  crystal_draw_background(env);
+  /* Translucent, not the opaque crystal_draw_background(): this screen has
+     a live skin preview drawn underneath by a separate renderer (before
+     ImGui runs), so a fully opaque background here would paint over it and
+     hide it entirely. */
+  crystal_draw_background_alpha(env, 0.55f);
   crystal_push_theme();
 
   float frame_height = igGetFrameHeight();
@@ -55,11 +59,24 @@ void ui_skin_editor(tenv* env) {
        not editing: [Default skins] [<>] [Saved skins] [<>]
                     [Custom] [OK]                                   -> 6 */
   int picker_rows = gdata->skin_editing ? 4 : 6;
-  float min_grid_y = style->WindowPadding.y +
-                     (style->ItemSpacing.y + frame_height) * picker_rows +
+  float reserved_h = (style->ItemSpacing.y + frame_height) * picker_rows +
                      (scale + style->ItemSpacing.y) * 2.0f;
-  float grid_y = ctx->size[1] * 0.5f - tot_size[1] * 0.5f;
-  if (grid_y < min_grid_y) grid_y = min_grid_y;
+  float min_grid_y = style->WindowPadding.y + reserved_h;
+  float grid_y;
+  if (gdata->skin_editing) {
+    /* The color/accessory grid (child panel) starts at grid_y and fills
+       everything down to the bottom of the screen, so grid_y only needs to
+       leave enough room above it for the preview + input rows -- it isn't
+       meant to be centered as a fixed-height block. */
+    grid_y = ctx->size[1] * 0.5f - tot_size[1] * 0.5f;
+    if (grid_y < min_grid_y) grid_y = min_grid_y;
+  } else {
+    /* No panel below grid_y here -- the preview + picker rows are the
+       whole visible block, so center that block in the screen instead of
+       anchoring it to the top via min_grid_y. */
+    grid_y = ctx->size[1] * 0.5f + reserved_h * 0.5f;
+    if (grid_y < min_grid_y) grid_y = min_grid_y;
+  }
 
   float sk_w = scale + (8 * (scale / 48)) * ((MAX_SKIN_CODE_LEN / 2.0f) - 1);
 

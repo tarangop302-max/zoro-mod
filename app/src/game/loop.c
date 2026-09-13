@@ -15,12 +15,6 @@
 #include "redraw.h"
 #include "ui_overlay.h"
 
-/* Fixed delay between the player's own death and the death popup
- * appearing (see gdata->death_pending in game_data.h) -- long enough for
- * the death to actually read as having happened, short enough that it
- * never feels like the old indeterminate freeze. */
-#define DEATH_ANIM_SECONDS 1.0
-
 void game_loop(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -61,7 +55,18 @@ void game_loop(tenv* env) {
     }
     case CONNECTED:
       time_step(env);
-      input(env);
+
+      // Movement/touch input is deliberately skipped for the entire
+      // post-death window (delay + popup) below -- there's no snake left
+      // to move, and more importantly, this game's own touch handling
+      // doesn't check ImGui's io->WantCaptureMouse before acting, so
+      // without this gate a tap on the popup's Lobby/Restart buttons was
+      // also being read as a movement command underneath them, and the
+      // buttons never visibly responded to clicks.
+      if (!gdata->death_pending) {
+        input(env);
+      }
+
       server_poll(env);
       oef(env);
       redraw(env);
@@ -83,14 +88,20 @@ void game_loop(tenv* env) {
         // Popup only appears once the short fixed delay above has
         // elapsed -- until then the player just sees their own death
         // play out normally (existing fade/spectator behavior) instead
-        // of a screen that suddenly looks frozen. The quit/restart
-        // hotkeys are deliberately disabled above once death_pending is
-        // set, so an old habit like right-click-to-restart can't bypass
-        // this popup once it's about to appear.
+        // of a screen that suddenly looks frozen.
         ui_death_screen(env);
       }
 
-      if (gdata->closed) {
+      // While death_pending is true (from the moment of death until the
+      // player actually clicks Lobby/Restart), a server-initiated close
+      // is deliberately NOT acted on here -- that's exactly what used to
+      // silently dump the player back to the lobby on the server's own
+      // timing, even with the popup up and without them clicking
+      // anything. gdata->closed just stays true and gets handled the
+      // instant death_pending flips back to false (see the button
+      // handlers in death_screen.c), whether that happens because the
+      // connection had already closed by then or closes right after.
+      if (gdata->closed && !gdata->death_pending) {
         game_data_reset(env);
 
         if (gdata->restart_req) {

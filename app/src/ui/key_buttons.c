@@ -116,20 +116,6 @@ static struct {
   .drag_idx = -1
 };
 
-/* Boost button / joystick "virtual" entries on the keyboard-button editor
-   canvas. These aren't stored in usrs->key_btns[] (that array is keyboard
-   buttons only) -- they drag/resize the SAME boost_rel_*/joy_rel_* fields
-   already used by the real touch overlay (ui_overlay.c) and by the numeric
-   sliders in Controls, so adjusting them here changes the real thing, not
-   a separate copy. Kept as their own small piece of state (rather than
-   folded into s_kb.selected_idx/drag_idx, which index usrs->key_btns[])
-   so there's no risk of an out-of-range key_btns[] access. */
-typedef enum { VBTN_NONE = 0, VBTN_BOOST, VBTN_JOY } vbtn_kind;
-static vbtn_kind s_vbtn_selected = VBTN_NONE;
-static vbtn_kind s_vbtn_dragging = VBTN_NONE;
-static float s_vbtn_drag_off_x = 0.0f;
-static float s_vbtn_drag_off_y = 0.0f;
-
 static void button_extents(const custom_key_btn *b, float screen_h,
                            float *half_w, float *half_h) {
   float size = b->rel_size * screen_h;
@@ -346,8 +332,6 @@ void ui_key_buttons_open_editor(tenv *env) {
   s_kb.picker_changes_selected = false;
   s_kb.selected_idx = -1;
   s_kb.drag_idx = -1;
-  s_vbtn_selected = VBTN_NONE;
-  s_vbtn_dragging = VBTN_NONE;
   env->usr->gdata.curr_screen = KEYBOARD_EDITOR;
 }
 
@@ -359,8 +343,6 @@ static void close_editor(tenv *env) {
   s_kb.picker_changes_selected = false;
   s_kb.selected_idx = -1;
   s_kb.drag_idx = -1;
-  s_vbtn_selected = VBTN_NONE;
-  s_vbtn_dragging = VBTN_NONE;
   env->usr->gdata.curr_screen = CONTROLS;
 }
 
@@ -499,211 +481,6 @@ static void draw_gameplay_buttons(tenv *env) {
 static bool point_in_rect(float x, float y, float x0, float y0,
                           float x1, float y1) {
   return x >= x0 && x <= x1 && y >= y0 && y <= y1;
-}
-
-/* Mirrors the real default-position formula in ui_overlay.c exactly, so
-   what's shown here (while not yet customized) matches what actually
-   appears in a real match. */
-static void vbtn_geometry(user_settings *usrs, vbtn_kind k, float sw,
-                          float sh, float *cx, float *cy, float *r) {
-  float margin = sw * 0.025f;
-  bool swapped = usrs->ctrl_swap_sides;
-  if (k == VBTN_BOOST) {
-    if (usrs->boost_pos_custom) {
-      *r  = sh * usrs->boost_rel_size;
-      *cx = sw * usrs->boost_rel_x;
-      *cy = sh * usrs->boost_rel_y;
-    } else {
-      *r  = sh * 0.125f;
-      *cx = swapped ? (*r + margin) : (sw - *r - margin);
-      *cy = sh - *r - margin;
-    }
-  } else {
-    if (usrs->joy_pos_custom) {
-      *r  = sh * usrs->joy_rel_size;
-      *cx = sw * usrs->joy_rel_x;
-      *cy = sh * usrs->joy_rel_y;
-    } else {
-      *r  = sh * 0.175f;
-      *cx = swapped ? (sw - *r - margin) : (*r + margin);
-      *cy = sh - *r - margin;
-    }
-  }
-}
-
-static void draw_vbtn(ImDrawList *dl, vbtn_kind k, float cx, float cy,
-                      float r, bool selected, float sh, float *ex,
-                      float *ey, float *badge_r) {
-  const char *label = (k == VBTN_BOOST) ? "Boost" : "Joystick";
-  ImU32 bg = IM_COL32(55, 70, 95, 160);
-  ImU32 border = selected ? IM_COL32(255, 205, 70, 255)
-                          : IM_COL32(145, 170, 210, 160);
-  ImDrawList_AddCircleFilled(dl, (ImVec2){cx, cy}, r, bg, 40);
-  ImDrawList_AddCircle(dl, (ImVec2){cx, cy}, r, border, 40,
-                       selected ? 3.0f : 1.8f);
-  ImVec2 ts;
-  igCalcTextSize(&ts, label, NULL, false, -1.0f);
-  ImDrawList_AddText_Vec2(dl, (ImVec2){cx - ts.x * 0.5f, cy - ts.y * 0.5f},
-                          IM_COL32(255, 255, 255, 255), label, NULL);
-  *badge_r = sh * 0.022f;
-  if (*badge_r < 15.0f) *badge_r = 15.0f;
-  *ex = cx + r * 0.7071f;
-  *ey = cy - r * 0.7071f;
-}
-
-/* Non-interactive reference boxes for the other HUD elements a keyboard
-   button might need to avoid -- leaderboard, teammates list, minimap, and
-   the team/public chat panel. Repositioning those lives in their own
-   dedicated editors (HUD_LAYOUT_EDITOR for the first three, the TEAM CHAT
-   panel's own "Adjust position"/"Adjust size" for the last), so these are
-   just labeled outlines showing where each currently sits. Minimap
-   position/size is exact; leaderboard/teammates use a nominal box size
-   since their real size depends on live match data this screen doesn't
-   have. */
-static void draw_ref_box(ImDrawList *dl, float x, float y, float w, float h,
-                         const char *label, ImU32 col) {
-  ImDrawList_AddRect(dl, (ImVec2){x, y}, (ImVec2){x + w, y + h}, col, 6.0f,
-                     0, 1.5f);
-  ImVec2 ts;
-  igCalcTextSize(&ts, label, NULL, false, -1.0f);
-  float lx = x + 4.0f, ly = y - ts.y - 3.0f;
-  if (ly < 2.0f) ly = y + 4.0f;
-  ImDrawList_AddRectFilled(dl, (ImVec2){lx - 3, ly - 1},
-                           (ImVec2){lx + ts.x + 3, ly + ts.y + 1},
-                           IM_COL32(0, 0, 0, 150), 3.0f, 0);
-  ImDrawList_AddText_Vec2(dl, (ImVec2){lx, ly}, col, label, NULL);
-}
-
-static void draw_hud_reference_overlays(tenv *env, ImDrawList *dl, float sw,
-                                        float sh) {
-  user_settings *usrs = &env->usr->usrs;
-  ImGuiStyle *style = igGetStyle();
-  ImU32 col = IM_COL32(190, 160, 255, 200);
-  float pad_x = style->WindowPadding.x;
-  float pad_y = style->WindowPadding.y;
-
-  /* No live match here, so there's no real score data to size these
-     against -- these are position markers only (a nominal box size),
-     never actual leaderboard/teammate entries. When not custom, the
-     anchor math below is copied from ui_overlay.c's real default
-     placement (not a guessed fraction of the screen), so the box lands
-     where the real thing actually sits either way. */
-
-  float lb_scale = usrs->leaderboard_pos_custom ? usrs->leaderboard_scale
-                                                : 0.72f;
-  float lb_w = sw * 0.18f * lb_scale;
-  float lb_h = sh * 0.22f * lb_scale;
-  float lb_x, lb_y;
-  if (usrs->leaderboard_pos_custom) {
-    lb_x = usrs->leaderboard_rel_x * sw;
-    lb_y = usrs->leaderboard_rel_y * sh;
-  } else {
-    /* Real default (ui_overlay.c): hugs the top-right corner. */
-    lb_x = sw - lb_w - pad_x;
-    lb_y = pad_y;
-  }
-  draw_ref_box(dl, lb_x, lb_y, lb_w, lb_h, "Leaderboard", col);
-
-  float tm_w = sw * 0.18f;
-  float tm_h = sh * 0.16f;
-  float tm_x, tm_y;
-  if (usrs->teammates_pos_custom) {
-    tm_x = usrs->teammates_rel_x * sw;
-    tm_y = usrs->teammates_rel_y * sh;
-  } else {
-    /* Real default (ui_overlay.c): right-aligned, stacked directly
-       below the leaderboard. */
-    tm_x = sw - tm_w - pad_x;
-    tm_y = lb_y + lb_h + style->ItemSpacing.y * 2.0f;
-  }
-  draw_ref_box(dl, tm_x, tm_y, tm_w, tm_h, "Teammates", col);
-
-  float mm_max = fminf(sw, sh) * 0.46f;
-  float mm_size = fminf((float)usrs->minimap_size, mm_max);
-  float mm_x, mm_y;
-  if (usrs->minimap_pos_custom) {
-    mm_x = usrs->minimap_rel_x * sw - mm_size * 0.5f;
-    mm_y = usrs->minimap_rel_y * sh - mm_size * 0.5f;
-  } else {
-    /* Real default (ui_overlay.c): bottom-right corner, with room
-       reserved below for the nickname/IP/ping/timer stats block. */
-    float mm_bottom_reserve = igGetFrameHeight() * 7.0f;
-    mm_x = sw - mm_size - pad_x;
-    mm_y = sh - mm_size - pad_y - mm_bottom_reserve;
-  }
-  draw_ref_box(dl, mm_x, mm_y, mm_size, mm_size, "Map", col);
-
-  {
-    /* rel_x/y/w/h always hold the real current position, custom or not
-       (global_chat.c fills in the default every frame it draws). */
-    float x = usrs->public_chat_rel_x * sw;
-    float y = usrs->public_chat_rel_y * sh;
-    float w = usrs->public_chat_rel_w * sw;
-    float h = usrs->public_chat_rel_h * sh;
-    if (w > 4.0f && h > 4.0f)
-      draw_ref_box(dl, x, y, w, h, "Team/Public Chat", col);
-  }
-}
-
-static void draw_vbtn_edit_panel(tenv *env, float sw, float sh) {
-  if (s_vbtn_selected == VBTN_NONE) return;
-  user_settings *usrs = &env->usr->usrs;
-  bool is_boost = (s_vbtn_selected == VBTN_BOOST);
-  float pw = sw * 0.25f;
-  if (pw < 280.0f) pw = 280.0f;
-  if (pw > 390.0f) pw = 390.0f;
-  float ph = sh * 0.42f;
-  float px = sw - pw - 18.0f;
-  float py = (sh - ph) * 0.5f;
-#ifdef ANDROID
-  android_ui_capture_rect(px, py, px + pw, py + ph);
-#endif
-  igSetNextWindowPos((ImVec2){px, py}, ImGuiCond_Always, (ImVec2){});
-  igSetNextWindowSize((ImVec2){pw, ph}, ImGuiCond_Always);
-  igSetNextWindowBgAlpha(0.97f);
-  if (igBegin("##vbtn_edit", NULL,
-              ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
-              ImGuiWindowFlags_NoSavedSettings)) {
-    igTextColored((ImVec4){0.50f, 0.78f, 1.0f, 1.0f}, "%s",
-                  is_boost ? "Edit boost button" : "Edit joystick");
-    igSeparator();
-    bool *pos_custom = is_boost ? &usrs->boost_pos_custom
-                                : &usrs->joy_pos_custom;
-    float *rel_size = is_boost ? &usrs->boost_rel_size : &usrs->joy_rel_size;
-    float *opacity = is_boost ? &usrs->boost_opacity : &usrs->joy_opacity;
-    if (*pos_custom) {
-      igText("Size");
-      igSetNextItemWidth(-1);
-      if (is_boost)
-        igSliderFloat("##vbtn_size", rel_size, 0.06f, 0.22f, "%.3f",
-                      ImGuiSliderFlags_AlwaysClamp);
-      else
-        igSliderFloat("##vbtn_size", rel_size, 0.08f, 0.28f, "%.3f",
-                      ImGuiSliderFlags_AlwaysClamp);
-    } else {
-      igTextWrapped("Drag it on the canvas to switch to a custom position.");
-    }
-    igText("Opacity");
-    igSetNextItemWidth(-1);
-    igSliderFloat("##vbtn_opacity", opacity, 0.0f, 1.0f, "%.2f",
-                  ImGuiSliderFlags_AlwaysClamp);
-    igSpacing();
-    if (*pos_custom && igButton("Reset to default position", (ImVec2){-1, 0})) {
-      *pos_custom = false;
-      if (is_boost) {
-        usrs->boost_rel_x = usrs->ctrl_swap_sides ? 0.125f : 0.875f;
-        usrs->boost_rel_y = 0.875f;
-        usrs->boost_rel_size = 0.125f;
-      } else {
-        usrs->joy_rel_x = usrs->ctrl_swap_sides ? 0.875f : 0.125f;
-        usrs->joy_rel_y = 0.825f;
-        usrs->joy_rel_size = 0.175f;
-      }
-    }
-    if (igButton("Close editor", (ImVec2){-1, 0})) s_vbtn_selected = VBTN_NONE;
-  }
-  igEnd();
 }
 
 static void draw_key_picker(tenv *env, float sw, float sh) {
@@ -872,7 +649,7 @@ static void draw_editor(tenv *env) {
   const float panel_y1 = 200.0f;
   bool pointer_on_panel = point_in_rect(mx, my, panel_x0, panel_y0,
                                         panel_x1, panel_y1);
-  if (s_kb.selected_idx >= 0 || s_vbtn_selected != VBTN_NONE) {
+  if (s_kb.selected_idx >= 0) {
     float epw = sw * 0.25f;
     if (epw < 280.0f) epw = 280.0f;
     if (epw > 390.0f) epw = 390.0f;
@@ -887,58 +664,12 @@ static void draw_editor(tenv *env) {
   igCalcTextSize(&title_size, title, NULL, false, -1.0f);
   ImDrawList_AddText_Vec2(bg, (ImVec2){sw * 0.5f - title_size.x * 0.5f, 18.0f},
                           IM_COL32(255, 255, 255, 235), title, NULL);
-  const char *hint = "Tap a button, boost, or joystick to edit it.";
+  const char *hint = "Tap a button to edit it.";
   ImVec2 hint_size;
   igCalcTextSize(&hint_size, hint, NULL, false, -1.0f);
   ImDrawList_AddText_Vec2(bg,
       (ImVec2){sw * 0.5f - hint_size.x * 0.5f, 45.0f},
       IM_COL32(170, 170, 175, 220), hint, NULL);
-
-  draw_hud_reference_overlays(env, bg, sw, sh);
-
-  {
-    vbtn_kind kinds[2];
-    int nk = 0;
-    kinds[nk++] = VBTN_BOOST;
-    if (!usrs->ctrl_mode_trackpad) kinds[nk++] = VBTN_JOY;
-    for (int vi = 0; vi < nk; vi++) {
-      vbtn_kind k = kinds[vi];
-      float cx, cy, r;
-      vbtn_geometry(usrs, k, sw, sh, &cx, &cy, &r);
-      float ex, ey, badge_r;
-      draw_vbtn(bg, k, cx, cy, r, s_vbtn_selected == k, sh, &ex, &ey,
-               &badge_r);
-      ImDrawList_AddCircleFilled(bg, (ImVec2){ex, ey}, badge_r,
-                                 IM_COL32(165, 45, 45, 245), 20);
-      const char *edit_label = "Edit";
-      ImVec2 es;
-      igCalcTextSize(&es, edit_label, NULL, false, -1.0f);
-      ImDrawList_AddText_Vec2(bg, (ImVec2){ex - es.x * 0.5f, ey - es.y * 0.5f},
-                              IM_COL32(255, 255, 255, 255), edit_label, NULL);
-
-      if (mouse_clicked && !pointer_on_panel) {
-        float edx = mx - ex, edy = my - ey;
-        if (edx * edx + edy * edy <= badge_r * badge_r * 1.25f) {
-          s_vbtn_selected = k;
-          s_kb.selected_idx = -1;
-          s_vbtn_dragging = VBTN_NONE;
-          continue;
-        }
-        float ddx = mx - cx, ddy = my - cy;
-        if (ddx * ddx + ddy * ddy <= r * r) {
-          s_vbtn_selected = k;
-          s_kb.selected_idx = -1;
-          s_vbtn_dragging = k;
-          s_vbtn_drag_off_x = mx - cx;
-          s_vbtn_drag_off_y = my - cy;
-          if (k == VBTN_BOOST && !usrs->boost_pos_custom)
-            usrs->boost_rel_size = 0.125f;
-          if (k == VBTN_JOY && !usrs->joy_pos_custom)
-            usrs->joy_rel_size = 0.175f;
-        }
-      }
-    }
-  }
 
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     custom_key_btn *b = &usrs->key_btns[i];
@@ -963,7 +694,6 @@ static void draw_editor(tenv *env) {
       if (edx * edx + edy * edy <= badge_r * badge_r * 1.25f) {
         s_kb.selected_idx = i;
         s_kb.drag_idx = -1;
-        s_vbtn_selected = VBTN_NONE;
         continue;
       }
       if (point_in_rect(mx, my, p0.x, p0.y, p1.x, p1.y)) {
@@ -971,7 +701,6 @@ static void draw_editor(tenv *env) {
            target, matching the floating-button editor's old behaviour. */
         s_kb.selected_idx = i;
         s_kb.drag_idx = i;
-        s_vbtn_selected = VBTN_NONE;
         s_kb.drag_off_x = mx - b->rel_x * sw;
         s_kb.drag_off_y = my - b->rel_y * sh;
       }
@@ -992,25 +721,6 @@ static void draw_editor(tenv *env) {
     if (b->rel_y > 1.0f - ry) b->rel_y = 1.0f - ry;
   }
   if (mouse_released) s_kb.drag_idx = -1;
-
-  if (s_vbtn_dragging != VBTN_NONE && mouse_down) {
-    bool is_boost = (s_vbtn_dragging == VBTN_BOOST);
-    bool *pos_custom = is_boost ? &usrs->boost_pos_custom
-                                : &usrs->joy_pos_custom;
-    float *rxp = is_boost ? &usrs->boost_rel_x : &usrs->joy_rel_x;
-    float *ryp = is_boost ? &usrs->boost_rel_y : &usrs->joy_rel_y;
-    float rsize = is_boost ? usrs->boost_rel_size : usrs->joy_rel_size;
-    *pos_custom = true;
-    *rxp = (mx - s_vbtn_drag_off_x) / sw;
-    *ryp = (my - s_vbtn_drag_off_y) / sh;
-    float rx = (sh * rsize) / sw;
-    float ry = rsize;
-    if (*rxp < rx) *rxp = rx;
-    if (*rxp > 1.0f - rx) *rxp = 1.0f - rx;
-    if (*ryp < ry) *ryp = ry;
-    if (*ryp > 1.0f - ry) *ryp = 1.0f - ry;
-  }
-  if (mouse_released) s_vbtn_dragging = VBTN_NONE;
 
   igSetNextWindowPos((ImVec2){panel_x0, panel_y0}, ImGuiCond_Always,
                      (ImVec2){});
@@ -1036,8 +746,6 @@ static void draw_editor(tenv *env) {
 
   if (s_kb.selected_idx >= 0)
     draw_edit_panel(env, sw, sh);
-  if (s_vbtn_selected != VBTN_NONE)
-    draw_vbtn_edit_panel(env, sw, sh);
   if (s_kb.picker_open) draw_key_picker(env, sw, sh);
 }
 

@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 #include "../user.h"
+#include "crystal_theme.h"
 
 int skin_code_filter(ImGuiInputTextCallbackData* data) {
   return !((data->EventChar >= 'a' && data->EventChar <= 'z') ||
@@ -27,6 +28,9 @@ void ui_skin_editor(tenv* env) {
   usr->r->global.bg_opacity = 0;
   usr->r->global.bd_opacity = 0;
   usr->r->global.minimap_opacity = 0;
+
+  crystal_draw_background(env);
+  crystal_push_theme();
 
   float frame_height = igGetFrameHeight();
   float resolution_scale = fminf(ctx->size[0] / 1280.0f, ctx->size[1] / 720.0f);
@@ -230,6 +234,7 @@ void ui_skin_editor(tenv* env) {
                         ImGuiInputTextFlags_CallbackCharFilter |
                             ImGuiInputTextFlags_EnterReturnsTrue,
                         skin_code_filter, NULL);
+    crystal_sheen();
     igSameLine(0, -1);
     igPushStyleVarX(ImGuiStyleVar_FramePadding, 0);
     int skin_code_len = strlen(usrs->skin_code);
@@ -237,10 +242,12 @@ void ui_skin_editor(tenv* env) {
         skin_code_len > 0) {
       usrs->skin_code[strlen(usrs->skin_code) - 1] = 0;
     }
+    crystal_sheen();
     igSameLine(0, -1);
     if (igButton("\ue9ac", (ImVec2){frame_height, frame_height})) {
       usrs->skin_code[0] = 0;
     }
+    crystal_sheen();
     igPopStyleVar(1);
 
     igSetCursorPosX(picker_x);
@@ -258,6 +265,7 @@ void ui_skin_editor(tenv* env) {
       usrs->saved_skins[idx].accessory = usrs->accessory;
       usrs->active_saved_skin = idx;
     }
+    crystal_sheen();
     igEndDisabled();
   } else {
     /* Row 6-5: "Default skins" label + arrows (image 1, unchanged). */
@@ -272,11 +280,13 @@ void ui_skin_editor(tenv* env) {
           (usrs->default_skin + (NUM_DEFAULT_SKINS - 1)) % NUM_DEFAULT_SKINS;
       usrs->custom_skin = false;
     }
+    crystal_sheen();
     igSameLine(0, -1);
     if (igButton("\uea34##default_next", (ImVec2){half_w, 0})) {
       usrs->default_skin = (usrs->default_skin + 1) % NUM_DEFAULT_SKINS;
       usrs->custom_skin = false;
     }
+    crystal_sheen();
 
     /* Row 4-3: "Saved skins" label + arrows (NEW). Cycles usrs->saved_skins
        and, on change, loads that entry's code/accessory as the active skin
@@ -300,6 +310,7 @@ void ui_skin_editor(tenv* env) {
       usrs->accessory = s->accessory;
       usrs->custom_skin = true;
     }
+    crystal_sheen();
     igSameLine(0, -1);
     if (igButton("\uea34##saved_next", (ImVec2){half_w, 0}) && has_saved) {
       usrs->active_saved_skin = (base + 1) % usrs->saved_skin_count;
@@ -308,6 +319,7 @@ void ui_skin_editor(tenv* env) {
       usrs->accessory = s->accessory;
       usrs->custom_skin = true;
     }
+    crystal_sheen();
     igEndDisabled();
   }
 
@@ -324,15 +336,30 @@ void ui_skin_editor(tenv* env) {
       usrs->custom_skin = true;
     }
   }
+  crystal_sheen();
 
   igSetCursorPosX(picker_x);
   igSetCursorPosY((grid_y) - row_h * 1);
+  {
+    ImVec2 ok_pos;
+    igGetCursorScreenPos(&ok_pos);
+    crystal_glow_rect(ok_pos, (ImVec2){tot_size[0], frame_height}, 0.647f,
+                      0.420f, 1.0f);
+  }
+  igPushStyleColor_Vec4(ImGuiCol_Button,
+                        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
   if (igButton("OK", (ImVec2){tot_size[0]})) {
     if (usrs->skin_code[0] == 0) usrs->custom_skin = false;
     gdata->skin_editing = false;
     gdata->curr_screen = TITLE_SCREEN;
     save_user_settings(usrs);
   }
+  crystal_sheen();
+  igPopStyleColor(3);
 
   if (usrs->custom_skin && gdata->skin_editing) {
     float panel_w = tot_size[0] + style->ScrollbarSize + style->WindowPadding.x * 2.0f;
@@ -344,6 +371,16 @@ void ui_skin_editor(tenv* env) {
 
     igSetCursorPosX(panel_x);
     igSetCursorPosY(grid_y);
+    igPushStyleColor_Vec4(ImGuiCol_ChildBg,
+                          (ImVec4){0.176f, 0.106f, 0.306f, 0.30f});
+    igPushStyleColor_Vec4(ImGuiCol_ScrollbarBg,
+                          (ImVec4){0.176f, 0.106f, 0.306f, 0.20f});
+    igPushStyleColor_Vec4(ImGuiCol_ScrollbarGrab,
+                          (ImVec4){0.470f, 0.360f, 0.720f, 0.55f});
+    igPushStyleColor_Vec4(ImGuiCol_ScrollbarGrabHovered,
+                          (ImVec4){0.569f, 0.353f, 0.960f, 0.70f});
+    igPushStyleColor_Vec4(ImGuiCol_ScrollbarGrabActive,
+                          (ImVec4){0.510f, 0.294f, 0.910f, 0.85f});
     bool child_visible = igBeginChild_Str(
         "custom_skin_scroll_panel", (ImVec2){panel_w, panel_h},
         ImGuiChildFlags_Borders,
@@ -472,7 +509,10 @@ void ui_skin_editor(tenv* env) {
       igDummy((ImVec2){tot_size[0], style->ItemSpacing.y});
     }
     igEndChild();
+    igPopStyleColor(5);
   }
+
+  crystal_pop_theme();
 
   igPopFont();
 }

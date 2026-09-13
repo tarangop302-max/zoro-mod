@@ -2,10 +2,6 @@
 
 #include "../user.h"
 
-static ImU32 ds_col(float r, float g, float b, float a) {
-  return igColorConvertFloat4ToU32((ImVec4){r, g, b, a});
-}
-
 void ui_death_screen(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -13,15 +9,12 @@ void ui_death_screen(tenv* env) {
   game_data* gdata = &usr->gdata;
   ImGuiStyle* style = igGetStyle();
 
-  /* Dim the still-live game behind the popup -- same idea as the keyboard
-   * editor's scrim: enough to focus attention here, not enough to hide
-   * that the world you just died in is still visible underneath, since
-   * the connection is deliberately still open at this point (see
-   * loop.c/callback.c) rather than having already been torn down. */
-  ImDrawList* bg = igGetBackgroundDrawList(igGetMainViewport());
-  ImDrawList_AddRectFilled(bg, (ImVec2){0, 0},
-                           (ImVec2){ctx->size[0], ctx->size[1]},
-                           ds_col(0.04f, 0.024f, 0.07f, 0.55f), 0, 0);
+  /* The real background blur (same multi-tap technique already used
+   * behind the Settings screen) is drawn separately in main.c's trender()
+   * -- it has to happen before ui_viewport()'s ImGui pass this frame, not
+   * in here, so it ends up behind this window instead of on top of it.
+   * That call already includes its own dark tint, so this popup doesn't
+   * need a separate dimming rect of its own on top of it. */
 
   igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
              usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
@@ -54,7 +47,7 @@ void ui_death_screen(tenv* env) {
    * Restart is clicked, per the request that it "will not close until
    * we click on lobby or restart buttons". */
   if (igBegin("##death_screen", NULL, flags)) {
-    float card_w = 460.0f;
+    float card_w = 640.0f;
     float pad = style->WindowPadding.x;
     ImVec2 ts;
 
@@ -70,7 +63,7 @@ void ui_death_screen(tenv* env) {
                   usrs->nickname);
     igPopFont();
 
-    igDummy((ImVec2){card_w, 16.0f});
+    igDummy((ImVec2){card_w, 22.0f});
 
     const char* len_label = "Final length";
     igCalcTextSize(&ts, len_label, NULL, false, -1.0f);
@@ -86,7 +79,7 @@ void ui_death_screen(tenv* env) {
     igTextColored((ImVec4){1.0f, 1.0f, 1.0f, 1.0f}, "%s", len_buf);
     igPopFont();
 
-    igDummy((ImVec2){card_w, 12.0f});
+    igDummy((ImVec2){card_w, 18.0f});
 
     /* Kills + time this run, side by side -- smaller than the hero number
      * above so "Final length" still reads as the headline stat. */
@@ -105,7 +98,7 @@ void ui_death_screen(tenv* env) {
     ImVec2 ks, tsz;
     igCalcTextSize(&ks, kills_buf, NULL, false, -1.0f);
     igCalcTextSize(&tsz, time_buf, NULL, false, -1.0f);
-    float gap = 36.0f;
+    float gap = 48.0f;
     float total_w = ks.x + tsz.x + gap;
     igSetCursorPosX(pad + (card_w - total_w) * 0.5f);
     igTextColored((ImVec4){0.827f, 0.788f, 0.929f, 1.0f}, "%s", kills_buf);
@@ -113,13 +106,14 @@ void ui_death_screen(tenv* env) {
     igTextColored((ImVec4){0.827f, 0.788f, 0.929f, 1.0f}, "%s", time_buf);
     igPopFont();
 
-    igDummy((ImVec2){card_w, 18.0f});
+    igDummy((ImVec2){card_w, 26.0f});
     igSeparator();
-    igDummy((ImVec2){card_w, 14.0f});
+    igDummy((ImVec2){card_w, 20.0f});
 
     float btn_w = (card_w - style->ItemSpacing.x) * 0.5f;
+    float btn_h = 74.0f;
 
-    if (igButton("Lobby##death_screen", (ImVec2){btn_w, 56.0f})) {
+    if (igButton("Lobby##death_screen", (ImVec2){btn_w, btn_h})) {
       /* Mirrors the existing manual-restart/quit hotkey pattern in
        * loop.c exactly (is_closing + restart_req) -- the already-proven
        * disconnect/reconnect state machine there takes it from here
@@ -137,7 +131,7 @@ void ui_death_screen(tenv* env) {
                           (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
     igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
                           (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
-    if (igButton("\uea1c Restart##death_screen", (ImVec2){btn_w, 56.0f})) {
+    if (igButton("\uea1c Restart##death_screen", (ImVec2){btn_w, btn_h})) {
       gdata->death_pending = false;
       gdata->restart_req = true;
       if (gdata->connection) gdata->connection->is_closing = true;

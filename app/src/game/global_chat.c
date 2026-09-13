@@ -130,23 +130,73 @@ static void global_chat_pop_collapsed_theme(void) {
 }
 
 /*
- * Expanded panel keeps its own near-transparent background (it
- * stays on screen during gameplay, so it can't turn into a solid
- * purple card) -- only the border color is themed, so the outline
- * reads as part of the same UI no matter how the player has
- * resized or repositioned it.
+ * Expanded panel keeps its own near-transparent WindowBg (it
+ * stays on screen during gameplay, so the see-through message
+ * area over the game world can't turn into a solid card) --
+ * but the opaque chrome sitting on top of that -- the title
+ * bar strip, the Show players / SEND buttons, and the message
+ * input box -- are solid UI elements, not the see-through part,
+ * so those get the same purple theme as the rest of the mod.
  */
-#define GLOBAL_CHAT_EXPANDED_COLOR_COUNT 1
+#define GLOBAL_CHAT_EXPANDED_COLOR_COUNT 10
+#define GLOBAL_CHAT_EXPANDED_STYLEVAR_COUNT 1
 
 static void global_chat_push_expanded_theme(void) {
+    igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, 8.0f);
+
     igPushStyleColor_Vec4(
         ImGuiCol_Border,
         (ImVec4){0.690f, 0.580f, 0.960f, 0.45f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_Text,
+        (ImVec4){0.945f, 0.925f, 1.0f, 1.0f}
+    );
+
+    /* Title bar strip -- where "{ J S R } TEAM CHAT" is drawn. */
+    igPushStyleColor_Vec4(
+        ImGuiCol_TitleBg,
+        (ImVec4){0.114f, 0.063f, 0.212f, 1.0f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_TitleBgActive,
+        (ImVec4){0.176f, 0.106f, 0.306f, 1.0f}
+    );
+
+    /* Show players / SEND -- same ambient translucent-purple
+     * buttons as the rest of the mod's panels (not the bright
+     * Play accent -- these are secondary actions). */
+    igPushStyleColor_Vec4(
+        ImGuiCol_Button,
+        (ImVec4){0.373f, 0.290f, 0.607f, 0.28f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_ButtonHovered,
+        (ImVec4){0.430f, 0.330f, 0.680f, 0.34f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_ButtonActive,
+        (ImVec4){0.470f, 0.360f, 0.720f, 0.42f}
+    );
+
+    /* "Type your message..." input box. */
+    igPushStyleColor_Vec4(
+        ImGuiCol_FrameBg,
+        (ImVec4){0.373f, 0.290f, 0.607f, 0.28f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_FrameBgHovered,
+        (ImVec4){0.430f, 0.330f, 0.680f, 0.34f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_FrameBgActive,
+        (ImVec4){0.470f, 0.360f, 0.720f, 0.42f}
     );
 }
 
 static void global_chat_pop_expanded_theme(void) {
     igPopStyleColor(GLOBAL_CHAT_EXPANDED_COLOR_COUNT);
+    igPopStyleVar(GLOBAL_CHAT_EXPANDED_STYLEVAR_COUNT);
 }
 
 static void global_chat_try_connect(
@@ -662,7 +712,7 @@ void global_chat_draw(tenv* env) {
 
     ImVec2 collapsed_size = {
         170.0f,
-        86.0f
+        108.0f
     };
 
     user_settings* usrs =

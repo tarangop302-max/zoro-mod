@@ -68,6 +68,87 @@ static void global_chat_panel_contents(
     ImVec2 live_size
 );
 
+/*
+ * Matches the "crystal glass" purple theme used on the title
+ * screen (see title_screen.c) so the collapsed TEAM CHAT widget
+ * doesn't look like a stock ImGui window dropped on top of it.
+ * Only used for the collapsed state for now -- the expanded
+ * panel keeps its own styling.
+ */
+#define GLOBAL_CHAT_COLLAPSED_COLOR_COUNT 8
+#define GLOBAL_CHAT_COLLAPSED_STYLEVAR_COUNT 4
+
+static void global_chat_push_collapsed_theme(void) {
+    igPushStyleVar_Vec2(
+        ImGuiStyleVar_WindowTitleAlign,
+        (ImVec2){0.5f, 0.5f}
+    );
+    igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 14.0f);
+    igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 1.5f);
+    igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, 10.0f);
+
+    igPushStyleColor_Vec4(
+        ImGuiCol_WindowBg,
+        (ImVec4){0.145f, 0.098f, 0.220f, 1.0f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_Border,
+        (ImVec4){0.690f, 0.580f, 0.960f, 0.45f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_Text,
+        (ImVec4){0.945f, 0.925f, 1.0f, 1.0f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_TitleBg,
+        (ImVec4){0.114f, 0.063f, 0.212f, 1.0f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_TitleBgActive,
+        (ImVec4){0.176f, 0.106f, 0.306f, 1.0f}
+    );
+
+    /* Same bright accent as the Play button, since Open is the
+     * one action on this widget. */
+    igPushStyleColor_Vec4(
+        ImGuiCol_Button,
+        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_ButtonHovered,
+        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f}
+    );
+    igPushStyleColor_Vec4(
+        ImGuiCol_ButtonActive,
+        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f}
+    );
+}
+
+static void global_chat_pop_collapsed_theme(void) {
+    igPopStyleColor(GLOBAL_CHAT_COLLAPSED_COLOR_COUNT);
+    igPopStyleVar(GLOBAL_CHAT_COLLAPSED_STYLEVAR_COUNT);
+}
+
+/*
+ * Expanded panel keeps its own near-transparent background (it
+ * stays on screen during gameplay, so it can't turn into a solid
+ * purple card) -- only the border color is themed, so the outline
+ * reads as part of the same UI no matter how the player has
+ * resized or repositioned it.
+ */
+#define GLOBAL_CHAT_EXPANDED_COLOR_COUNT 1
+
+static void global_chat_push_expanded_theme(void) {
+    igPushStyleColor_Vec4(
+        ImGuiCol_Border,
+        (ImVec4){0.690f, 0.580f, 0.960f, 0.45f}
+    );
+}
+
+static void global_chat_pop_expanded_theme(void) {
+    igPopStyleColor(GLOBAL_CHAT_EXPANDED_COLOR_COUNT);
+}
+
 static void global_chat_try_connect(
     tenv* env
 );
@@ -577,11 +658,11 @@ void global_chat_draw(tenv* env) {
     const char* title =
         global_chat_open ?
             "{ J S R } TEAM CHAT##zoro_chat_window" :
-            "PUBLIC CHAT##zoro_chat_window";
+            "TEAM CHAT##zoro_chat_window";
 
     ImVec2 collapsed_size = {
-        150.0f,
-        74.0f
+        170.0f,
+        86.0f
     };
 
     user_settings* usrs =
@@ -700,11 +781,25 @@ void global_chat_draw(tenv* env) {
      */
     ImVec2 base_padding = igGetStyle()->WindowPadding;
     bool pushed_padding = false;
+    bool pushed_collapsed_theme = false;
+    bool pushed_expanded_theme = false;
 
     if (global_chat_open) {
         igPushStyleVar_Vec2(
             ImGuiStyleVar_WindowPadding,
             (ImVec2){base_padding.x, 6.0f}
+        );
+        pushed_padding = true;
+
+        global_chat_push_expanded_theme();
+        pushed_expanded_theme = true;
+    } else {
+        global_chat_push_collapsed_theme();
+        pushed_collapsed_theme = true;
+
+        igPushStyleVar_Vec2(
+            ImGuiStyleVar_WindowPadding,
+            (ImVec2){12.0f, 10.0f}
         );
         pushed_padding = true;
     }
@@ -760,7 +855,7 @@ void global_chat_draw(tenv* env) {
                     "Open",
                     (ImVec2){
                         -1.0f,
-                        0.0f
+                        34.0f
                     }
                 )
             ) {
@@ -778,6 +873,14 @@ void global_chat_draw(tenv* env) {
 
     if (pushed_padding) {
         igPopStyleVar(1);
+    }
+
+    if (pushed_collapsed_theme) {
+        global_chat_pop_collapsed_theme();
+    }
+
+    if (pushed_expanded_theme) {
+        global_chat_pop_expanded_theme();
     }
 
     if (
@@ -1453,7 +1556,7 @@ static void global_chat_panel_contents(
                 track_x + SCROLLBAR_WIDTH,
                 track_y + track_h
             },
-            IM_COL32(255, 255, 255, 18),
+            IM_COL32(176, 148, 245, 30),
             SCROLLBAR_WIDTH * 0.5f,
             0
         );
@@ -1465,7 +1568,7 @@ static void global_chat_panel_contents(
                 track_x + SCROLLBAR_WIDTH,
                 thumb_y + thumb_h
             },
-            IM_COL32(200, 200, 200, 140),
+            IM_COL32(191, 165, 245, 170),
             SCROLLBAR_WIDTH * 0.5f,
             0
         );

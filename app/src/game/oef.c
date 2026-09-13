@@ -1,76 +1,20 @@
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
-#include <android/log.h>
-#define DLOG(fmt,...) do{char _b[256];snprintf(_b,sizeof(_b),fmt,##__VA_ARGS__);    __android_log_print(ANDROID_LOG_ERROR,"vlither","%s",_b);}while(0)
-#else
-#define DLOG(fmt,...) do{}while(0)
 #endif
 #include "oef.h"
 
 #include "../user.h"
 #include "sbot.h"
 
-/* ---------------------------------------------------------------------
- * TEMP SMOOTHNESS DIAGNOSTICS -- safe to delete this whole block plus
- * the single smoothness_diag(...) call at the bottom of time_step()
- * once you're done comparing. Logs once every ~500ms via logcat tag
- * "vlither", message prefix "[SMOOTH_DIAG]":
- *   adb logcat -s vlither:E | grep SMOOTH_DIAG
- *
- * Fields:
- *   fps      - frames actually rendered per second over the last window
- *   dt_max   - worst single-frame time (ms) seen in that window (frame
- *              stutters/hitches show up here; anything > ~40ms means a
- *              frame missed the 25fps mark oef.c's dt-clamp kicks in at)
- *   vfr      - the value actually multiplying your turn rate this frame
- *              (mang = mamu * vfr * scang * spang)
- *   lag_mult - the network-lag damper (1.0 = full speed, drops to 0.2
- *              during a stalled ping -- see "LAG" edge log below)
- *   fps_cap  - your current Settings > fps_limit (0 = uncapped)
- * ------------------------------------------------------------------- */
-static void smoothness_diag(game_data* gdata, user_settings* usrs,
-                             double raw_dt_ms) {
-  static double s_window_start_ctm = 0;
-  static int    s_window_frames    = 0;
-  static float  s_window_max_dt    = 0;
-  static bool   s_was_lagging      = false;
-
-  if (raw_dt_ms > s_window_max_dt) s_window_max_dt = (float)raw_dt_ms;
-  s_window_frames++;
-
-  if (gdata->data.lagging != s_was_lagging) {
-    s_was_lagging = gdata->data.lagging;
-    DLOG("[SMOOTH_DIAG] LAG %s at ctm=%.0f (lag_mult=%.2f)",
-         s_was_lagging ? "STARTED" : "ENDED",
-         gdata->data.ctm, gdata->data.lag_mult);
-  }
-
-  double elapsed = gdata->data.ctm - s_window_start_ctm;
-  if (elapsed >= 500.0) {
-    double fps = s_window_frames / (elapsed / 1000.0);
-    DLOG("[SMOOTH_DIAG] fps=%.1f dt_max=%.1fms vfr=%.3f lag_mult=%.2f "
-         "lagging=%d fps_cap=%d",
-         fps, s_window_max_dt, gdata->data.vfr, gdata->data.lag_mult,
-         gdata->data.lagging ? 1 : 0, usrs->fps_limit);
-    s_window_start_ctm = gdata->data.ctm;
-    s_window_frames = 0;
-    s_window_max_dt = 0;
-  }
-}
-/* --------------------------------------------------------------------- */
-
 void time_step(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
   game_data* gdata = &usr->gdata;
-  user_settings* usrs = &usr->usrs;
 
   double time_sec = glfwGetTime();
   gdata->data.ctm = time_sec * 1000;
 
   if (gdata->data.follow_view) gdata->data.play_etm = time_sec;
-
-  double raw_dt_ms = gdata->data.ctm - gdata->data.ltm; /* pre-clamp, for diag only */
 
   gdata->data.fps_etm = (gdata->data.ctm - gdata->data.fps_ltm);
   gdata->data.vfr = (gdata->data.ctm - gdata->data.ltm) / 8.0f;
@@ -99,8 +43,6 @@ void time_step(tenv* env) {
   float lfr = gdata->data.fr;
   gdata->data.fr += gdata->data.vfr;
   gdata->data.vfrb = (int)(floorf(gdata->data.fr) - floorf(lfr));
-
-  smoothness_diag(gdata, usrs, raw_dt_ms); /* TEMP: see block above */
 }
 
 void oef(tenv* env) {

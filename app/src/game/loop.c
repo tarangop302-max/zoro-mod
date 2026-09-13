@@ -9,10 +9,17 @@
 
 #include "../network/server.h"
 #include "../user.h"
+#include "death_screen.h"
 #include "input.h"
 #include "oef.h"
 #include "redraw.h"
 #include "ui_overlay.h"
+
+/* Fixed delay between the player's own death and the death popup
+ * appearing (see gdata->death_pending in game_data.h) -- long enough for
+ * the death to actually read as having happened, short enough that it
+ * never feels like the old indeterminate freeze. */
+#define DEATH_ANIM_SECONDS 1.0
 
 void game_loop(tenv* env) {
   tuser_data* usr = env->usr;
@@ -60,15 +67,27 @@ void game_loop(tenv* env) {
       redraw(env);
       ui_overlay(env);
 
-      if (usrs->hotkeys[HOTKEY_QUIT].active ||
-          (usrs->quit_mc &&
-           tmouse_button_pressed(env->ms, GLFW_MOUSE_BUTTON_MIDDLE))) {
-        gdata->connection->is_closing = true;
-      } else if (usrs->hotkeys[HOTKEY_RESTART].active ||
-                 (usrs->restart_rc &&
-                  tmouse_button_pressed(env->ms, GLFW_MOUSE_BUTTON_RIGHT))) {
-        gdata->connection->is_closing = true;
-        gdata->restart_req = true;
+      if (!gdata->death_pending) {
+        if (usrs->hotkeys[HOTKEY_QUIT].active ||
+            (usrs->quit_mc &&
+             tmouse_button_pressed(env->ms, GLFW_MOUSE_BUTTON_MIDDLE))) {
+          gdata->connection->is_closing = true;
+        } else if (usrs->hotkeys[HOTKEY_RESTART].active ||
+                   (usrs->restart_rc &&
+                    tmouse_button_pressed(env->ms, GLFW_MOUSE_BUTTON_RIGHT))) {
+          gdata->connection->is_closing = true;
+          gdata->restart_req = true;
+        }
+      } else if (glfwGetTime() - gdata->death_anim_start >=
+                 DEATH_ANIM_SECONDS) {
+        // Popup only appears once the short fixed delay above has
+        // elapsed -- until then the player just sees their own death
+        // play out normally (existing fade/spectator behavior) instead
+        // of a screen that suddenly looks frozen. The quit/restart
+        // hotkeys are deliberately disabled above once death_pending is
+        // set, so an old habit like right-click-to-restart can't bypass
+        // this popup once it's about to appear.
+        ui_death_screen(env);
       }
 
       if (gdata->closed) {

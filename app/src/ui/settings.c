@@ -3,6 +3,7 @@
 #include "hud_layout_editor.h"
 
 #include "../user.h"
+#include "crystal_theme.h"
 
 void ui_settings_init(tenv* env) {}
 
@@ -16,6 +17,13 @@ void ui_settings(tenv* env) {
 
   igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
              usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
+
+  usr->r->global.bg_opacity = 0;
+  usr->r->global.bd_opacity = 0;
+  usr->r->global.minimap_opacity = 0;
+
+  crystal_draw_background(env);
+  crystal_push_theme();
 
   float frame_height = igGetFrameHeight();
   float child_window_height =
@@ -372,10 +380,25 @@ void ui_settings(tenv* env) {
   }
   igSetCursorPosX(col2_x);
   igSetCursorPosY(ctx->size[1] - style->WindowPadding.y - btn_h);
+  {
+    ImVec2 ok_pos;
+    igGetCursorScreenPos(&ok_pos);
+    crystal_glow_rect(ok_pos, (ImVec2){btn_w, btn_h}, 0.647f, 0.420f, 1.0f);
+  }
+  igPushStyleColor_Vec4(ImGuiCol_Button,
+                        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
   if (igButton("OK", (ImVec2){btn_w, btn_h})) {
     save_user_settings(usrs);
     gdata->curr_screen = TITLE_SCREEN;
   }
+  crystal_sheen();
+  igPopStyleColor(3);
+
+  crystal_pop_theme();
 
   igPopFont();
 }

@@ -1,5 +1,6 @@
 #include "game/loop.h"
 #include "game/bg_preview.h"
+#include "game/death_screen.h"
 #include "game/ntl_team.h"
 #include "game/global_chat.h"
 
@@ -714,6 +715,30 @@ void trender(tenv* env) {
 
         gdata->curr_screen ==
             SETTINGS
+    ) {
+
+      draw_bg_preview_blur(
+          env,
+
+          usr->usrs
+              .performance_mode
+              ? 0.55f
+              : 1.0f
+      );
+    }
+
+    // Same real (multi-tap, not just a dark scrim) blur used behind the
+    // Settings screen, reused here once the death popup is about to
+    // show -- see DEATH_ANIM_SECONDS in death_screen.h for why this
+    // exact threshold matches when loop.c starts drawing the popup.
+    if (
+        gdata->curr_screen ==
+            PLAYING &&
+
+        gdata->death_pending &&
+
+        glfwGetTime() - gdata->death_anim_start >=
+            DEATH_ANIM_SECONDS
     ) {
 
       draw_bg_preview_blur(

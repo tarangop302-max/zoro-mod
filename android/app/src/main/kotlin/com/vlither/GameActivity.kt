@@ -246,6 +246,25 @@ class GameActivity : NativeActivity() {
     private inner class ImeBridgeView(context: Context) : View(context) {
         private var composingCodePoints = 0
 
+        /* Some keyboards (notably many numeric/digit keys) deliver the
+         * exact same KeyEvent through TWO independent Android paths at
+         * once: the normal system dispatch (View.onKeyDown/onKeyUp) AND
+         * this view's InputConnection.sendKeyEvent() (explicit IME
+         * injection). Both funnel into forwardKeyEvent() below, so
+         * without a guard every digit typed via the on-screen keyboard
+         * is inserted twice (typing "4" becomes "44"). Android stamps
+         * every KeyEvent with an eventTime that is identical when the
+         * same underlying event is (re)delivered through both paths,
+         * but distinct for every new physical event -- including
+         * auto-repeat while a key is held, which reuses downTime but
+         * still advances eventTime each repeat. So eventTime is the
+         * right discriminator: it catches true duplicate delivery
+         * without swallowing legitimate held-key repeats.
+         */
+        private var lastForwardedKeyCode = -1
+        private var lastForwardedAction = -1
+        private var lastForwardedEventTime = -1L
+
         init {
             isFocusable = true
             isFocusableInTouchMode = true
@@ -281,6 +300,15 @@ class GameActivity : NativeActivity() {
                 if (chars.isNotEmpty()) sendText(chars)
                 return true
             }
+
+            if (event.keyCode == lastForwardedKeyCode &&
+                event.action == lastForwardedAction &&
+                event.eventTime == lastForwardedEventTime) {
+                return true
+            }
+            lastForwardedKeyCode = event.keyCode
+            lastForwardedAction = event.action
+            lastForwardedEventTime = event.eventTime
 
             if (event.action == KeyEvent.ACTION_DOWN &&
                 !event.isCtrlPressed && !event.isAltPressed && event.isPrintingKey) {

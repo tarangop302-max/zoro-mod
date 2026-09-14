@@ -33,7 +33,7 @@ void ui_skin_editor(tenv* env) {
      a live skin preview drawn underneath by a separate renderer (before
      ImGui runs), so a fully opaque background here would paint over it and
      hide it entirely. */
-  crystal_draw_background_alpha(env, 0.55f);
+  crystal_draw_background_alpha(env, 0.72f);
   crystal_push_theme();
 
   float frame_height = igGetFrameHeight();

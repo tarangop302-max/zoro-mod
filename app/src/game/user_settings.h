@@ -117,6 +117,11 @@ typedef struct user_settings {
 
   float arrow_size;
   float arrow_sensitivity;
+  /* When true, the trackpad arrow points directly from the touch-down
+     point to the current finger position every frame (instant, absolute
+     aim -- same idea as Vlither Enhanced's arrow steering). When false,
+     it keeps the original relative/incremental drag behavior. */
+  bool  ctrl_trackpad_direct;
   /* Originally drove a separate glow-pulse layer behind the arrow while
      boosting; that layer was removed. Now controls whether the arrow
      itself grows while boosting (see boost_sz in ui_overlay.c) -- off

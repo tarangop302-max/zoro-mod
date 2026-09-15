@@ -109,10 +109,37 @@ void input(tenv* env) {
             gdata->touch_ctrl.tp_anchor_y     = spawn_y;
             gdata->touch_ctrl.tp_last_touch_x = tx;
             gdata->touch_ctrl.tp_last_touch_y = ty;
+            gdata->touch_ctrl.tp_touch_down_x = tx;
+            gdata->touch_ctrl.tp_touch_down_y = ty;
             gdata->touch_ctrl.tp_cursor_x     = spawn_x;
             gdata->touch_ctrl.tp_cursor_y     = spawn_y;
             gdata->touch_ctrl.tp_vx           = 0.0f;
             gdata->touch_ctrl.tp_vy           = 0.0f;
+          } else if (usrs->ctrl_trackpad_direct) {
+
+            /* Direct/instant mode: the arrow points straight from the
+             * touch-down point to wherever your finger is right now --
+             * no accumulated per-frame deltas, no velocity/momentum.
+             * This mirrors Vlither Enhanced's absolute arrow-steering,
+             * so the snake reorients as fast as you move your finger. */
+            #define NTL_DIRECT_DEAD_R 6.0f
+
+            float fdx  = tx - gdata->touch_ctrl.tp_touch_down_x;
+            float fdy  = ty - gdata->touch_ctrl.tp_touch_down_y;
+            float dist = sqrtf(fdx * fdx + fdy * fdy);
+
+            if (dist > NTL_DIRECT_DEAD_R) {
+              float ux = fdx / dist;
+              float uy = fdy / dist;
+              gdata->touch_ctrl.tp_cursor_x = cx + ux * NTL_SPAWN_R;
+              gdata->touch_ctrl.tp_cursor_y = cy + uy * NTL_SPAWN_R;
+            }
+            /* Below the dead zone: keep pointing the last direction
+             * instead of snapping to zero, so it doesn't jitter right
+             * at the touch-down point. */
+
+            gdata->touch_ctrl.tp_vx = 0.0f;
+            gdata->touch_ctrl.tp_vy = 0.0f;
           } else {
 
             float nx = gdata->touch_ctrl.tp_anchor_x

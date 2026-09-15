@@ -50,6 +50,7 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->bot_radius_mult = 20;
   usr_settings->bot_follow_circle_score = 2000;
   usr_settings->ctrl_mode_trackpad = true;
+  usr_settings->ctrl_trackpad_direct = false;
 
   usr_settings->boost_pos_custom = false;
   usr_settings->boost_rel_x      = 0.875f;

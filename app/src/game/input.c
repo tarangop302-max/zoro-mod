@@ -99,29 +99,56 @@ void input(tenv* env) {
 
           if (env->wnd->touch.just_down || !gdata->touch_ctrl.tp_tracking) {
 
-            float ang = me->eang;
-            float spawn_x = cx + NTL_SPAWN_R * cosf(ang);
-            float spawn_y = cy + NTL_SPAWN_R * sinf(ang);
-
             gdata->touch_ctrl.tp_tracking     = true;
             gdata->touch_ctrl.tp_visible      = true;
-            gdata->touch_ctrl.tp_anchor_x     = spawn_x;
-            gdata->touch_ctrl.tp_anchor_y     = spawn_y;
             gdata->touch_ctrl.tp_last_touch_x = tx;
             gdata->touch_ctrl.tp_last_touch_y = ty;
             gdata->touch_ctrl.tp_touch_down_x = tx;
             gdata->touch_ctrl.tp_touch_down_y = ty;
-            gdata->touch_ctrl.tp_cursor_x     = spawn_x;
-            gdata->touch_ctrl.tp_cursor_y     = spawn_y;
             gdata->touch_ctrl.tp_vx           = 0.0f;
             gdata->touch_ctrl.tp_vy           = 0.0f;
-          } else if (usrs->ctrl_trackpad_direct) {
+
+            if (usrs->ctrl_trackpad_direct) {
+              /* Direct mode: don't fall back to the old heading-based
+               * placement even on this very first frame. At the instant
+               * of touch-down there's no drag yet (finger == anchor), so
+               * this should read as "no direction input" -- but it must
+               * NOT be an exact (0,0) offset from center: me->eang =
+               * atan2f(ym, xm) runs unconditionally every frame further
+               * down, and atan2f(0,0) snaps to angle 0 (due east) for
+               * that one frame, which visibly glitches the rendered
+               * heading for a frame before the real heading returns.
+               * A 1px nudge would round back to (0,0) once xm/ym get
+               * cast to int downstream if the heading is near a diagonal
+               * (e.g. ~45 degrees splits it ~0.7px/~0.7px, each
+               * truncating to 0) -- so use 2px, which survives that
+               * worst case while still safely under the dead-zone
+               * threshold (so nothing gets sent to the server yet).
+               * The very next frame's dead-zone check below takes over
+               * once you actually start dragging. */
+              gdata->touch_ctrl.tp_cursor_x = cx + 2.0f * cosf(me->eang);
+              gdata->touch_ctrl.tp_cursor_y = cy + 2.0f * sinf(me->eang);
+            } else {
+              float ang = me->eang;
+              float spawn_x = cx + NTL_SPAWN_R * cosf(ang);
+              float spawn_y = cy + NTL_SPAWN_R * sinf(ang);
+
+              gdata->touch_ctrl.tp_anchor_x = spawn_x;
+              gdata->touch_ctrl.tp_anchor_y = spawn_y;
+              gdata->touch_ctrl.tp_cursor_x = spawn_x;
+              gdata->touch_ctrl.tp_cursor_y = spawn_y;
+            }
+          }
+
+          if (usrs->ctrl_trackpad_direct) {
 
             /* Direct/instant mode: the arrow points straight from the
              * touch-down point to wherever your finger is right now --
              * no accumulated per-frame deltas, no velocity/momentum.
              * This mirrors Vlither Enhanced's absolute arrow-steering,
-             * so the snake reorients as fast as you move your finger. */
+             * so the snake reorients as fast as you move your finger.
+             * Runs on every frame -- including the first -- so there's
+             * no leftover-heading placement before you start dragging. */
             #define NTL_DIRECT_DEAD_R 6.0f
 
             float fdx  = tx - gdata->touch_ctrl.tp_touch_down_x;
@@ -140,9 +167,10 @@ void input(tenv* env) {
 
             gdata->touch_ctrl.tp_vx = 0.0f;
             gdata->touch_ctrl.tp_vy = 0.0f;
-          } else {
+          } else if (!(env->wnd->touch.just_down || !gdata->touch_ctrl.tp_tracking)) {
 
             float nx = gdata->touch_ctrl.tp_anchor_x
+
                      + (tx - gdata->touch_ctrl.tp_last_touch_x) * usrs->arrow_sensitivity;
             float ny = gdata->touch_ctrl.tp_anchor_y
                      + (ty - gdata->touch_ctrl.tp_last_touch_y) * usrs->arrow_sensitivity;

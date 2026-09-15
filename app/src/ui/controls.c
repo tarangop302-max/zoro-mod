@@ -264,6 +264,8 @@ void ui_controls(tenv* env) {
           igAlignTextToFramePadding();
           igText("Sensitivity");
           igAlignTextToFramePadding();
+          igText("Instant aim");
+          igAlignTextToFramePadding();
           igText("Invisible arrow");
           igAlignTextToFramePadding();
           igText("Grows on boost");
@@ -279,6 +281,14 @@ void ui_controls(tenv* env) {
           igSetNextItemWidth(-1);
           igSliderFloat("##arrow sens", &usrs->arrow_sensitivity, 0.25f, 3.00f, "%.2f",
                         ImGuiSliderFlags_AlwaysClamp);
+          igCheckbox("##arrow instant aim", &usrs->ctrl_trackpad_direct);
+          if (igIsItemHovered(ImGuiHoveredFlags_None)) {
+            igSetTooltip(
+                "When on, the arrow points straight from where you touch "
+                "down to your current finger position, so it snaps to your "
+                "aim immediately instead of catching up gradually. Only "
+                "affects the Arrow control scheme.");
+          }
           igCheckbox("##arrow invisible", &usrs->arrow_invisible);
           igCheckbox("##arrow grows boost", &usrs->boost_arrow_anim);
           igCheckbox("##arrow sync zoom", &usrs->arrow_sync_with_zoom);
@@ -439,7 +449,8 @@ void ui_controls(tenv* env) {
       float btn_h = frame_height * 1.8f;
 
       if (igButton("Reset", (ImVec2){btn_w, btn_h})) {
-        usrs->ctrl_mode_trackpad = true;
+        usrs->ctrl_mode_trackpad    = true;
+        usrs->ctrl_trackpad_direct  = false;
 
         usrs->boost_pos_custom = false;
         usrs->boost_rel_x      = 0.875f;

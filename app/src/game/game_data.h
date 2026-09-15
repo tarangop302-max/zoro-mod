@@ -83,6 +83,12 @@ typedef struct game_data {
     float tp_cursor_angle_deg;
     bool  tp_tracking;
     bool  tp_visible;
+
+    /* Touch-down point for direct/instant trackpad mode (ctrl_trackpad_direct).
+       Kept separate from tp_anchor_x/y so the original incremental mode is
+       unaffected. */
+    float tp_touch_down_x;
+    float tp_touch_down_y;
   } touch_ctrl;
 
   struct mg_mgr network_manager;

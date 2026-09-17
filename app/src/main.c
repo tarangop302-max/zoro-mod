@@ -3,6 +3,7 @@
 #include "game/death_screen.h"
 #include "game/ntl_team.h"
 #include "game/global_chat.h"
+#include "game/screenshot.h"
 
 #include "ui/skin_editor.h"
 #include "ui/title_screen.h"
@@ -10,6 +11,7 @@
 #include "ui/controls.h"
 #include "ui/hud_layout_editor.h"
 #include "ui/key_buttons.h"
+#include "ui/kills_gallery.h"
 #include "ui/viewport.h"
 
 #include "user.h"
@@ -244,6 +246,11 @@ void tinit(tenv* env) {
   );
 
 
+  ui_kills_gallery_init(
+      env
+  );
+
+
   ntl_team_init(
       env
   );
@@ -289,6 +296,11 @@ void tdestroy(tenv* env) {
 
 
   ui_key_buttons_destroy(
+      env
+  );
+
+
+  ui_kills_gallery_destroy(
       env
   );
 
@@ -609,6 +621,9 @@ void trender(tenv* env) {
 
             gdata->curr_screen ==
                 KEYBOARD_EDITOR ||
+
+            gdata->curr_screen ==
+                KILLS_GALLERY ||
 
             igGetIO_Nil()
                 ->WantTextInput
@@ -980,6 +995,14 @@ void trender(tenv* env) {
         );
 
         break;
+
+      case KILLS_GALLERY:
+
+        ui_kills_gallery(
+            env
+        );
+
+        break;
     }
 
 
@@ -1015,6 +1038,8 @@ void trender(tenv* env) {
   tcontext_end(
       ctx
   );
+
+  screenshot_process_pending(env);
 }
 
 

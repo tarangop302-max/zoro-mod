@@ -110,6 +110,11 @@ typedef struct jsr_network {
     // teammate's name/dot/score can all be shown anywhere on
     // the map, not just while they're close enough for the
     // game server to include them in your local snake list.
+    //
+    // ping is that player's own current connection latency (ms)
+    // to whatever game server they're on -- their own measurement
+    // of their own connection, broadcast the same way so it can
+    // be shown next to them in UI like the Teammates list.
     struct {
         char username[32];
         char server_ip[64];
@@ -118,6 +123,7 @@ typedef struct jsr_network {
         uint8_t shape;
         float color[3];
         int score;
+        int ping;
     } locations[64];
     int location_count;
 
@@ -228,6 +234,9 @@ bool jsr_network_roster_owner(
 // teammate's score anywhere on the map, not only while
 // they're close enough for the game server to include them
 // locally.
+//
+// ping is this player's own current connection latency (ms),
+// same idea -- their own measurement of their own connection.
 bool jsr_network_send_location(
     jsr_network *net,
     float x,
@@ -237,7 +246,8 @@ bool jsr_network_send_location(
     float color_r,
     float color_g,
     float color_b,
-    int score
+    int score,
+    int ping
 );
 
 // Number of other players whose last known position we
@@ -252,8 +262,9 @@ int jsr_network_location_count(
 // index is out of range.
 //
 // out_shape/out_color_* return that player's own chosen
-// marker appearance, and out_score their own current score
-// (see jsr_network_send_location).
+// marker appearance, out_score their own current score, and
+// out_ping their own current connection latency (ms) -- see
+// jsr_network_send_location.
 bool jsr_network_get_location(
     jsr_network *net,
     int index,
@@ -267,7 +278,8 @@ bool jsr_network_get_location(
     float *out_color_r,
     float *out_color_g,
     float *out_color_b,
-    int *out_score
+    int *out_score,
+    int *out_ping
 );
 
 // Send the team synchronization request.

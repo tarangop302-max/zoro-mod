@@ -29,21 +29,17 @@ void ui_skin_editor(tenv* env) {
   usr->r->global.bd_opacity = 0;
   usr->r->global.minimap_opacity = 0;
 
-  /* Translucent, not the opaque crystal_draw_background(): this screen has
-     a live skin preview drawn underneath by a separate renderer (before
-     ImGui runs), so a fully opaque background here would paint over it and
-     hide it entirely.
-
-     0.72 (the original value here) was still strong enough to wash out
-     the preview and the color/accessory swatches -- bp_renderer_render()
-     runs in the base scene pass, and this rect is part of the ImGui pass
-     that composites on top of it afterward, so whatever alpha we pick
-     here is applied OVER the already-rendered colors, not behind them.
-     Dropped to 0.18 so the purple ambiance still reads in empty space
-     without meaningfully dulling the actual preview/swatch colors. */
-  crystal_draw_background_alpha(env, 0.18f);
-  crystal_push_theme();
-
+  /* This screen has a live skin preview + color/accessory grid drawn by a
+     separate renderer (bp_renderer_render() runs in the base scene pass,
+     before ImGui composites on top), so any background painted here as a
+     single full-screen rect sits OVER that content, not behind it --
+     even a low alpha visibly dulls it. Rather than trade theme strength
+     for color accuracy, carve the preview strip and (if visible) the
+     color grid panel out of the background entirely: full-strength
+     purple everywhere else, zero tint on the actual snake/colors. The
+     two exclusion rects are computed below, before any widgets are laid
+     out, and the background is drawn once that's known -- see
+     crystal_draw_background_alpha_excl2(). */
   float frame_height = igGetFrameHeight();
   float resolution_scale = fminf(ctx->size[0] / 1280.0f, ctx->size[1] / 720.0f);
   if (resolution_scale < 0.70f) resolution_scale = 0.70f;
@@ -87,6 +83,47 @@ void ui_skin_editor(tenv* env) {
   }
 
   float sk_w = scale + (8 * (scale / 48)) * ((MAX_SKIN_CODE_LEN / 2.0f) - 1);
+
+  /* Bounding box around both preview rows (the row further up on screen
+     comes from the "+ 2 * (scale + spacing)" offset, the lower one from
+     "+ scale + spacing" -- see the two bp_renderer loops below). Padded
+     generously for the shadow sprites (which extend 10*(scale/48) past
+     each segment) and the eyes/accessory (small offsets past the last
+     segment). */
+  float preview_row_a_y = grid_y - ((style->ItemSpacing.y + frame_height) * picker_rows + scale + style->ItemSpacing.y);
+  float preview_row_b_y = grid_y - ((style->ItemSpacing.y + frame_height) * picker_rows + 2 * (scale + style->ItemSpacing.y));
+  float preview_pad = scale * 0.5f;
+  ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - sk_w * 0.5f - preview_pad,
+                             fminf(preview_row_a_y, preview_row_b_y) - preview_pad};
+  ImVec2 preview_excl_max = {ctx->size[0] * 0.5f + sk_w * 0.5f + preview_pad,
+                             fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad};
+
+  /* Color/accessory grid panel geometry -- identical to the child-window
+     rect computed further down when the panel actually gets drawn. kept
+     in sync deliberately (same formulas) rather than shared via a
+     variable, since the panel's own setup runs much later after several
+     other widgets. Only present while editing a custom skin. */
+  ImVec2 panel_excl_min = {0, 0};
+  ImVec2 panel_excl_max = {0, 0};
+  if (usrs->custom_skin && gdata->skin_editing) {
+    float panel_w = tot_size[0] + style->ScrollbarSize + style->WindowPadding.x * 2.0f;
+    if (panel_w > ctx->size[0] - style->WindowPadding.x * 2.0f)
+      panel_w = ctx->size[0] - style->WindowPadding.x * 2.0f;
+    float panel_x = ctx->size[0] * 0.5f - panel_w * 0.5f;
+    float panel_h = ctx->size[1] - grid_y - style->WindowPadding.y;
+    if (panel_h < scale * 2.25f) panel_h = scale * 2.25f;
+    panel_excl_min = (ImVec2){panel_x, grid_y};
+    panel_excl_max = (ImVec2){panel_x + panel_w, grid_y + panel_h};
+  }
+
+  /* Restored to the original 0.72 (in fact this could go all the way to
+     1.0 now) -- alpha no longer trades off against the preview/swatch
+     colors since this doesn't paint over them at all. */
+  crystal_draw_background_alpha_excl2(env, 0.72f, preview_excl_min,
+                                      preview_excl_max, panel_excl_min,
+                                      panel_excl_max);
+  crystal_push_theme();
+
 
   igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
   igSetCursorPosY((grid_y) -

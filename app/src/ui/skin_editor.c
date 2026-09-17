@@ -32,8 +32,16 @@ void ui_skin_editor(tenv* env) {
   /* Translucent, not the opaque crystal_draw_background(): this screen has
      a live skin preview drawn underneath by a separate renderer (before
      ImGui runs), so a fully opaque background here would paint over it and
-     hide it entirely. */
-  crystal_draw_background_alpha(env, 0.72f);
+     hide it entirely.
+
+     0.72 (the original value here) was still strong enough to wash out
+     the preview and the color/accessory swatches -- bp_renderer_render()
+     runs in the base scene pass, and this rect is part of the ImGui pass
+     that composites on top of it afterward, so whatever alpha we pick
+     here is applied OVER the already-rendered colors, not behind them.
+     Dropped to 0.18 so the purple ambiance still reads in empty space
+     without meaningfully dulling the actual preview/swatch colors. */
+  crystal_draw_background_alpha(env, 0.18f);
   crystal_push_theme();
 
   float frame_height = igGetFrameHeight();

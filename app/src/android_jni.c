@@ -562,4 +562,72 @@ clipboard_set_cleanup:
     if (did_attach) (*vm)->DetachCurrentThread(vm);
 }
 
+void android_jni_save_screenshot(const unsigned char* rgba, int width,
+                                 int height, const char* filename) {
+    if (!rgba || width <= 0 || height <= 0 || !filename ||
+        !g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return;
+    }
+
+    jclass cls = (*env)->GetObjectClass(
+        env, g_android_app->activity->clazz);
+    if (!cls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto screenshot_save_cleanup;
+    }
+
+    jmethodID mid = (*env)->GetStaticMethodID(
+        env, cls, "saveScreenshot",
+        "(Landroid/app/Activity;[BIILjava/lang/String;)V");
+    if (!mid || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto screenshot_save_cleanup;
+    }
+
+    {
+        size_t pixel_bytes = (size_t)width * (size_t)height * 4u;
+        jbyteArray bytes = (*env)->NewByteArray(env, (jsize)pixel_bytes);
+        if (!bytes || (*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            goto screenshot_save_cleanup;
+        }
+        (*env)->SetByteArrayRegion(
+            env, bytes, 0, (jsize)pixel_bytes, (const jbyte*)rgba);
+
+        jstring jfilename = (*env)->NewStringUTF(env, filename);
+        if (!jfilename || (*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            (*env)->DeleteLocalRef(env, bytes);
+            goto screenshot_save_cleanup;
+        }
+
+        if (!(*env)->ExceptionCheck(env)) {
+            (*env)->CallStaticVoidMethod(
+                env, cls, mid, g_android_app->activity->clazz, bytes,
+                (jint)width, (jint)height, jfilename);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, jfilename);
+        (*env)->DeleteLocalRef(env, bytes);
+    }
+
+screenshot_save_cleanup:
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
 #endif

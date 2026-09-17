@@ -347,7 +347,8 @@ static void jsr_location_set(
     float color_r,
     float color_g,
     float color_b,
-    int score
+    int score,
+    int ping
 ) {
     int index;
 
@@ -401,6 +402,7 @@ static void jsr_location_set(
     net->locations[index].color[1] = color_g;
     net->locations[index].color[2] = color_b;
     net->locations[index].score = score;
+    net->locations[index].ping = ping;
 }
 
 static void jsr_location_remove(
@@ -604,9 +606,9 @@ static void jsr_parse_message(
          * LOCATION broadcast, relayed by the server as:
          * [7][username_len][username][x:f32][y:f32]
          * [server_ip_len][server_ip][shape:u8][r:u8][g:u8][b:u8]
-         * [score:i32]
+         * [score:i32][ping:i32]
          *
-         * The trailing marker/score fields are appended after
+         * The trailing marker/score/ping fields are appended after
          * everything the relay already understood how to
          * rebuild (see jsr_network_send_location), so older
          * relays/peers that only forward part of the payload
@@ -620,13 +622,14 @@ static void jsr_parse_message(
         uint8_t shape = 0;
         float color_r = 0.05f, color_g = 1.0f, color_b = 0.55f;
         /*
-         * -1 (not a real score) means "this peer/relay hop didn't
-         * include the score bytes at all" -- distinct from a
-         * genuinely-received score of 0 -- so callers can tell
+         * -1 (not a real score/ping) means "this peer/relay hop
+         * didn't include those bytes at all" -- distinct from a
+         * genuinely-received value of 0 -- so callers can tell
          * "unknown" apart from "actually zero" instead of both
          * looking identical.
          */
         int score = -1;
+        int ping = -1;
 
         offset = 1;
 
@@ -681,6 +684,13 @@ static void jsr_parse_message(
                 int32_t raw_score;
                 memcpy(&raw_score, data + offset, 4);
                 score = (int) raw_score;
+                offset += 4;
+
+                if (data_len >= offset + 4) {
+                    int32_t raw_ping;
+                    memcpy(&raw_ping, data + offset, 4);
+                    ping = (int) raw_ping;
+                }
             }
         }
 
@@ -715,7 +725,8 @@ static void jsr_parse_message(
                 color_r,
                 color_g,
                 color_b,
-                score
+                score,
+                ping
             );
         }
     }
@@ -1434,9 +1445,10 @@ bool jsr_network_send_location(
     float color_r,
     float color_g,
     float color_b,
-    int score
+    int score,
+    int ping
 ) {
-    uint8_t buffer[1 + 4 + 4 + 1 + 64 + 4 + 4];
+    uint8_t buffer[1 + 4 + 4 + 1 + 64 + 4 + 4 + 4];
     size_t srv_len;
     size_t offset;
 
@@ -1506,6 +1518,17 @@ bool jsr_network_send_location(
     memcpy(buffer + offset, &score32, 4);
     offset += 4;
 
+    /*
+     * Own current connection latency, same idea -- lets UI like the
+     * Teammates list show a teammate's ping without needing them to be
+     * close enough for the game server to report them locally (there
+     * isn't a "local" measurement of someone else's connection anyway --
+     * each player can only ever measure their own).
+     */
+    int32_t ping32 = (int32_t) ping;
+    memcpy(buffer + offset, &ping32, 4);
+    offset += 4;
+
     mg_ws_send(
         net->ws_connection,
         buffer,
@@ -1539,7 +1562,8 @@ bool jsr_network_get_location(
     float *out_color_r,
     float *out_color_g,
     float *out_color_b,
-    int *out_score
+    int *out_score,
+    int *out_ping
 ) {
     if (net == NULL ||
         index < 0 ||
@@ -1595,6 +1619,10 @@ bool jsr_network_get_location(
 
     if (out_score != NULL) {
         *out_score = net->locations[index].score;
+    }
+
+    if (out_ping != NULL) {
+        *out_ping = net->locations[index].ping;
     }
 
     return true;

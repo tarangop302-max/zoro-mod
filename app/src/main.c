@@ -3,6 +3,7 @@
 #include "game/death_screen.h"
 #include "game/ntl_team.h"
 #include "game/global_chat.h"
+#include "game/kill_feed.h"
 #include "game/screenshot.h"
 
 #include "ui/skin_editor.h"
@@ -1004,6 +1005,15 @@ void trender(tenv* env) {
 
         break;
     }
+
+
+    // Kill feed toasts + triggers the kill-screenshot capture.
+    // kill_feed_draw() already no-ops itself outside a real match,
+    // so it's safe to call unconditionally here.
+
+    kill_feed_draw(
+        env
+    );
 
 
     // NEW PUBLIC GLOBAL CHAT

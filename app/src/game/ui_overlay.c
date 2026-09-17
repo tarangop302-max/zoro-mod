@@ -471,10 +471,13 @@ void ui_overlay(tenv* env) {
         ImVec2 tm_scsize;
         igCalcTextSize(&tm_scsize, "999999", NULL, false, -1);
 
+        ImVec2 tm_pingsize;
+        igCalcTextSize(&tm_pingsize, "999ms", NULL, false, -1);
+
         float tm_dot_w = igGetFrameHeight() * 0.9f;
 
         float tm_width = tm_dot_w + tm_nksize.x + tm_scsize.x +
-                         (style->CellPadding.x * 2 * 3);
+                         tm_pingsize.x + (style->CellPadding.x * 2 * 4);
 
         float tm_x, tm_y;
         if (usrs->teammates_pos_custom) {
@@ -494,7 +497,7 @@ void ui_overlay(tenv* env) {
 
         igSetCursorPosX(tm_x);
 
-        if (igBeginTable("teammates_table", 3, ImGuiTableFlags_NoHostExtendX,
+        if (igBeginTable("teammates_table", 4, ImGuiTableFlags_NoHostExtendX,
                          (ImVec2){}, 0)) {
           igTableSetupColumn("##tm_dot", ImGuiTableColumnFlags_WidthFixed,
                              tm_dot_w, 0);
@@ -502,6 +505,8 @@ void ui_overlay(tenv* env) {
                              tm_nksize.x, 0);
           igTableSetupColumn("##tm_score", ImGuiTableColumnFlags_WidthFixed,
                              tm_scsize.x, 0);
+          igTableSetupColumn("##tm_ping", ImGuiTableColumnFlags_WidthFixed,
+                             tm_pingsize.x, 0);
 
           for (int row = 0; row < teammate_count; row++) {
             igTableNextRow(ImGuiTableRowFlags_None, 0);
@@ -531,6 +536,23 @@ void ui_overlay(tenv* env) {
             } else {
               igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%d",
                             teammates[row].score);
+            }
+
+            igTableSetColumnIndex(3);
+            /* Same "unknown" treatment as score above, and the same
+             * green/yellow/orange/red latency bands used in the server
+             * list popup (title_screen.c), so a teammate's connection
+             * quality reads the same way everywhere in the app. */
+            if (teammates[row].ping < 0) {
+              igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 0.6f}, "--");
+            } else {
+              ImVec4 ping_col;
+              int ping = teammates[row].ping;
+              if (ping < 80)        ping_col = (ImVec4){0.3f, 1.0f, 0.4f, 1.0f};
+              else if (ping < 150)  ping_col = (ImVec4){1.0f, 1.0f, 0.3f, 1.0f};
+              else if (ping < 300)  ping_col = (ImVec4){1.0f, 0.65f, 0.2f, 1.0f};
+              else                  ping_col = (ImVec4){1.0f, 0.4f, 0.4f, 1.0f};
+              igTextColored(ping_col, "%dms", ping);
             }
           }
           igEndTable();

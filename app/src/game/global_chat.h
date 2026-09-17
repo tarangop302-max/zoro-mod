@@ -44,6 +44,7 @@ typedef struct {
     int shape;
     float color[3];
     int score;
+    int ping;  /* -1 if not yet known (see jsr_network_get_location) */
 } global_chat_teammate;
 
 /* Fill out_teammates (capacity max_count) with every teammate

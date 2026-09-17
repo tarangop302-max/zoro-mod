@@ -38,23 +38,14 @@ static stbi_uc* _load_from_asset(const char* filename, int* w, int* h, int* c) {
 }
 #endif
 
-texture* create_mipmap_texture(tcontext* ctx, const char* filename) {
+static texture* _upload_mipmap_texture(tcontext* ctx, stbi_uc* data, int w,
+                                       int h) {
   texture* r = malloc(sizeof(texture));
 
   VkBuffer staging_buffer;
   VmaAllocation staging_memory;
   VmaAllocationInfo staging_info;
 
-  int w, h, c;
-#ifdef ANDROID
-  stbi_uc* data = _load_from_asset(filename, &w, &h, &c);
-#else
-  stbi_uc* data = stbi_load(filename, &w, &h, &c, 4);
-#endif
-  if (!data) {
-    free(r);
-    return NULL;
-  }
   int mip_levels = (uint32_t)(floorf(log2f(GLM_MAX(w, h))) + 1);
 
   vmaCreateBuffer(
@@ -262,6 +253,30 @@ texture* create_mipmap_texture(tcontext* ctx, const char* filename) {
   r->size[1] = h;
 
   return r;
+}
+
+texture* create_mipmap_texture(tcontext* ctx, const char* filename) {
+  int w, h, c;
+#ifdef ANDROID
+  stbi_uc* data = _load_from_asset(filename, &w, &h, &c);
+#else
+  stbi_uc* data = stbi_load(filename, &w, &h, &c, 4);
+#endif
+  if (!data) return NULL;
+  return _upload_mipmap_texture(ctx, data, w, h);
+}
+
+/* Same GPU upload as create_mipmap_texture(), but always decodes from a
+   real filesystem path -- create_mipmap_texture() loads via the Android
+   asset manager (bundled app assets) on Android, which can't reach
+   user-generated files like kill screenshots sitting in external storage.
+   Used by the kills gallery. */
+texture* create_mipmap_texture_from_filepath(tcontext* ctx,
+                                             const char* filepath) {
+  int w, h, c;
+  stbi_uc* data = stbi_load(filepath, &w, &h, &c, 4);
+  if (!data) return NULL;
+  return _upload_mipmap_texture(ctx, data, w, h);
 }
 
 texture* create_minimap_texture(tcontext* ctx, int width) {

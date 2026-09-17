@@ -20,6 +20,16 @@ void android_jni_set_clipboard_text(const char* text);
 void android_jni_set_text_input_active(bool active);
 bool android_jni_enqueue_clipboard_paste(void);
 
+/* Saves an RGBA8 pixel buffer as a PNG: once to the app-private
+   "Pictures/kills" directory (see android_path.h -- this is what the
+   in-app kill-shots gallery reads back from) and once into the system
+   MediaStore Pictures collection, so it also shows up in the phone's own
+   Gallery app. filename should be a bare name (no directory), e.g.
+   "kill_1734000000_3.png". Safe to call from any thread; does its own
+   JNIEnv attach like the other android_jni_* functions here. */
+void android_jni_save_screenshot(const unsigned char* rgba, int width,
+                                 int height, const char* filename);
+
 typedef enum android_ime_event_type {
     ANDROID_IME_EVENT_NONE = 0,
     ANDROID_IME_EVENT_TEXT        = 1,

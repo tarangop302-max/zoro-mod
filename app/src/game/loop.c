@@ -12,6 +12,7 @@
 #include "death_screen.h"
 #include "screenshot.h"
 #include "input.h"
+#include "kill_feed.h"
 #include "oef.h"
 #include "redraw.h"
 #include "ui_overlay.h"
@@ -72,6 +73,11 @@ void game_loop(tenv* env) {
       oef(env);
       redraw(env);
       ui_overlay(env);
+      /* Detects new kills, shows the "+1 Kill" toast and queues the kill
+         screenshot (screenshot_request). Was never being called, so no
+         kill was ever captured and the death popup / gallery had nothing
+         to show. */
+      kill_feed_draw(env);
 
       if (!gdata->death_pending) {
         if (usrs->hotkeys[HOTKEY_QUIT].active ||

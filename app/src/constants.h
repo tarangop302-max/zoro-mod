@@ -75,7 +75,8 @@ typedef enum screen {
   NTL_PANEL = 5,
   HUD_LAYOUT_EDITOR = 6,
   KEYBOARD_EDITOR = 7,
-  KILLS_GALLERY = 8
+  KILLS_GALLERY = 8,
+  KILL_SHOTS_REVIEW = 9
 } screen;
 
 typedef enum font_size {

@@ -164,6 +164,22 @@ void ui_overlay(tenv* env) {
                                       5) /
                           1;
 
+      /* Current length, computed exactly like the number on other snakes'
+         name labels (redraw.c): segment count only. `score` above also adds
+         rsc (the extra count the server sends for your own snake), which
+         makes it the larger "total" figure. */
+      {
+        int len_sct = me->sct;
+        int max_sct = tdarray_length(gdata->data.fpsls) - 1;
+        if (len_sct < 0) len_sct = 0;
+        if (len_sct > max_sct) len_sct = max_sct;
+        int cur = (int)floorf((gdata->data.fpsls[len_sct] +
+                               me->fam / gdata->data.fmlts[len_sct] - 1) *
+                                  15 -
+                              5);
+        gdata->data.cur_length = GLM_MIN(GLM_MAX(cur, 0), 999999);
+      }
+
       if (usrs->hotkeys[HOTKEY_ASSIST].active) {
 
 #ifdef ANDROID
@@ -311,7 +327,7 @@ void ui_overlay(tenv* env) {
     igPushFont(
         usr->imgui_data.mono_font_bold[usrs->stats_font_size],
         usr->imgui_data.mono_font_bold[usrs->stats_font_size]->LegacySize);
-    igTextColored((ImVec4){1, 1, 1, 0.7}, "%d", gdata->data.score);
+    igTextColored((ImVec4){1, 1, 1, 0.7}, "%d", gdata->data.cur_length);
     igPopFont();
 
     igPopFont();

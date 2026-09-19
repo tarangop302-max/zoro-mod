@@ -79,6 +79,8 @@ typedef struct game_data {
     float tp_vy;
     float tp_last_touch_x;
     float tp_last_touch_y;
+    float tp_touch_down_x;
+    float tp_touch_down_y;
     float tp_disappear_angle;
     float tp_cursor_angle_deg;
     bool  tp_tracking;

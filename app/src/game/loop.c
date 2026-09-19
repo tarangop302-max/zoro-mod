@@ -10,6 +10,7 @@
 #include "../network/server.h"
 #include "../user.h"
 #include "death_screen.h"
+#include "screenshot.h"
 #include "input.h"
 #include "oef.h"
 #include "redraw.h"
@@ -104,9 +105,14 @@ void game_loop(tenv* env) {
       if (gdata->closed && !gdata->death_pending) {
         game_data_reset(env);
 
-        if (gdata->restart_req) {
+        if (gdata->kill_review_pending) {
+          gdata->kill_review_pending = false;
+          gdata->curr_screen = KILL_SHOTS_REVIEW;
+          usr->gdata.conn = DISCONNECTED;
+        } else if (gdata->restart_req) {
           usr->gdata.conn = CONNECTING;
           glfwSetTime(0);
+          screenshot_run_reset();
           server_connect(env);
           gdata->restart_req = false;
         } else {

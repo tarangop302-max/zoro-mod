@@ -6,6 +6,7 @@
 
 #include "../network/server.h"
 #include "../user.h"
+#include "../game/screenshot.h"
 #include "crystal_theme.h"
 
 bool g_sl_popup_open = false;
@@ -240,6 +241,7 @@ void ui_title_screen(tenv* env) {
     usr->gdata.conn = CONNECTING;
     usr->gdata.curr_screen = PLAYING;
     glfwSetTime(0);
+    screenshot_run_reset();
     server_connect(env);
   }
   crystal_sheen();

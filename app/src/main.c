@@ -3,7 +3,6 @@
 #include "game/death_screen.h"
 #include "game/ntl_team.h"
 #include "game/global_chat.h"
-#include "game/kill_feed.h"
 #include "game/screenshot.h"
 
 #include "ui/skin_editor.h"
@@ -13,6 +12,7 @@
 #include "ui/hud_layout_editor.h"
 #include "ui/key_buttons.h"
 #include "ui/kills_gallery.h"
+#include "ui/kill_review.h"
 #include "ui/viewport.h"
 
 #include "user.h"
@@ -252,6 +252,11 @@ void tinit(tenv* env) {
   );
 
 
+  ui_kill_review_init(
+      env
+  );
+
+
   ntl_team_init(
       env
   );
@@ -302,6 +307,11 @@ void tdestroy(tenv* env) {
 
 
   ui_kills_gallery_destroy(
+      env
+  );
+
+
+  ui_kill_review_destroy(
       env
   );
 
@@ -625,6 +635,9 @@ void trender(tenv* env) {
 
             gdata->curr_screen ==
                 KILLS_GALLERY ||
+
+            gdata->curr_screen ==
+                KILL_SHOTS_REVIEW ||
 
             igGetIO_Nil()
                 ->WantTextInput
@@ -1004,16 +1017,15 @@ void trender(tenv* env) {
         );
 
         break;
+
+      case KILL_SHOTS_REVIEW:
+
+        ui_kill_review(
+            env
+        );
+
+        break;
     }
-
-
-    // Kill feed toasts + triggers the kill-screenshot capture.
-    // kill_feed_draw() already no-ops itself outside a real match,
-    // so it's safe to call unconditionally here.
-
-    kill_feed_draw(
-        env
-    );
 
 
     // NEW PUBLIC GLOBAL CHAT

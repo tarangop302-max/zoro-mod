@@ -739,30 +739,60 @@ void redraw(tenv* env) {
 
                 int cg_id = o->cusk_data[(int)j % o->cusk_len];
 
-                /* Transparency here reuses assist_force_white's "flat
-                 * fill, no texture" trick (with the real skin color
-                 * instead of forcing white) rather than fading the
-                 * actual textured pattern -- fading the texture left
-                 * each overlapping segment's pattern edge visible
-                 * through the next, which is what looked like
-                 * "segments" instead of one smooth transparent body. */
+                /* Transparency here uses the dormant "rounded line
+                 * capsule" shape the bp shader already supports (see
+                 * bp.slang, shape.y > 0.5) instead of fading the
+                 * per-point circle sprite. A circle per point overlaps
+                 * its neighbours heavily by design, so fading it left
+                 * each overlapping edge visible through the next --
+                 * what looked like "segments" instead of one smooth
+                 * transparent body. A capsule per *gap* between two
+                 * consecutive points meets its neighbour edge-to-edge
+                 * with no overlap, so there's nothing left to
+                 * double-blend once it's semi-transparent. */
                 bool flatten = assist_force_white || skin_alpha < 1.0f;
                 vec3s* cg_col = gdata->cg_colors + cg_id;
+                vec4s fill_color =
+                    assist_force_white
+                        ? (vec4s){1, 1, 1, a * skin_alpha}
+                    : skin_alpha < 1.0f
+                        ? (vec4s){cg_col->r, cg_col->g, cg_col->b,
+                                  a * skin_alpha}
+                        : (vec4s){1, 1, 1, a * skin_alpha};
 
-                bp_renderer_push(usr->r->bpr,
-                                 &(bp_instance){{fix - (gdata->data.gsc * lsz),
-                                                 fiy - (gdata->data.gsc * lsz),
-                                                 gdata->data.gsc * 2 * lsz,
-                                                 gdata->data.pba[(int)j]},
-                                                flatten
-                                                    ? gdata->cg_uvs[BLANK_UV]
-                                                    : gdata->cg_uvs[cg_id],
-                                                assist_force_white
-                                                    ? (vec4s){1, 1, 1, a * skin_alpha}
-                                                : skin_alpha < 1.0f
-                                                    ? (vec4s){cg_col->r, cg_col->g,
-                                                              cg_col->b, a * skin_alpha}
-                                                    : (vec4s){1, 1, 1, a * skin_alpha}});
+                if (flatten && j >= 1) {
+                  float pfix = ((gdata->data.pbx[(int)j - 1] -
+                                 gdata->data.view_xx) *
+                                gdata->data.gsc) +
+                               mww2;
+                  float pfiy = ((gdata->data.pby[(int)j - 1] -
+                                 gdata->data.view_yy) *
+                                gdata->data.gsc) +
+                               mhh2;
+                  float midx = (fix + pfix) * 0.5f;
+                  float midy = (fiy + pfiy) * 0.5f;
+                  float ddx = fix - pfix;
+                  float ddy = fiy - pfiy;
+                  float seg_len = sqrtf(ddx * ddx + ddy * ddy);
+                  float thickness = gdata->data.gsc * 2 * lsz;
+                  float quad_w = seg_len + thickness;
+
+                  bp_renderer_push(
+                      usr->r->bpr,
+                      &(bp_instance){{midx - quad_w * 0.5f,
+                                      midy - thickness * 0.5f, quad_w,
+                                      gdata->data.pba[(int)j]},
+                                     gdata->cg_uvs[BLANK_UV], fill_color,
+                                     {thickness, 1.0f}});
+                } else if (!flatten) {
+                  bp_renderer_push(
+                      usr->r->bpr,
+                      &(bp_instance){{fix - (gdata->data.gsc * lsz),
+                                      fiy - (gdata->data.gsc * lsz),
+                                      gdata->data.gsc * 2 * lsz,
+                                      gdata->data.pba[(int)j]},
+                                     gdata->cg_uvs[cg_id], fill_color});
+                }
               }
           } else {
             for (j = bp - 1; j >= 0; j--)
@@ -802,27 +832,53 @@ void redraw(tenv* env) {
                         ->default_skins[o->cv][1 + ((int)j % default_skin_len)];
                 float se = gdata->worm_effect[(int)j % WORM_EFFECT_LEN];
 
-                /* Same flat-fill fallback as the cusk branch above --
-                 * also skips the worm_effect shimmer (se), since that
-                 * varies segment-to-segment and was equally visible
-                 * as "segments" once semi-transparent. */
+                /* Same capsule-per-gap fallback as the cusk branch
+                 * above -- also drops the worm_effect shimmer (se),
+                 * since that varies point-to-point and was equally
+                 * visible as "segments" once semi-transparent. */
                 bool flatten = assist_force_white || skin_alpha < 1.0f;
                 vec3s* cg_col = gdata->cg_colors + cg_id;
+                vec4s fill_color =
+                    assist_force_white
+                        ? (vec4s){1, 1, 1, a * skin_alpha}
+                    : skin_alpha < 1.0f
+                        ? (vec4s){cg_col->r, cg_col->g, cg_col->b,
+                                  a * skin_alpha}
+                        : (vec4s){se, se, se, a * skin_alpha};
 
-                bp_renderer_push(usr->r->bpr,
-                                 &(bp_instance){{fix - (gdata->data.gsc * lsz),
-                                                 fiy - (gdata->data.gsc * lsz),
-                                                 gdata->data.gsc * 2 * lsz,
-                                                 gdata->data.pba[(int)j]},
-                                                flatten
-                                                    ? gdata->cg_uvs[BLANK_UV]
-                                                    : gdata->cg_uvs[cg_id],
-                                                assist_force_white
-                                                    ? (vec4s){1, 1, 1, a * skin_alpha}
-                                                : skin_alpha < 1.0f
-                                                    ? (vec4s){cg_col->r, cg_col->g,
-                                                              cg_col->b, a * skin_alpha}
-                                                    : (vec4s){se, se, se, a * skin_alpha}});
+                if (flatten && j >= 1) {
+                  float pfix = ((gdata->data.pbx[(int)j - 1] -
+                                 gdata->data.view_xx) *
+                                gdata->data.gsc) +
+                               mww2;
+                  float pfiy = ((gdata->data.pby[(int)j - 1] -
+                                 gdata->data.view_yy) *
+                                gdata->data.gsc) +
+                               mhh2;
+                  float midx = (fix + pfix) * 0.5f;
+                  float midy = (fiy + pfiy) * 0.5f;
+                  float ddx = fix - pfix;
+                  float ddy = fiy - pfiy;
+                  float seg_len = sqrtf(ddx * ddx + ddy * ddy);
+                  float thickness = gdata->data.gsc * 2 * lsz;
+                  float quad_w = seg_len + thickness;
+
+                  bp_renderer_push(
+                      usr->r->bpr,
+                      &(bp_instance){{midx - quad_w * 0.5f,
+                                      midy - thickness * 0.5f, quad_w,
+                                      gdata->data.pba[(int)j]},
+                                     gdata->cg_uvs[BLANK_UV], fill_color,
+                                     {thickness, 1.0f}});
+                } else if (!flatten) {
+                  bp_renderer_push(
+                      usr->r->bpr,
+                      &(bp_instance){{fix - (gdata->data.gsc * lsz),
+                                      fiy - (gdata->data.gsc * lsz),
+                                      gdata->data.gsc * 2 * lsz,
+                                      gdata->data.pba[(int)j]},
+                                     gdata->cg_uvs[cg_id], fill_color});
+                }
               }
           }
         } else if (mode->render_mode == 1) {

@@ -209,6 +209,11 @@ typedef struct game_data {
     int cping;
     int ping;
     int score;
+    /* The snake's current, live length -- computed like the length shown
+       on other snakes' name labels (segment count only, no rsc). `score`
+       above is the total (sct + rsc). The bottom-left trophy stat shows
+       this one. */
+    int cur_length;
     int lb_pos;
     int rank;
     int slither_count;

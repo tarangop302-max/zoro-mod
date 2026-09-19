@@ -1,9 +1,9 @@
 #include "death_screen.h"
 
+#include <stdio.h>
+
 #include "../user.h"
-#ifdef ANDROID
-#include "../android_glfw_shim.h"
-#endif
+#include "screenshot.h"
 
 void ui_death_screen(tenv* env) {
   tuser_data* usr = env->usr;
@@ -50,21 +50,6 @@ void ui_death_screen(tenv* env) {
    * Restart is clicked, per the request that it "will not close until
    * we click on lobby or restart buttons". */
   if (igBegin("##death_screen", NULL, flags)) {
-#ifdef ANDROID
-    /* Without this, taps on Lobby/Restart never reach ImGui: the raw
-     * Android touch router (twindow_android.c) only forwards a touch as
-     * a UI touch when it falls inside a rect registered here, or while
-     * g_panel_open is true -- and g_panel_open's screen list doesn't
-     * include the death popup. Every other tappable ImGui surface in
-     * this codebase (key_buttons, chat, HUD editor handles) registers
-     * its own rect the same way; this popup just never did. */
-    ImVec2 win_pos, win_size;
-    igGetWindowPos(&win_pos);
-    igGetWindowSize(&win_size);
-    android_ui_capture_rect(win_pos.x, win_pos.y, win_pos.x + win_size.x,
-                            win_pos.y + win_size.y);
-#endif
-
     float card_w = 640.0f;
     float pad = style->WindowPadding.x;
     ImVec2 ts;
@@ -155,6 +140,22 @@ void ui_death_screen(tenv* env) {
       if (gdata->connection) gdata->connection->is_closing = true;
     }
     igPopStyleColor(3);
+
+    if (screenshot_run_count() > 0) {
+      igDummy((ImVec2){card_w, 16.0f});
+      char review_label[48];
+      snprintf(review_label, sizeof(review_label),
+              "\uea1a Kill Shots (%d)##death_screen",
+              screenshot_run_count());
+      if (igButton(review_label, (ImVec2){card_w, btn_h})) {
+        /* Same disconnect path as Lobby -- loop.c checks this flag right
+           after the reset that path triggers and routes to the review
+           screen instead of the title screen. */
+        gdata->death_pending = false;
+        gdata->kill_review_pending = true;
+        if (gdata->connection) gdata->connection->is_closing = true;
+      }
+    }
   }
   igEnd();
 

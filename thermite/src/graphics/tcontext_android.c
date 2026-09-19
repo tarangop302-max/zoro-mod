@@ -427,11 +427,17 @@ void _tcontext_create_descriptor_pool(tcontext* context) {
         &(VkDescriptorPoolCreateInfo){
             .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-            .maxSets       = 20,
+            /* This pool is shared with ImGui's igImplVulkan_AddTexture().
+             * The renderer/viewport/font already use ~9 sets and 15 image
+             * samplers at startup, so the old limit of 20 left room for only
+             * 5 more textures. The Kill Shots gallery loads up to 40
+             * thumbnails at once; when the pool ran out, AddTexture returned
+             * an uninitialised descriptor set and the app crashed. */
+            .maxSets       = 128,
             .poolSizeCount = 2,
             .pPoolSizes    = (VkDescriptorPoolSize[]){
-                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,          20},
-                {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,  20},
+                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,          16},
+                {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,  128},
             },
         }, NULL, &context->descriptor_pool);
 }

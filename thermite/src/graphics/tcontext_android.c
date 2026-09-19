@@ -258,7 +258,11 @@ void _tcontext_create_swapchain(tcontext* context, bool vsync) {
             .imageColorSpace  = context->surface_format.colorSpace,
             .imageExtent      = present_extent,
             .imageArrayLayers = 1,
-            .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            /* TRANSFER_SRC is required so screenshot.c can copy the
+             * finished frame out (kill screenshots). */
+            .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                (caps.supportedUsageFlags &
+                                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT),
             .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .preTransform     = present_transform,
             .compositeAlpha   = composite_alpha,

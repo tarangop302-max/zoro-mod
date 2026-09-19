@@ -63,7 +63,6 @@ static texture* _upload_mipmap_texture(tcontext* ctx, stbi_uc* data, int w,
       &staging_buffer, &staging_memory, &staging_info);
 
   memcpy(staging_info.pMappedData, data, w * h * 4);
-  stbi_image_free(data);
 
   vmaCreateImage(
       ctx->allocator,
@@ -263,7 +262,9 @@ texture* create_mipmap_texture(tcontext* ctx, const char* filename) {
   stbi_uc* data = stbi_load(filename, &w, &h, &c, 4);
 #endif
   if (!data) return NULL;
-  return _upload_mipmap_texture(ctx, data, w, h);
+  texture* r = _upload_mipmap_texture(ctx, data, w, h);
+  stbi_image_free(data);
+  return r;
 }
 
 /* Same GPU upload as create_mipmap_texture(), but always decodes from a
@@ -276,7 +277,22 @@ texture* create_mipmap_texture_from_filepath(tcontext* ctx,
   int w, h, c;
   stbi_uc* data = stbi_load(filepath, &w, &h, &c, 4);
   if (!data) return NULL;
-  return _upload_mipmap_texture(ctx, data, w, h);
+  texture* r = _upload_mipmap_texture(ctx, data, w, h);
+  stbi_image_free(data);
+  return r;
+}
+
+/* Same GPU upload again, but straight from an already-decoded RGBA8
+   buffer already in memory (e.g. a pending kill screenshot that hasn't
+   been saved to disk yet) -- doesn't touch or free the input buffer at
+   all, since the caller may still need it afterward (to save it, or to
+   show it again). w/h must match the buffer's actual dimensions; the
+   buffer must be w*h*4 bytes of tightly-packed RGBA8. */
+texture* create_mipmap_texture_from_pixels(tcontext* ctx,
+                                           const unsigned char* rgba, int w,
+                                           int h) {
+  if (!rgba || w <= 0 || h <= 0) return NULL;
+  return _upload_mipmap_texture(ctx, (stbi_uc*)rgba, w, h);
 }
 
 texture* create_minimap_texture(tcontext* ctx, int width) {

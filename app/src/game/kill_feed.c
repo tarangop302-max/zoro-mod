@@ -146,7 +146,8 @@ void kill_feed_draw(tenv *env) {
     snprintf(total_buf, sizeof(total_buf), "\ueaeb %d", gdata->data.kills);
     ImVec2 tts;
     igCalcTextSize(&tts, total_buf, NULL, false, -1.0f);
-    float tx = ctx->size[0] - tts.x - 22.0f;
+    float tx = (ctx->size[0] - tts.x) * 0.5f; /* top-centre: top-right is
+                                                 where the leaderboard is */
     float ty = 16.0f;
     ImDrawList_AddRectFilled(dl, (ImVec2){tx - 10.0f, ty - 5.0f},
                              (ImVec2){tx + tts.x + 10.0f, ty + tts.y + 5.0f},

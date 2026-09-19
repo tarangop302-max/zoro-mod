@@ -9,6 +9,16 @@
    preview textures) without duplicating the number. */
 #define SCREENSHOT_MAX_RUN_CAPTURES 8
 
+/* Master switch for capturing kills during a run. OFF by default -- the
+   capture itself costs a brief hitch (GPU readback + a ~10MB copy), so it is
+   opt-in via the SCREENSHOT toggle in the Kill Shots window. While OFF,
+   screenshot_request() does nothing, so there is zero capture cost.
+   The choice is remembered across launches in its own tiny file (kept out
+   of user_settings on purpose, so the binary settings layout is untouched).
+   Android only -- on other platforms it is just an in-memory flag. */
+bool screenshot_capture_enabled(void);
+void screenshot_set_capture_enabled(bool enabled);
+
 /* Requests a kill be captured on the next call to
    screenshot_process_pending() -- call this the moment a kill is detected
    (kill_feed.c does). The actual Vulkan readback deliberately doesn't

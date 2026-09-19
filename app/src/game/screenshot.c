@@ -1,6 +1,8 @@
 #include "screenshot.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include "../user.h"
@@ -8,6 +10,24 @@
 #ifdef ANDROID
 #include "../android_jni.h"
 #endif
+
+/* Kept small and deliberately conservative -- each capture is a
+   full-resolution RGBA8 frame held in RAM (e.g. ~10MB on a 1080x2400
+   screen), so this caps a single run's memory use to roughly 80MB in the
+   worst case. Oldest capture is evicted (freed) to make room for a new
+   one past this point, so a long kill streak keeps the most recent
+   highlights rather than silently refusing to capture any more. See
+   SCREENSHOT_MAX_RUN_CAPTURES in screenshot.h. */
+#define MAX_RUN_CAPTURES SCREENSHOT_MAX_RUN_CAPTURES
+
+typedef struct {
+  unsigned char *rgba;
+  int w, h;
+  int kill_number;
+} run_capture;
+
+static run_capture s_captures[MAX_RUN_CAPTURES];
+static int s_capture_count = 0;
 
 static bool s_pending = false;
 static int s_pending_kill_number = 0;
@@ -17,15 +37,50 @@ void screenshot_request(int kill_number) {
      there's essentially no window for a second kill to arrive before
      this one is handled. If it somehow does, just keep the first
      request rather than overwriting it -- dropping an occasional extra
-     screenshot on a very fast multi-kill is a fine tradeoff for keeping
+     capture on a very fast multi-kill is a fine tradeoff for keeping
      this dead simple. */
   if (s_pending) return;
   s_pending = true;
   s_pending_kill_number = kill_number;
 }
 
+int screenshot_run_count(void) { return s_capture_count; }
+
+bool screenshot_run_get(int index, const unsigned char **out_rgba,
+                        int *out_w, int *out_h, int *out_kill_number) {
+  if (index < 0 || index >= s_capture_count) return false;
+  run_capture *c = &s_captures[index];
+  if (out_rgba) *out_rgba = c->rgba;
+  if (out_w) *out_w = c->w;
+  if (out_h) *out_h = c->h;
+  if (out_kill_number) *out_kill_number = c->kill_number;
+  return true;
+}
+
+void screenshot_run_reset(void) {
+  for (int i = 0; i < s_capture_count; i++) free(s_captures[i].rgba);
+  s_capture_count = 0;
+  s_pending = false;
+}
+
+static void store_capture(unsigned char *rgba, int w, int h,
+                          int kill_number) {
+  if (s_capture_count >= MAX_RUN_CAPTURES) {
+    /* Evict the oldest, shift the rest down, keep the newest ones. */
+    free(s_captures[0].rgba);
+    memmove(&s_captures[0], &s_captures[1],
+           sizeof(run_capture) * (MAX_RUN_CAPTURES - 1));
+    s_capture_count = MAX_RUN_CAPTURES - 1;
+  }
+  s_captures[s_capture_count].rgba = rgba;
+  s_captures[s_capture_count].w = w;
+  s_captures[s_capture_count].h = h;
+  s_captures[s_capture_count].kill_number = kill_number;
+  s_capture_count++;
+}
+
 #ifdef ANDROID
-static void capture_and_save(tenv *env, int kill_number) {
+static void capture_to_memory(tenv *env, int kill_number) {
   tcontext *ctx = env->ctx;
 
   /* Only a kill (a rare, one-off event) triggers this, so a full
@@ -135,8 +190,9 @@ static void capture_and_save(tenv *env, int kill_number) {
   vkResetFences(ctx->device, 1, &ctx->transfer_fence);
 
   /* The swapchain's pixel format is commonly BGRA on Android -- normalize
-     to RGBA here so the Kotlin/Bitmap side can always assume plain
-     RGBA8888 and never needs to know which one it was. */
+     to RGBA here so both the preview texture and Kotlin/Bitmap side can
+     always assume plain RGBA8888 and never need to know which one it
+     was. */
   unsigned char *pixels = (unsigned char *)staging_info.pMappedData;
   bool is_bgra = (ctx->surface_format.format == VK_FORMAT_B8G8R8A8_UNORM ||
                  ctx->surface_format.format == VK_FORMAT_B8G8R8A8_SRGB);
@@ -150,10 +206,13 @@ static void capture_and_save(tenv *env, int kill_number) {
     }
   }
 
-  char filename[64];
-  snprintf(filename, sizeof(filename), "kill_%ld_%d.png", (long)time(NULL),
-          kill_number);
-  android_jni_save_screenshot(pixels, w, h, filename);
+  /* Copy out of the (about to be destroyed) staging buffer into a plain
+     malloc'd buffer we own for the rest of the run. */
+  unsigned char *owned = (unsigned char *)malloc((size_t)buf_size);
+  if (owned) {
+    memcpy(owned, pixels, (size_t)buf_size);
+    store_capture(owned, w, h, kill_number);
+  }
 
   vmaDestroyBuffer(ctx->allocator, staging_buffer, staging_memory);
 }
@@ -165,9 +224,28 @@ void screenshot_process_pending(tenv *env) {
   s_pending = false;
 
 #ifdef ANDROID
-  if (env && env->usr && env->ctx) capture_and_save(env, kill_number);
+  if (env && env->usr && env->ctx) capture_to_memory(env, kill_number);
 #else
   (void)env;
   (void)kill_number;
+#endif
+}
+
+void screenshot_run_save(tenv *env, const int *indices, int count) {
+#ifdef ANDROID
+  (void)env;
+  for (int i = 0; i < count; i++) {
+    int idx = indices[i];
+    if (idx < 0 || idx >= s_capture_count) continue;
+    run_capture *c = &s_captures[idx];
+    char filename[64];
+    snprintf(filename, sizeof(filename), "kill_%ld_%d.png", (long)time(NULL),
+            c->kill_number);
+    android_jni_save_screenshot(c->rgba, c->w, c->h, filename);
+  }
+#else
+  (void)env;
+  (void)indices;
+  (void)count;
 #endif
 }

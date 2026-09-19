@@ -9,6 +9,7 @@
 
 #ifdef ANDROID
 #include "../android_jni.h"
+#include "../android_path.h"
 #endif
 
 /* Kept small and deliberately conservative -- each capture is a
@@ -38,7 +39,51 @@ static int s_capture_count = 0;
 static bool s_pending = false;
 static int s_pending_kill_number = 0;
 
+/* Capture switch -- OFF by default. Persisted as a one-character file
+   ("1" = on) in the app's files dir; a missing/unreadable file means OFF. */
+static bool s_enabled = false;
+static bool s_enabled_loaded = false;
+
+#ifdef ANDROID
+static void enabled_file_path(char *out, int out_size) {
+  android_build_path(out, out_size, "kill_screenshot_enabled.txt");
+}
+#endif
+
+bool screenshot_capture_enabled(void) {
+  if (!s_enabled_loaded) {
+    s_enabled_loaded = true;
+    s_enabled = false;
+#ifdef ANDROID
+    char path[600];
+    enabled_file_path(path, (int)sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (f) {
+      s_enabled = (fgetc(f) == '1');
+      fclose(f);
+    }
+#endif
+  }
+  return s_enabled;
+}
+
+void screenshot_set_capture_enabled(bool enabled) {
+  s_enabled = enabled;
+  s_enabled_loaded = true;
+  if (!enabled) s_pending = false;
+#ifdef ANDROID
+  char path[600];
+  enabled_file_path(path, (int)sizeof(path));
+  FILE *f = fopen(path, "w");
+  if (f) {
+    fputc(enabled ? '1' : '0', f);
+    fclose(f);
+  }
+#endif
+}
+
 void screenshot_request(int kill_number) {
+  if (!screenshot_capture_enabled()) return;
   /* Processing happens on the very next frame (see screenshot.h), so
      there's essentially no window for a second kill to arrive before
      this one is handled. If it somehow does, just keep the first

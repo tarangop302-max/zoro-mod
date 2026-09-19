@@ -5,6 +5,7 @@
 
 #include "../user.h"
 #include "crystal_theme.h"
+#include "../game/screenshot.h"
 #include "../rendering/texture.h"
 
 #ifdef ANDROID
@@ -202,8 +203,9 @@ static void draw_grid(tenv *env, float sw, float sh) {
                    ImGuiChildFlags_None, ImGuiWindowFlags_None);
 
   if (s_item_count == 0) {
-    igTextWrapped("No kill screenshots yet -- get a kill in a match and "
-                  "one shows up here automatically.");
+    igTextWrapped("No kill screenshots yet. Turn SCREENSHOT on (top right), "
+                  "get kills in a match, then choose which ones to save from "
+                  "the Kill Shots button on the death popup.");
   }
 
   for (int i = 0; i < s_item_count; i++) {
@@ -269,6 +271,32 @@ void ui_kills_gallery(tenv *env) {
                           IM_COL32(255, 255, 255, 235), title, NULL);
 
 #ifdef ANDROID
+  {
+    /* SCREENSHOT ON/OFF -- whether kills get captured during a run at all.
+       OFF by default (see screenshot.h): capturing costs a brief hitch, so
+       it is opt-in. Uses a constant ### id so the button keeps the same
+       identity when its label flips between ON and OFF. */
+    bool ss_on = screenshot_capture_enabled();
+    float tb_w = 300.0f;
+    float tb_h = igGetFrameHeight() * 1.25f;
+    igSetCursorPos((ImVec2){sw - tb_w - style->WindowPadding.x - 12.0f, 12.0f});
+    if (ss_on) {
+      igPushStyleColor_Vec4(ImGuiCol_Button,
+                            (ImVec4){0.16f, 0.55f, 0.30f, 1.0f});
+      igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                            (ImVec4){0.20f, 0.65f, 0.36f, 1.0f});
+      igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                            (ImVec4){0.13f, 0.45f, 0.25f, 1.0f});
+    }
+    if (igButton(ss_on ? "SCREENSHOT: ON###kill_ss_toggle"
+                       : "SCREENSHOT: OFF###kill_ss_toggle",
+                 (ImVec2){tb_w, tb_h})) {
+      screenshot_set_capture_enabled(!ss_on);
+    }
+    if (ss_on) igPopStyleColor(3);
+    crystal_sheen();
+  }
+
   if (!s_scanned) {
     scan_kills_dir();
     s_scanned = true;

@@ -83,12 +83,6 @@ typedef struct game_data {
     float tp_cursor_angle_deg;
     bool  tp_tracking;
     bool  tp_visible;
-
-    /* Touch-down point for direct/instant trackpad mode (ctrl_trackpad_direct).
-       Kept separate from tp_anchor_x/y so the original incremental mode is
-       unaffected. */
-    float tp_touch_down_x;
-    float tp_touch_down_y;
   } touch_ctrl;
 
   struct mg_mgr network_manager;
@@ -129,6 +123,15 @@ typedef struct game_data {
    * need its own separate copy of them. */
   bool death_pending;
   double death_anim_start;
+
+  /* Set by the death popup's "Kill Shots" button (death_screen.c),
+   * alongside the exact same death_pending=false + connection
+   * is_closing=true the Lobby button already does -- so the run tears
+   * down through the normal disconnect path. The only difference: once
+   * that finishes and game_data_reset() would otherwise leave curr_screen
+   * at TITLE_SCREEN, loop.c checks this flag and routes to
+   * KILL_SHOTS_REVIEW instead. See loop.c's CONNECTED/closed handling. */
+  bool kill_review_pending;
 
   struct {
     float grd;

@@ -13,6 +13,9 @@ typedef struct texture {
 texture* create_mipmap_texture(tcontext* ctx, const char* filename);
 texture* create_mipmap_texture_from_filepath(tcontext* ctx,
                                              const char* filepath);
+texture* create_mipmap_texture_from_pixels(tcontext* ctx,
+                                           const unsigned char* rgba, int w,
+                                           int h);
 texture* create_minimap_texture(tcontext* ctx, int width);
 void destroy_texture(tcontext* ctx, texture* tex);
 

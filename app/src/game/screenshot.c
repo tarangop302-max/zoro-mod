@@ -24,6 +24,12 @@ typedef struct {
   unsigned char *rgba;
   int w, h;
   int kill_number;
+  /* True while the pixels are still in the swapchain's native BGRA order.
+     The R/B swap over ~2.5M pixels is deliberately NOT done at capture
+     time (that would run mid-match on the render thread); it is done once,
+     later, the first time the capture is actually read -- i.e. on the
+     post-match review screen or when saving. See ensure_rgba(). */
+  bool needs_swap;
 } run_capture;
 
 static run_capture s_captures[MAX_RUN_CAPTURES];
@@ -46,10 +52,23 @@ void screenshot_request(int kill_number) {
 
 int screenshot_run_count(void) { return s_capture_count; }
 
+static void ensure_rgba(run_capture *c) {
+  if (!c->needs_swap || !c->rgba) return;
+  size_t pixel_count = (size_t)c->w * (size_t)c->h;
+  for (size_t i = 0; i < pixel_count; i++) {
+    unsigned char *p = c->rgba + i * 4;
+    unsigned char tmp = p[0];
+    p[0] = p[2];
+    p[2] = tmp;
+  }
+  c->needs_swap = false;
+}
+
 bool screenshot_run_get(int index, const unsigned char **out_rgba,
                         int *out_w, int *out_h, int *out_kill_number) {
   if (index < 0 || index >= s_capture_count) return false;
   run_capture *c = &s_captures[index];
+  ensure_rgba(c);
   if (out_rgba) *out_rgba = c->rgba;
   if (out_w) *out_w = c->w;
   if (out_h) *out_h = c->h;
@@ -64,7 +83,7 @@ void screenshot_run_reset(void) {
 }
 
 static void store_capture(unsigned char *rgba, int w, int h,
-                          int kill_number) {
+                          int kill_number, bool needs_swap) {
   if (s_capture_count >= MAX_RUN_CAPTURES) {
     /* Evict the oldest, shift the rest down, keep the newest ones. */
     free(s_captures[0].rgba);
@@ -76,6 +95,7 @@ static void store_capture(unsigned char *rgba, int w, int h,
   s_captures[s_capture_count].w = w;
   s_captures[s_capture_count].h = h;
   s_captures[s_capture_count].kill_number = kill_number;
+  s_captures[s_capture_count].needs_swap = needs_swap;
   s_capture_count++;
 }
 
@@ -189,29 +209,20 @@ static void capture_to_memory(tenv *env, int kill_number) {
   vkWaitForFences(ctx->device, 1, &ctx->transfer_fence, VK_TRUE, UINT64_MAX);
   vkResetFences(ctx->device, 1, &ctx->transfer_fence);
 
-  /* The swapchain's pixel format is commonly BGRA on Android -- normalize
-     to RGBA here so both the preview texture and Kotlin/Bitmap side can
-     always assume plain RGBA8888 and never need to know which one it
-     was. */
+  /* The swapchain's pixel format is commonly BGRA on Android. Normalising
+     it to RGBA is left for later (ensure_rgba(), on the review screen /
+     when saving) so this in-match capture stays as cheap as possible:
+     just the GPU readback and one plain memcpy. */
   unsigned char *pixels = (unsigned char *)staging_info.pMappedData;
   bool is_bgra = (ctx->surface_format.format == VK_FORMAT_B8G8R8A8_UNORM ||
                  ctx->surface_format.format == VK_FORMAT_B8G8R8A8_SRGB);
-  if (is_bgra) {
-    size_t pixel_count = (size_t)w * (size_t)h;
-    for (size_t i = 0; i < pixel_count; i++) {
-      unsigned char *p = pixels + i * 4;
-      unsigned char tmp = p[0];
-      p[0] = p[2];
-      p[2] = tmp;
-    }
-  }
 
   /* Copy out of the (about to be destroyed) staging buffer into a plain
      malloc'd buffer we own for the rest of the run. */
   unsigned char *owned = (unsigned char *)malloc((size_t)buf_size);
   if (owned) {
     memcpy(owned, pixels, (size_t)buf_size);
-    store_capture(owned, w, h, kill_number);
+    store_capture(owned, w, h, kill_number, is_bgra);
   }
 
   vmaDestroyBuffer(ctx->allocator, staging_buffer, staging_memory);
@@ -238,6 +249,7 @@ void screenshot_run_save(tenv *env, const int *indices, int count) {
     int idx = indices[i];
     if (idx < 0 || idx >= s_capture_count) continue;
     run_capture *c = &s_captures[idx];
+    ensure_rgba(c);
     char filename[64];
     snprintf(filename, sizeof(filename), "kill_%ld_%d.png", (long)time(NULL),
             c->kill_number);

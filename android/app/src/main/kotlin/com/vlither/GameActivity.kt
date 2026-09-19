@@ -197,12 +197,20 @@ class GameActivity : NativeActivity() {
         }
 
         /**
-         * Called from C via JNI (android_jni.c) right after a kill
-         * screenshot is captured. Writes the raw RGBA8 pixels out as a PNG
-         * twice: once into the app-private "Pictures/kills" directory
-         * (which native code reads back for the in-app Kill Shots gallery
-         * -- see android_path.h / android_build_kills_dir), and once into
-         * the system MediaStore Images collection so it also shows up in
+         * Called from C via JNI (android_jni.c) once the player picks
+         * which captured kills to keep on the post-match review screen
+         * (screenshot_run_save() in screenshot.c) -- not on every kill
+         * anymore, so there's no render-thread stall to avoid on the
+         * native side. Still runs its own work on a background thread
+         * here regardless: PNG-encoding (twice) plus disk I/O plus a
+         * MediaStore insert is real work, and the JNI call itself still
+         * blocks whatever native thread invoked it until this method
+         * returns, so keeping that fast matters even off the hot path.
+         * Writes the raw RGBA8 pixels out as a PNG twice: once into the
+         * app-private "Pictures/kills" directory (which native code
+         * reads back for the in-app Kill Shots gallery -- see
+         * android_path.h / android_build_kills_dir), and once into the
+         * system MediaStore Images collection so it also shows up in
          * the phone's own Gallery app.
          * Signature used in android_jni.c:
          * (Landroid/app/Activity;[BIILjava/lang/String;)V
@@ -215,56 +223,58 @@ class GameActivity : NativeActivity() {
             height: Int,
             filename: String
         ) {
-            try {
-                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
+            Thread {
+                try {
+                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
 
-                // App-private copy: what the in-app gallery reads back from.
-                val picturesBase = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-                if (picturesBase != null) {
-                    val killsDir = File(picturesBase, "kills")
-                    killsDir.mkdirs()
-                    FileOutputStream(File(killsDir, filename)).use { out ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                    // App-private copy: what the in-app gallery reads back from.
+                    val picturesBase = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+                    if (picturesBase != null) {
+                        val killsDir = File(picturesBase, "kills")
+                        killsDir.mkdirs()
+                        FileOutputStream(File(killsDir, filename)).use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                    } else {
+                        Log.e(TAG, "saveScreenshot: no external files dir available")
                     }
-                } else {
-                    Log.e(TAG, "saveScreenshot: no external files dir available")
-                }
 
-                // Also insert into MediaStore so it shows up in the phone's
-                // own Gallery app.
-                val resolver = activity.contentResolver
-                val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Vlither")
-                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    // Also insert into MediaStore so it shows up in the phone's
+                    // own Gallery app.
+                    val resolver = activity.contentResolver
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Vlither")
+                            put(MediaStore.Images.Media.IS_PENDING, 1)
+                        }
                     }
-                }
-                val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                } else {
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                }
-                val uri = resolver.insert(collection, values)
-                if (uri != null) {
-                    resolver.openOutputStream(uri)?.use { out ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                    val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    } else {
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                     }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        values.clear()
-                        values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                        resolver.update(uri, values, null, null)
+                    val uri = resolver.insert(collection, values)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            values.clear()
+                            values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                            resolver.update(uri, values, null, null)
+                        }
+                    } else {
+                        Log.e(TAG, "saveScreenshot: MediaStore insert failed")
                     }
-                } else {
-                    Log.e(TAG, "saveScreenshot: MediaStore insert failed")
-                }
 
-                bitmap.recycle()
-            } catch (e: Exception) {
-                Log.e(TAG, "saveScreenshot error: ${e.message}")
-            }
+                    bitmap.recycle()
+                } catch (e: Exception) {
+                    Log.e(TAG, "saveScreenshot error: ${e.message}")
+                }
+            }.start()
         }
 
         /** Enable or disable the real Android IME bridge used by ImGui. */

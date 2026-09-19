@@ -4,6 +4,9 @@
 
 #include "../user.h"
 #include "screenshot.h"
+#ifdef ANDROID
+#include "../android_glfw_shim.h"
+#endif
 
 void ui_death_screen(tenv* env) {
   tuser_data* usr = env->usr;
@@ -50,6 +53,20 @@ void ui_death_screen(tenv* env) {
    * Restart is clicked, per the request that it "will not close until
    * we click on lobby or restart buttons". */
   if (igBegin("##death_screen", NULL, flags)) {
+#ifdef ANDROID
+    /* On Android, ImGui's mouse is driven only by wnd->ui_touch, and a
+     * touch only becomes a ui_touch when it lands inside a rect registered
+     * with android_ui_capture_rect() (see twindow_android.c). Without this,
+     * taps on Lobby/Restart were treated as ordinary gameplay touches and
+     * never reached ImGui, so the buttons did nothing. */
+    {
+      ImVec2 dpos, dsize;
+      igGetWindowPos(&dpos);
+      igGetWindowSize(&dsize);
+      android_ui_capture_rect(dpos.x, dpos.y, dpos.x + dsize.x,
+                              dpos.y + dsize.y);
+    }
+#endif
     float card_w = 640.0f;
     float pad = style->WindowPadding.x;
     ImVec2 ts;

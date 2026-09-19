@@ -569,6 +569,7 @@ void game_data_reset(tenv* env) {
   gdata->data.ping = 0;
   gdata->data.lb_pos = 0;
   gdata->data.score = 0;
+  gdata->data.cur_length = 0;
   gdata->data.rank = 0;
   gdata->data.kills = 0;
   gdata->data.slither_count = 0;

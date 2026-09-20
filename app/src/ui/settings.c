@@ -68,6 +68,8 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Smooth zoom");
       igAlignTextToFramePadding();
+      igText("Ping / FPS graph");
+      igAlignTextToFramePadding();
       igText("Zoom step");
       igAlignTextToFramePadding();
       igText("Border color");
@@ -121,6 +123,7 @@ void ui_settings(tenv* env) {
                       (const char*[]){"Small", "Regular", "Large"}, 3, -1);
       igCheckbox("##snake scores", &usrs->snake_scores);
       igCheckbox("##smooth zoom", &usrs->smooth_zoom);
+      igCheckbox("##net graph", &usrs->show_net_graph);
       igSetNextItemWidth(-1);
       igSliderFloat("##zoom step", &usrs->zoom_step, 0.05f, 0.5f, "%.2f",
                     ImGuiSliderFlags_AlwaysClamp);

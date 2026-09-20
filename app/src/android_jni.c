@@ -630,4 +630,58 @@ screenshot_save_cleanup:
     if (did_attach) (*vm)->DetachCurrentThread(vm);
 }
 
+void android_jni_save_image_to_gallery(const char* filename) {
+    if (!filename || !g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return;
+    }
+
+    jclass cls = (*env)->GetObjectClass(
+        env, g_android_app->activity->clazz);
+    if (!cls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto gallery_save_cleanup;
+    }
+
+    jmethodID mid = (*env)->GetStaticMethodID(
+        env, cls, "saveImageToGallery",
+        "(Landroid/app/Activity;Ljava/lang/String;)V");
+    if (!mid || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto gallery_save_cleanup;
+    }
+
+    {
+        jstring jfilename = (*env)->NewStringUTF(env, filename);
+        if (!jfilename || (*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            goto gallery_save_cleanup;
+        }
+
+        if (!(*env)->ExceptionCheck(env)) {
+            (*env)->CallStaticVoidMethod(
+                env, cls, mid, g_android_app->activity->clazz, jfilename);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, jfilename);
+    }
+
+gallery_save_cleanup:
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
 #endif

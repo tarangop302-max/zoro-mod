@@ -43,11 +43,13 @@ void server_poll(tenv* env) {
   tuser_data* usr = env->usr;
   game_data* gdata = &usr->gdata;
 #ifdef ANDROID
-  /* While actually playing, every ms this call blocks waiting for socket
-   * data is ms added to how long it takes a server update to reach the
-   * game loop. In menus/disconnected there's no rush, so keep the longer
-   * wait there to avoid needlessly waking the CPU (battery). */
-  int poll_ms = (gdata->conn == CONNECTED) ? 1 : 5;
+  /* While actually playing, never sleep in here: the game loop already blocks
+   * on vsync once per frame, so a further 1 ms sleep just eats frame budget
+   * (and Android's timer wake-up often overshoots it), while the socket is
+   * drained again at the start of the very next frame anyway. In
+   * menus/disconnected there's no rush, so keep the longer wait there to
+   * avoid needlessly waking the CPU (battery). */
+  int poll_ms = (gdata->conn == CONNECTED) ? 0 : 5;
   mg_mgr_poll(&gdata->network_manager, poll_ms);
 #else
   mg_mgr_poll(&gdata->network_manager, 0);

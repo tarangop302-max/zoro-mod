@@ -548,6 +548,12 @@ void game_data_reset(tenv* env) {
   gdata->data.last_ping_mtm = 0;
   gdata->data.last_accel_mtm = 0;
   gdata->data.last_e_mtm = 0;
+  gdata->data.rt_ltm_ms = 0;
+  gdata->data.rt_ping_sent_ms = 0;
+  gdata->data.rt_last_e_ms = -1e9;
+  gdata->data.rt_last_accel_ms = -1e9;
+  gdata->data.steer_pred_until_ms = 0;
+  gdata->data.owd_ms = 0;
   gdata->data.play_etm = 0;
   gdata->data.fps_etm = 0;
   gdata->data.fps_ltm = 0;

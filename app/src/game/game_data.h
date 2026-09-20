@@ -192,6 +192,16 @@ typedef struct game_data {
 
     double play_etm;
 
+    /* Real-time clock (glfwGetTime()*1000, double ms). The float ctm/ltm
+       above are only touched once per frame and lose precision the longer a
+       session runs; these are used wherever actual latency matters. */
+    double rt_ltm_ms;            /* previous frame's timestamp (frame dt)   */
+    double rt_ping_sent_ms;      /* when the in-flight ping really left     */
+    double rt_last_e_ms;         /* last steering packet sent               */
+    double rt_last_accel_ms;     /* last boost packet sent                  */
+    double steer_pred_until_ms;  /* local steering wins over echoes till now */
+    float  owd_ms;               /* smoothed one-way network delay estimate  */
+
     int lsxm;
     int lsym;
     int mmsz;

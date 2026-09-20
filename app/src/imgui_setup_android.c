@@ -6,6 +6,7 @@
 #include "imgui_setup.h"
 #include "android_jni.h"
 #include "user.h"
+#include "game/profile_emoji.h"
 
 #include <android/asset_manager.h>
 #include <android/keycodes.h>
@@ -180,19 +181,19 @@ void imgui_init(tenv* env) {
 } while(0)
 
         LOAD_FONT_RET(usr->imgui_data.mono_font[i],
-            "fonts/mono_regular.ttf", size, NULL, NULL);
+            "fonts/mono_regular.ttf", size, NULL, PROFILE_EMOJI_GLYPH_RANGES);
         LOAD_FONT("fonts/iconfont.ttf", size, &icons_cfg, icon_ranges);
 
         LOAD_FONT_RET(usr->imgui_data.regular_font[i],
-            "fonts/regular_regular.ttf", size, NULL, NULL);
+            "fonts/regular_regular.ttf", size, NULL, PROFILE_EMOJI_GLYPH_RANGES);
         LOAD_FONT("fonts/iconfont.ttf", size, &icons_cfg, icon_ranges);
 
         LOAD_FONT_RET(usr->imgui_data.mono_font_bold[i],
-            "fonts/mono_bold.ttf", size, NULL, NULL);
+            "fonts/mono_bold.ttf", size, NULL, PROFILE_EMOJI_GLYPH_RANGES);
         LOAD_FONT("fonts/iconfont.ttf", size, &icons_cfg, icon_ranges);
 
         LOAD_FONT_RET(usr->imgui_data.regular_font_bold[i],
-            "fonts/regular_bold.ttf", size, NULL, NULL);
+            "fonts/regular_bold.ttf", size, NULL, PROFILE_EMOJI_GLYPH_RANGES);
         LOAD_FONT("fonts/iconfont.ttf", size, &icons_cfg, icon_ranges);
 
 #undef LOAD_FONT

@@ -45,7 +45,24 @@ typedef struct {
     float color[3];
     int score;
     int ping;  /* -1 if not yet known (see jsr_network_get_location) */
+    bool sos;  /* true while this teammate's SOS signal is active */
+    int emoji_id;  /* index into PROFILE_EMOJIS (profile_emoji.h); 0 = none */
 } global_chat_teammate;
+
+/* Activate our own SOS signal until until_ms (epoch milliseconds), or
+ * clear it immediately by passing a value <= the current time. While
+ * active, it rides along on the same location broadcast that already
+ * powers the minimap markers (see jsr_network_send_location), so it
+ * reaches every Public Chat teammate regardless of distance -- and
+ * clears itself automatically if the app is closed without explicitly
+ * cancelling it, since a new session starts with no SOS active. */
+void global_chat_set_sos(long long until_ms);
+
+/* True while our own SOS signal is currently active. */
+bool global_chat_is_sos_active(void);
+
+/* Milliseconds remaining on our own SOS signal, or 0 if inactive. */
+long long global_chat_sos_remaining_ms(void);
 
 /* Fill out_teammates (capacity max_count) with every teammate
  * currently known to be on our own game server -- using the same

@@ -1,6 +1,7 @@
 #include "global_chat.h"
 
 #include "../user.h"
+#include "profile_emoji.h"
 
 #include "thermite/tchat.h"
 #include "thermite/jsr_network.h"
@@ -40,6 +41,30 @@ typedef struct {
 static bool global_chat_initialized = false;
 static bool global_chat_open = false;
 static bool global_chat_players_open = false;
+
+/* Epoch milliseconds our own SOS signal is active until; 0 (or any value
+ * <= now) means inactive. Session-only -- deliberately never saved to
+ * user_settings, so a restart never leaves a stale SOS broadcasting. */
+static long long global_chat_sos_until_ms = 0;
+
+static long long global_chat_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+void global_chat_set_sos(long long until_ms) {
+    global_chat_sos_until_ms = until_ms;
+}
+
+bool global_chat_is_sos_active(void) {
+    return global_chat_sos_until_ms > global_chat_now_ms();
+}
+
+long long global_chat_sos_remaining_ms(void) {
+    long long remaining = global_chat_sos_until_ms - global_chat_now_ms();
+    return remaining > 0 ? remaining : 0;
+}
 
 /* Drag/resize adjust mode -- see global_chat_set_adjust_mode(). */
 static global_chat_adjust_mode global_chat_adjust = GLOBAL_CHAT_ADJUST_NONE;
@@ -612,7 +637,9 @@ void global_chat_update(tenv* env) {
                         own_usrs->own_marker_color[1],
                         own_usrs->own_marker_color[2],
                         gdata->data.score,
-                        gdata->data.ping
+                        gdata->data.ping,
+                        global_chat_is_sos_active(),
+                        own_usrs->profile_emoji_id
                     );
 
                     break;
@@ -1082,8 +1109,11 @@ void global_chat_draw(tenv* env) {
                      * and the location feed are two separate JSR
                      * subsystems. Left blank if they're connected to chat
                      * but haven't broadcast a position yet (e.g. still in
-                     * the lobby). */
+                     * the lobby). Their SOS state and chosen profile emoji
+                     * ride along on the same lookup. */
                     char loc_ip[64] = "";
+                    bool loc_sos = false;
+                    int loc_emoji_id = 0;
 
                     if (global_chat_net != NULL) {
                         int loc_count =
@@ -1113,7 +1143,8 @@ void global_chat_draw(tenv* env) {
                                     NULL,
                                     NULL,
                                     NULL,
-                                    NULL
+                                    &loc_sos,
+                                    &loc_emoji_id
                                 )
                             ) {
                                 loc_ip[0] = '\0';
@@ -1130,7 +1161,23 @@ void global_chat_draw(tenv* env) {
                             }
 
                             loc_ip[0] = '\0';
+                            loc_sos = false;
+                            loc_emoji_id = 0;
                         }
+                    }
+
+                    const char *loc_emoji = profile_emoji_at(loc_emoji_id);
+                    if (loc_emoji[0] != '\0') {
+                        igSameLine(0.0f, 4.0f);
+                        igText("%s", loc_emoji);
+                    }
+
+                    if (loc_sos) {
+                        igSameLine(0.0f, 6.0f);
+                        igTextColored(
+                            (ImVec4){1.0f, 0.25f, 0.2f, 1.0f},
+                            "SOS"
+                        );
                     }
 
                     if (loc_ip[0] != '\0') {
@@ -1894,6 +1941,84 @@ static void global_chat_panel_contents(
         }
     }
 
+    /* Profile emoji picker + SOS toggle, ported from Vlither-android.
+     * Emoji is a small saved preference; SOS is a session-only signal
+     * that rides along on the same location broadcast that already
+     * powers the minimap markers, so it reaches every Public Chat
+     * teammate regardless of distance without any extra networking
+     * here. */
+    igSpacing();
+
+    igText("Emoji:");
+
+    for (int e = 0; e < PROFILE_EMOJI_COUNT; e++) {
+        igSameLine(0.0f, 4.0f);
+
+        char btn_label[16];
+        snprintf(
+            btn_label,
+            sizeof(btn_label),
+            "%s##pe%d",
+            profile_emoji_at(e)[0] != '\0' ? profile_emoji_at(e) : "none",
+            e
+        );
+
+        bool selected = usrs->profile_emoji_id == e;
+
+        if (selected) {
+            igPushStyleColor_Vec4(
+                ImGuiCol_Button,
+                (ImVec4){0.25f, 0.55f, 0.95f, 0.9f}
+            );
+        }
+
+        if (igButton(btn_label, (ImVec2){28.0f, 0.0f})) {
+            usrs->profile_emoji_id = e;
+            save_user_settings(usrs);
+        }
+
+        if (selected) {
+            igPopStyleColor(1);
+        }
+    }
+
+    bool sos_active = global_chat_is_sos_active();
+
+    if (sos_active) {
+        igPushStyleColor_Vec4(
+            ImGuiCol_Button,
+            (ImVec4){0.85f, 0.2f, 0.15f, 1.0f}
+        );
+
+        char sos_label[32];
+        snprintf(
+            sos_label,
+            sizeof(sos_label),
+            "SOS active (%llds)##sos",
+            (long long)(global_chat_sos_remaining_ms() / 1000)
+        );
+
+        if (igButton(sos_label, (ImVec2){-1.0f, 0.0f})) {
+            global_chat_set_sos(0);
+        }
+
+        igPopStyleColor(1);
+    } else {
+        igPushStyleColor_Vec4(
+            ImGuiCol_Button,
+            (ImVec4){0.55f, 0.15f, 0.1f, 1.0f}
+        );
+
+        if (igButton("Send SOS##sos", (ImVec2){-1.0f, 0.0f})) {
+            /* Active for 5 minutes, or until manually cancelled above --
+             * whichever comes first. Re-broadcast happens automatically
+             * on the next twice-a-second location update. */
+            global_chat_set_sos(global_chat_now_ms() + 5LL * 60LL * 1000LL);
+        }
+
+        igPopStyleColor(1);
+    }
+
     igPopFont();
 }
 
@@ -1963,6 +2088,7 @@ void global_chat_draw_minimap_markers(
         float ly;
         int shape;
         float cr, cg, cb;
+        bool sos;
 
         if (
             !jsr_network_get_location(
@@ -1979,6 +2105,8 @@ void global_chat_draw_minimap_markers(
                 &cg,
                 &cb,
                 NULL,
+                NULL,
+                &sos,
                 NULL
             )
         ) {
@@ -2027,6 +2155,23 @@ void global_chat_draw_minimap_markers(
             shape,
             col
         );
+
+        if (sos) {
+            /* Pulsing red ring around an SOS teammate's dot -- a plain
+             * sine wave on wall-clock time so it's visible without
+             * needing per-frame animation state. */
+            float pulse =
+                0.5f + 0.5f * sinf((float)global_chat_now_ms() * 0.006f);
+
+            ImDrawList_AddCircle(
+                dl,
+                p,
+                u->usrs.ntl_marker_size + 3.0f + pulse * 2.0f,
+                IM_COL32(255, 40, 30, 200),
+                0,
+                2.0f
+            );
+        }
 
         if (u->usrs.ntl_marker_labels) {
             igPushFont(
@@ -2147,6 +2292,8 @@ int global_chat_get_teammates(
         float r, g, b;
         int score;
         int ping;
+        bool sos;
+        int emoji_id;
 
         if (
             !jsr_network_get_location(
@@ -2163,7 +2310,9 @@ int global_chat_get_teammates(
                 &g,
                 &b,
                 &score,
-                &ping
+                &ping,
+                &sos,
+                &emoji_id
             )
         ) {
             continue;
@@ -2195,6 +2344,8 @@ int global_chat_get_teammates(
         out_teammates[written].color[2] = b;
         out_teammates[written].score = score;
         out_teammates[written].ping = ping;
+        out_teammates[written].sos = sos;
+        out_teammates[written].emoji_id = emoji_id;
         written++;
     }
 

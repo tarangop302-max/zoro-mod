@@ -7,6 +7,7 @@
 #include "cimgui/cimgui_impl.h"
 
 #include "user.h"
+#include "game/profile_emoji.h"
 
 void imgui_init(tenv* env) {
   tuser_data* usr = env->usr;
@@ -44,28 +45,32 @@ void imgui_init(tenv* env) {
                                  .GlyphMinAdvanceX = 26.0f + i * 6};
 
     usr->imgui_data.mono_font[i] = ImFontAtlas_AddFontFromFileTTF(
-        io->Fonts, "app/res/fonts/mono_regular.ttf", 20 + i * 4, NULL, NULL);
+        io->Fonts, "app/res/fonts/mono_regular.ttf", 20 + i * 4, NULL,
+        PROFILE_EMOJI_GLYPH_RANGES);
 
     ImFontAtlas_AddFontFromFileTTF(
         io->Fonts, "app/res/fonts/iconfont.ttf", 20 + i * 4, &icons_config,
         (const ImWchar[]){0xe900, 0xeaea, 0});
 
     usr->imgui_data.regular_font[i] = ImFontAtlas_AddFontFromFileTTF(
-        io->Fonts, "app/res/fonts/regular_regular.ttf", 20 + i * 4, NULL, NULL);
+        io->Fonts, "app/res/fonts/regular_regular.ttf", 20 + i * 4, NULL,
+        PROFILE_EMOJI_GLYPH_RANGES);
 
     ImFontAtlas_AddFontFromFileTTF(
         io->Fonts, "app/res/fonts/iconfont.ttf", 20 + i * 4, &icons_config,
         (const ImWchar[]){0xe900, 0xeaea, 0});
 
     usr->imgui_data.mono_font_bold[i] = ImFontAtlas_AddFontFromFileTTF(
-        io->Fonts, "app/res/fonts/mono_bold.ttf", 20 + i * 4, NULL, NULL);
+        io->Fonts, "app/res/fonts/mono_bold.ttf", 20 + i * 4, NULL,
+        PROFILE_EMOJI_GLYPH_RANGES);
 
     ImFontAtlas_AddFontFromFileTTF(io->Fonts, "app/res/fonts/iconfont.ttf",
                                    20 + i * 4, &icons_config,
                                    (const ImWchar[]){0xe900, 0xeaea, 0});
 
     usr->imgui_data.regular_font_bold[i] = ImFontAtlas_AddFontFromFileTTF(
-        io->Fonts, "app/res/fonts/regular_bold.ttf", 20 + i * 4, NULL, NULL);
+        io->Fonts, "app/res/fonts/regular_bold.ttf", 20 + i * 4, NULL,
+        PROFILE_EMOJI_GLYPH_RANGES);
 
     ImFontAtlas_AddFontFromFileTTF(io->Fonts, "app/res/fonts/iconfont.ttf",
                                    20 + i * 4, &icons_config,

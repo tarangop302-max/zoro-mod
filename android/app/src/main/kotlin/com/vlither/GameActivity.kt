@@ -216,6 +216,21 @@ class GameActivity : NativeActivity() {
          * (Landroid/app/Activity;[BIILjava/lang/String;)V
          */
         @JvmStatic
+        /**
+         * Called from C via JNI (android_jni.c) once the player picks
+         * which captured kills to keep on the post-match review screen
+         * (screenshot_run_save() in screenshot.c). App-private only --
+         * this does NOT touch the phone's own Gallery app. The in-app
+         * Kill Shots gallery reads this back directly; pushing a copy to
+         * the phone's Gallery only happens if the player explicitly taps
+         * Save on that item afterward (see saveImageToGallery() below).
+         * Still runs on a background thread: PNG-encoding plus disk I/O
+         * is real work, and the JNI call blocks whatever native thread
+         * invoked it until this method returns.
+         * Signature used in android_jni.c:
+         * (Landroid/app/Activity;[BIILjava/lang/String;)V
+         */
+        @JvmStatic
         fun saveScreenshot(
             activity: Activity,
             rgba: ByteArray,
@@ -228,7 +243,6 @@ class GameActivity : NativeActivity() {
                     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                     bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
 
-                    // App-private copy: what the in-app gallery reads back from.
                     val picturesBase = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
                     if (picturesBase != null) {
                         val killsDir = File(picturesBase, "kills")
@@ -240,8 +254,34 @@ class GameActivity : NativeActivity() {
                         Log.e(TAG, "saveScreenshot: no external files dir available")
                     }
 
-                    // Also insert into MediaStore so it shows up in the phone's
-                    // own Gallery app.
+                    bitmap.recycle()
+                } catch (e: Exception) {
+                    Log.e(TAG, "saveScreenshot error: ${e.message}")
+                }
+            }.start()
+        }
+
+        /**
+         * Called from C via JNI when the player taps "Save" on a kill
+         * screenshot inside the in-app Kill Shots gallery -- copies the
+         * already-saved app-private PNG (see saveScreenshot() above,
+         * under Pictures/kills) into the system MediaStore Images
+         * collection so it also shows up in the phone's own Gallery app.
+         * No-ops (logs and returns) if that file doesn't exist.
+         * Signature used in android_jni.c:
+         * (Landroid/app/Activity;Ljava/lang/String;)V
+         */
+        @JvmStatic
+        fun saveImageToGallery(activity: Activity, filename: String) {
+            Thread {
+                try {
+                    val picturesBase = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+                    val sourceFile = picturesBase?.let { File(File(it, "kills"), filename) }
+                    if (sourceFile == null || !sourceFile.exists()) {
+                        Log.e(TAG, "saveImageToGallery: source file not found: $filename")
+                        return@Thread
+                    }
+
                     val resolver = activity.contentResolver
                     val values = ContentValues().apply {
                         put(MediaStore.Images.Media.DISPLAY_NAME, filename)
@@ -259,7 +299,7 @@ class GameActivity : NativeActivity() {
                     val uri = resolver.insert(collection, values)
                     if (uri != null) {
                         resolver.openOutputStream(uri)?.use { out ->
-                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                            sourceFile.inputStream().use { input -> input.copyTo(out) }
                         }
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             values.clear()
@@ -267,12 +307,10 @@ class GameActivity : NativeActivity() {
                             resolver.update(uri, values, null, null)
                         }
                     } else {
-                        Log.e(TAG, "saveScreenshot: MediaStore insert failed")
+                        Log.e(TAG, "saveImageToGallery: MediaStore insert failed")
                     }
-
-                    bitmap.recycle()
                 } catch (e: Exception) {
-                    Log.e(TAG, "saveScreenshot error: ${e.message}")
+                    Log.e(TAG, "saveImageToGallery error: ${e.message}")
                 }
             }.start()
         }

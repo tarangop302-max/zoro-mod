@@ -266,7 +266,8 @@ void ui_overlay(tenv* env) {
 
     float ping_norm =
         (gdata->data.ping_follow - GOOD_PING) / (BAD_PING - GOOD_PING);
-    float lag_norm = (gdata->data.lag_mult - 0.2f) / (1 - 0.2f);
+    float lag_norm =
+        (gdata->data.lag_mult - LAG_MULT_MIN) / (1 - LAG_MULT_MIN);
     vec3 ping_col;
     glm_vec3_lerp((vec3){0.5f, 1, 0.5f}, (vec3){1, 0.5f, 0.5f}, ping_norm,
                   ping_col);

@@ -348,7 +348,9 @@ static void jsr_location_set(
     float color_g,
     float color_b,
     int score,
-    int ping
+    int ping,
+    bool sos,
+    uint8_t emoji_id
 ) {
     int index;
 
@@ -403,6 +405,8 @@ static void jsr_location_set(
     net->locations[index].color[2] = color_b;
     net->locations[index].score = score;
     net->locations[index].ping = ping;
+    net->locations[index].sos = sos;
+    net->locations[index].emoji_id = emoji_id;
 }
 
 static void jsr_location_remove(
@@ -606,9 +610,9 @@ static void jsr_parse_message(
          * LOCATION broadcast, relayed by the server as:
          * [7][username_len][username][x:f32][y:f32]
          * [server_ip_len][server_ip][shape:u8][r:u8][g:u8][b:u8]
-         * [score:i32][ping:i32]
+         * [score:i32][ping:i32][sos:u8][emoji_id:u8]
          *
-         * The trailing marker/score/ping fields are appended after
+         * The trailing marker/score/ping/sos/emoji fields are appended after
          * everything the relay already understood how to
          * rebuild (see jsr_network_send_location), so older
          * relays/peers that only forward part of the payload
@@ -630,6 +634,11 @@ static void jsr_parse_message(
          */
         int score = -1;
         int ping = -1;
+        /* Same "absent means older peer" reasoning as score/ping above --
+           default to no SOS / no emoji rather than reusing whatever the
+           uninitialized locals would otherwise hold. */
+        bool sos = false;
+        uint8_t emoji_id = 0;
 
         offset = 1;
 
@@ -690,6 +699,12 @@ static void jsr_parse_message(
                     int32_t raw_ping;
                     memcpy(&raw_ping, data + offset, 4);
                     ping = (int) raw_ping;
+                    offset += 4;
+
+                    if (data_len >= offset + 2) {
+                        sos = data[offset] != 0;
+                        emoji_id = (uint8_t) data[offset + 1];
+                    }
                 }
             }
         }
@@ -726,7 +741,9 @@ static void jsr_parse_message(
                 color_g,
                 color_b,
                 score,
-                ping
+                ping,
+                sos,
+                emoji_id
             );
         }
     }
@@ -1446,9 +1463,11 @@ bool jsr_network_send_location(
     float color_g,
     float color_b,
     int score,
-    int ping
+    int ping,
+    bool sos,
+    int emoji_id
 ) {
-    uint8_t buffer[1 + 4 + 4 + 1 + 64 + 4 + 4 + 4];
+    uint8_t buffer[1 + 4 + 4 + 1 + 64 + 4 + 4 + 4 + 1 + 1];
     size_t srv_len;
     size_t offset;
 
@@ -1529,6 +1548,20 @@ bool jsr_network_send_location(
     memcpy(buffer + offset, &ping32, 4);
     offset += 4;
 
+    /*
+     * Own current SOS state and chosen profile emoji, appended the same
+     * way score/ping were -- after everything older peers/relays already
+     * know how to rebuild, so they simply stop parsing one byte earlier
+     * and never see these two.
+     */
+    buffer[offset] = sos ? 1 : 0;
+    offset += 1;
+
+    if (emoji_id < 0) emoji_id = 0;
+    if (emoji_id > 255) emoji_id = 255;
+    buffer[offset] = (uint8_t) emoji_id;
+    offset += 1;
+
     mg_ws_send(
         net->ws_connection,
         buffer,
@@ -1563,7 +1596,9 @@ bool jsr_network_get_location(
     float *out_color_g,
     float *out_color_b,
     int *out_score,
-    int *out_ping
+    int *out_ping,
+    bool *out_sos,
+    int *out_emoji_id
 ) {
     if (net == NULL ||
         index < 0 ||
@@ -1623,6 +1658,14 @@ bool jsr_network_get_location(
 
     if (out_ping != NULL) {
         *out_ping = net->locations[index].ping;
+    }
+
+    if (out_sos != NULL) {
+        *out_sos = net->locations[index].sos;
+    }
+
+    if (out_emoji_id != NULL) {
+        *out_emoji_id = net->locations[index].emoji_id;
     }
 
     return true;

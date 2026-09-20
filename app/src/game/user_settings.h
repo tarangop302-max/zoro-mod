@@ -284,6 +284,23 @@ typedef struct user_settings {
      so pre-v2.13 files remain a compatible prefix (see v213_prefix in
      read_user_settings). */
   int profile_emoji_id;
+
+  /* v2.14 extension fields. Ping/FPS history graph (net_graph.c): whether it
+     is drawn, and where -- position relative to the screen, set by dragging it
+     on the HUD layout editor screen (see hud_layout_editor.c). Appended after
+     profile_emoji_id so every earlier file stays a compatible prefix (see
+     v214_prefix in read_user_settings).
+
+     net_graph_reserved exists only to keep sizeof(user_settings) strictly
+     larger than the previous release. profile_emoji_id was followed by enough
+     tail padding for the fields above to fit without growing the struct; an
+     old file would then look like a complete new one and these fields would be
+     filled from its padding bytes instead of their defaults. */
+  bool    show_net_graph;
+  bool    net_graph_pos_custom;
+  float   net_graph_rel_x;
+  float   net_graph_rel_y;
+  uint8_t net_graph_reserved[8];
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

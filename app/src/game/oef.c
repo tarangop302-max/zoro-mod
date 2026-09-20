@@ -12,28 +12,43 @@ void time_step(tenv* env) {
   game_data* gdata = &usr->gdata;
 
   double time_sec = glfwGetTime();
-  gdata->data.ctm = time_sec * 1000;
+  double now_ms = time_sec * 1000.0;
+  gdata->data.ctm = now_ms;
 
   if (gdata->data.follow_view) gdata->data.play_etm = time_sec;
 
   gdata->data.fps_etm = (gdata->data.ctm - gdata->data.fps_ltm);
-  gdata->data.vfr = (gdata->data.ctm - gdata->data.ltm) / 8.0f;
-  if (gdata->data.vfr > 5) gdata->data.vfr = 5;
+
+  /* Frame dt is taken from the double clock: ctm/ltm are floats, and a float
+     holding milliseconds loses sub-ms precision after a long session, which
+     shows up as tiny random speed changes frame to frame. */
+  double dt_ms = now_ms - gdata->data.rt_ltm_ms;
+  gdata->data.rt_ltm_ms = now_ms;
+  gdata->data.vfr = (float)(dt_ms / 8.0);
+  /* A frame longer than MAX_VFR*8 ms is caught up in one go (up to that cap)
+     instead of the world slowing down every time the phone hitches. */
+  if (gdata->data.vfr > MAX_VFR) gdata->data.vfr = MAX_VFR;
   if (gdata->data.vfr < 0) gdata->data.vfr = 0;
   gdata->data.avfr = gdata->data.vfr;
   gdata->data.ltm = gdata->data.ctm;
 
+  /* Lag spike: ride short ones out at full speed (every snake keeps being
+     dead-reckoned along its heading, exactly what the server is doing), and
+     only if the stall really drags on ease the world down -- gently, and not
+     below LAG_MULT_MIN. The old 750 ms / 0.2x version turned every spike into
+     a visible freeze and left the head far behind where the server had it. */
   if (!gdata->data.lagging) {
-    if (gdata->data.wfpr && gdata->data.ctm - gdata->data.last_ping_mtm > 750) {
+    if (gdata->data.wfpr &&
+        gdata->data.ctm - gdata->data.last_ping_mtm > LAG_START_MS) {
       gdata->data.lagging = true;
     }
   }
 
   if (gdata->data.lagging) {
-    gdata->data.lag_mult -= 0.05f * gdata->data.vfr;
-    if (gdata->data.lag_mult < .2) gdata->data.lag_mult = .2;
+    gdata->data.lag_mult -= 0.02f * gdata->data.vfr;
+    if (gdata->data.lag_mult < LAG_MULT_MIN) gdata->data.lag_mult = LAG_MULT_MIN;
   } else if (gdata->data.lag_mult < 1) {
-    gdata->data.lag_mult += 0.05f * gdata->data.vfr;
+    gdata->data.lag_mult += 0.1f * gdata->data.vfr;
     if (gdata->data.lag_mult >= 1) gdata->data.lag_mult = 1;
   }
 
@@ -54,7 +69,7 @@ void oef(tenv* env) {
 
   gdata->data.gsc = usrs->smooth_zoom
                         ? glm_lerp(gdata->data.gsc, gdata->data.ms_zoom,
-                                   0.25f * gdata->data.vfr)
+                                   fminf(1.0f, 0.25f * gdata->data.vfr))
                         : gdata->data.ms_zoom;
 
   if (gdata->data.vfrb > 0) {

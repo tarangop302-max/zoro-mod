@@ -25,6 +25,34 @@ void snl(game_data* gdata, snake* o) {
   o->fltg = GD_EEZ;
 }
 
+/* Fold a new round-trip sample into the smoothed one-way delay. A spike sample
+   barely moves the estimate, so one bad ping can't make every head lurch. */
+static void net_update_owd(game_data* gdata, float rtt) {
+  if (rtt <= 0) return;
+  float owd = rtt * 0.5f;
+  float cur = gdata->data.owd_ms;
+  if (cur <= 0)
+    cur = owd;
+  else if (owd > cur * 2.0f + 15.0f)
+    cur += (owd - cur) * 0.03f;
+  else
+    cur += (owd - cur) * 0.2f;
+  gdata->data.owd_ms = cur;
+}
+
+/* How far (world units) to push a head forward along its heading so it is drawn
+   where the server has it right now instead of one network trip ago. Skipped
+   during a real stall, and capped below one segment so the head is never a
+   whole body segment ahead of the newest body point. */
+static float net_lead_units(game_data* gdata, snake* o) {
+  if (NET_LEAD_FACTOR <= 0.0f || gdata->data.lagging || o->dead) return 0.0f;
+  float lead_ms = gdata->data.owd_ms * NET_LEAD_FACTOR;
+  if (lead_ms > NET_LEAD_MAX_MS) lead_ms = NET_LEAD_MAX_MS;
+  float units = o->sp * lead_ms / 32.0f; /* sp/4 per 8 ms, same as oef() */
+  float cap = 0.9f * o->msl;
+  return units > cap ? cap : units;
+}
+
 void decode_secret(const uint8_t* packet, size_t packet_len, uint8_t* result) {
   uint8_t string[92] = {0};
   int string_idx = 0;
@@ -540,6 +568,33 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
         }
       }
 
+      /* Steering prediction (see input.c): while a locally-started turn is
+         still inside its window, this echo describes where the snake was one
+         round trip ago, so it must not overwrite our heading/turn state.
+         If the server's heading is far off what we predicted (it disagreed,
+         or we were teleported) trust the server and drop the prediction. */
+      bool keep_local_steer = false;
+#if STEER_PREDICT
+      if (is_my_snake) {
+        double rt_now = glfwGetTime() * 1000.0;
+        double until = gdata->data.steer_pred_until_ms;
+        if (rt_now < until && until - rt_now <= STEER_PRED_MAX_WINDOW_MS + 50.0) {
+          keep_local_steer = true;
+          if (ang != -1) {
+            float pda = fmodf(ang - o->ang, PI2);
+            if (pda < 0) pda += PI2;
+            if (pda > PI) pda -= PI2;
+            float turn_rate = gdata->data.mamu * 125.0f * o->scang * o->spang;
+            float thr = 0.3f + 2.0f * turn_rate * (gdata->data.owd_ms / 1000.0f);
+            if (fabsf(pda) > thr) {
+              keep_local_steer = false;
+              gdata->data.steer_pred_until_ms = 0;
+            }
+          }
+        }
+      }
+#endif
+      if (!keep_local_steer) {
       if (dir != -1) o->dir = dir;
       if (ang != -1) {
         float da = fmodf(ang - o->ang, PI2);
@@ -557,6 +612,7 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       if (wang != -1) {
         o->wang = wang;
         if (!is_my_snake) o->eang = wang;
+      }
       }
       if (speed != -1) {
         o->sp = speed;
@@ -783,15 +839,27 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
         gdata->data.ovyy = o->yy + o->fy;
       }
 
-      float csp = o->sp * (gdata->data.etm / 8.0f) / 4.0f;
-      csp *= gdata->data.lag_mult;
+      /* The server position in this packet is one network trip old by the
+         time we see it. Draw the head where the server has it now: push it
+         forward along its heading by (one-way delay * speed), and account for
+         that distance in chl exactly like normal per-frame movement would.
+         (The body point pushed above stays at the exact server position.)
+         The old code here multiplied speed by etm, which nothing ever sets,
+         so it always came out as 0. */
+      float csp = net_lead_units(gdata, o);
+      float lx = xx;
+      float ly = yy;
+      if (csp > 0) {
+        lx += cosf(o->ang) * csp;
+        ly += sinf(o->ang) * csp;
+      }
       float ochl = o->chl - 1;
       o->chl = csp / o->msl;
-      dx = xx - o->xx;
-      dy = yy - o->yy;
+      dx = lx - o->xx;
+      dy = ly - o->yy;
       float dchl = o->chl - ochl;
-      o->xx = xx;
-      o->yy = yy;
+      o->xx = lx;
+      o->yy = ly;
       k = o->fpos;
       for (int j = 0; j < GD_EEZ; j++) {
         o->fxs[k] -= dx * gdata->data.xfas[j];
@@ -825,8 +893,20 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
     }
   } else if (cmd == 'p') {
     gdata->data.wfpr = false;
-    gdata->data.pings[gdata->data.cping] = gdata->data.ctm - gdata->data.last_ping_mtm;
+    /* True round trip: real clock at send vs. real clock now. (The old value,
+       ctm - last_ping_mtm, used the per-frame timestamps, so it was always
+       rounded up to whole frames.) The menu preview path doesn't stamp
+       rt_ping_sent_ms, so it keeps the old formula. */
+    float rtt;
+    double rt_now = glfwGetTime() * 1000.0;
+    if (gdata->data.rt_ping_sent_ms > 0 && rt_now >= gdata->data.rt_ping_sent_ms)
+      rtt = (float)(rt_now - gdata->data.rt_ping_sent_ms);
+    else
+      rtt = gdata->data.ctm - gdata->data.last_ping_mtm;
+    gdata->data.rt_ping_sent_ms = 0;
+    gdata->data.pings[gdata->data.cping] = rtt;
     gdata->data.cping = (gdata->data.cping + 1) % PING_SAMPLE_COUNT;
+    net_update_owd(gdata, rtt);
     if (gdata->data.lagging) {
       gdata->data.etm *= gdata->data.lag_mult;
       gdata->data.lagging = false;

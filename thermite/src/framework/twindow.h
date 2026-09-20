@@ -70,6 +70,7 @@ typedef struct twindow {
 void     twindow_request_refresh(twindow* window);
 twindow* twindow_create(tenv* env, trender_func render_func, tresize_func resize_func);
 void     twindow_poll_input(twindow* window);
+void     twindow_pump_input(twindow* window);
 void     twindow_wait_input(twindow* window);
 void     twindow_toggle_fullscreen(twindow* window);
 bool     twindow_key_down(twindow* window, int key);

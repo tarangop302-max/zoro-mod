@@ -274,6 +274,16 @@ typedef struct user_settings {
      lobby stats (title_screen.c). Kept at the end so pre-v2.12 files
      remain a compatible prefix (see v212_prefix in read_user_settings). */
   int best_length;
+
+  /* v2.13 extension field, ported from Vlither-android. Index into
+     PROFILE_EMOJIS (profile_emoji.h); 0 = none. Chosen from Public Chat
+     and broadcast alongside our marker/score/ping (see
+     jsr_network_send_location), so it shows up next to our name for
+     teammates on the roster and near our minimap dot. Purely cosmetic --
+     not sent anywhere the SOS signal isn't already going. Kept at the end
+     so pre-v2.13 files remain a compatible prefix (see v213_prefix in
+     read_user_settings). */
+  int profile_emoji_id;
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

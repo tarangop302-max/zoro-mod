@@ -1143,6 +1143,7 @@ void global_chat_draw(tenv* env) {
                                     NULL,
                                     NULL,
                                     NULL,
+                                    NULL,
                                     &loc_sos,
                                     &loc_emoji_id
                                 )

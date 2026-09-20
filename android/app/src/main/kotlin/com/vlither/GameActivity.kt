@@ -215,7 +215,6 @@ class GameActivity : NativeActivity() {
          * Signature used in android_jni.c:
          * (Landroid/app/Activity;[BIILjava/lang/String;)V
          */
-        @JvmStatic
         /**
          * Called from C via JNI (android_jni.c) once the player picks
          * which captured kills to keep on the post-match review screen

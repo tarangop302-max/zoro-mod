@@ -115,6 +115,14 @@ typedef struct jsr_network {
     // to whatever game server they're on -- their own measurement
     // of their own connection, broadcast the same way so it can
     // be shown next to them in UI like the Teammates list.
+    // sos/emoji_id are the same idea as shape/color/score/ping above --
+    // each player's own choice, appended to the same broadcast so it
+    // reaches teammates regardless of distance.
+    //
+    // sos is true while that player currently has their SOS signal
+    // active (see jsr_network_send_location). emoji_id is an index
+    // into the shared profile-emoji table (0 = none), ported from
+    // Vlither-android's badge glyph list.
     struct {
         char username[32];
         char server_ip[64];
@@ -124,6 +132,8 @@ typedef struct jsr_network {
         float color[3];
         int score;
         int ping;
+        bool sos;
+        uint8_t emoji_id;
     } locations[64];
     int location_count;
 
@@ -237,6 +247,13 @@ bool jsr_network_roster_owner(
 //
 // ping is this player's own current connection latency (ms),
 // same idea -- their own measurement of their own connection.
+//
+// sos is this player's own current SOS state (true while their SOS
+// signal is active -- see global_chat_set_sos). emoji_id is this
+// player's own chosen profile emoji, an index into the shared
+// profile-emoji table (0 = none). Both ride along on the same
+// broadcast for the same reason score/ping do: it already goes out
+// regardless of distance, so teammates can see it anywhere on the map.
 bool jsr_network_send_location(
     jsr_network *net,
     float x,
@@ -247,7 +264,9 @@ bool jsr_network_send_location(
     float color_g,
     float color_b,
     int score,
-    int ping
+    int ping,
+    bool sos,
+    int emoji_id
 );
 
 // Number of other players whose last known position we
@@ -262,9 +281,12 @@ int jsr_network_location_count(
 // index is out of range.
 //
 // out_shape/out_color_* return that player's own chosen
-// marker appearance, out_score their own current score, and
-// out_ping their own current connection latency (ms) -- see
-// jsr_network_send_location.
+// marker appearance, out_score their own current score,
+// out_ping their own current connection latency (ms), out_sos
+// whether their SOS signal is currently active, and
+// out_emoji_id their chosen profile emoji index (0 = none) --
+// see jsr_network_send_location. Any of these may be NULL if
+// not needed.
 bool jsr_network_get_location(
     jsr_network *net,
     int index,
@@ -279,7 +301,9 @@ bool jsr_network_get_location(
     float *out_color_g,
     float *out_color_b,
     int *out_score,
-    int *out_ping
+    int *out_ping,
+    bool *out_sos,
+    int *out_emoji_id
 );
 
 // Send the team synchronization request.

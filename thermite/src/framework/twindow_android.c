@@ -630,6 +630,28 @@ void twindow_poll_input(twindow* window) {
     }
 }
 
+/*
+ * Drain pending TOUCH events only, mid-frame, without touching the per-frame
+ * just_down/just_up latches (twindow_poll_input clears those, and the game
+ * hasn't read them yet at this point in the frame).
+ *
+ * Lifecycle commands (window destroyed, surface resized, ...) are deliberately
+ * NOT processed here: we are between vkAcquireNextImageKHR and vkQueuePresentKHR
+ * and tearing the swapchain down under a frame in flight would be fatal. They
+ * are level-triggered on the looper fd, so they simply stay queued until the
+ * regular twindow_poll_input() at the top of the next frame.
+ */
+void twindow_pump_input(twindow* window) {
+    (void)window;
+    int events;
+    struct android_poll_source* source;
+    int ident;
+    while ((ident = ALooper_pollAll(0, NULL, &events, (void**)&source)) >= 0) {
+        if (ident != LOOPER_ID_INPUT) break;
+        if (source) source->process(g_android_app, source);
+    }
+}
+
 void twindow_wait_input(twindow* window) {
     window->touch.just_down       = false;
     window->touch.boost_just_down = false;

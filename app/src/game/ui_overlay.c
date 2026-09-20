@@ -11,6 +11,7 @@
 #include <math.h>
 #include "../user.h"
 #include "../arrow_styles.h"
+#include "net_graph.h"
 #include "user_settings.h"
 #include "sbot.h"
 #include "ntl_team.h"
@@ -332,6 +333,52 @@ void ui_overlay(tenv* env) {
     igPopFont();
 
     igPopFont();
+
+    /*
+     * Ping/FPS history graph (see net_graph.c). Default spot is just above
+     * the kills/rank/length block in the bottom-left corner -- where NTL puts
+     * its own -- and it can be dragged anywhere from the HUD layout editor.
+     * It is also drawn on that editor screen when switched off in Settings,
+     * so it can still be positioned.
+     */
+    {
+      bool ng_editing = gdata->curr_screen == HUD_LAYOUT_EDITOR;
+      if (usrs->show_net_graph || ng_editing) {
+        float ng_base =
+            usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize;
+        float ng_w, ng_h;
+        net_graph_default_size(ng_base, &ng_w, &ng_h);
+
+        float ng_x, ng_y;
+        if (usrs->net_graph_pos_custom) {
+          ng_x = usrs->net_graph_rel_x * ctx->size[0];
+          ng_y = usrs->net_graph_rel_y * ctx->size[1];
+        } else {
+          ng_x = style->WindowPadding.x;
+          ng_y = ctx->size[1] - line_height * 3 - style->WindowPadding.y -
+                 ng_h - style->ItemSpacing.y * 2;
+        }
+        ng_x = fmaxf(style->WindowPadding.x,
+                     fminf(ng_x, ctx->size[0] - ng_w - style->WindowPadding.x));
+        ng_y = fmaxf(style->WindowPadding.y,
+                     fminf(ng_y, ctx->size[1] - ng_h - style->WindowPadding.y));
+
+        net_graph_draw(igGetWindowDrawList(),
+                       usr->imgui_data.mono_font_bold[usrs->stats_font_size],
+                       ng_base * 0.68f, ng_x, ng_y, ng_w, ng_h);
+
+#ifdef ANDROID
+        static int s_ng_edit_action = 0;
+        static float s_ng_drag_dx = 0.0f, s_ng_drag_dy = 0.0f;
+        static bool s_ng_was_editing = false;
+        hud_layout_drag_rect(env, usrs, ctx, style, ng_x, ng_y, ng_w, ng_h,
+                             &usrs->net_graph_pos_custom,
+                             &usrs->net_graph_rel_x, &usrs->net_graph_rel_y,
+                             &s_ng_edit_action, &s_ng_drag_dx, &s_ng_drag_dy,
+                             &s_ng_was_editing);
+#endif
+      }
+    }
 
     /* Scale applied to the leaderboard (and the teammates list
      * below it) only -- shrinks their on-screen footprint without

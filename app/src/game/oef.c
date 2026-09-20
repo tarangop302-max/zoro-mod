@@ -4,6 +4,7 @@
 #include "oef.h"
 
 #include "../user.h"
+#include "net_graph.h"
 #include "sbot.h"
 
 void time_step(tenv* env) {
@@ -58,6 +59,9 @@ void time_step(tenv* env) {
   float lfr = gdata->data.fr;
   gdata->data.fr += gdata->data.vfr;
   gdata->data.vfrb = (int)(floorf(gdata->data.fr) - floorf(lfr));
+
+  /* Ping/FPS history for the on-screen graph (net_graph.c). */
+  net_graph_sample(env);
 }
 
 void oef(tenv* env) {

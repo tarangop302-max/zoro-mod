@@ -11,6 +11,7 @@
 #ifdef ANDROID
 #include <dirent.h>
 #include "../android_path.h"
+#include "../android_jni.h"
 #endif
 
 #ifndef IM_COL32
@@ -30,6 +31,7 @@ typedef struct {
   char filename[128];
   texture *tex;
   VkDescriptorSet ds;
+  bool saved_to_gallery;
 } gallery_item;
 
 static gallery_item s_items[MAX_GALLERY_ITEMS];
@@ -65,6 +67,7 @@ static void scan_kills_dir(void) {
     s_items[s_item_count].filename[sizeof(s_items[0].filename) - 1] = 0;
     s_items[s_item_count].tex = NULL;
     s_items[s_item_count].ds = VK_NULL_HANDLE;
+    s_items[s_item_count].saved_to_gallery = false;
     s_item_count++;
   }
   closedir(d);
@@ -148,9 +151,10 @@ static void draw_viewer(tenv *env, float sw, float sh) {
     igSetCursorPosY(sh * 0.4f + 40.0f);
   }
 
-  float btn_w = 180.0f;
+  float btn_w = 165.0f;
   float btn_h = igGetFrameHeight() * 1.5f;
-  float row_w = btn_w * 2.0f + 20.0f;
+  float gap = 16.0f;
+  float row_w = btn_w * 3.0f + gap * 2.0f;
   igSetCursorPosX(sw * 0.5f - row_w * 0.5f);
 
   if (igButton("Close", (ImVec2){btn_w, btn_h})) {
@@ -158,7 +162,27 @@ static void draw_viewer(tenv *env, float sw, float sh) {
     s_confirm_delete = false;
   }
   crystal_sheen();
-  igSameLine(0, 20.0f);
+  igSameLine(0, gap);
+
+#ifdef ANDROID
+  bool already_saved = it->saved_to_gallery;
+  igBeginDisabled(already_saved);
+  igPushStyleColor_Vec4(ImGuiCol_Button,
+                        (ImVec4){0.16f, 0.55f, 0.30f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                        (ImVec4){0.20f, 0.65f, 0.36f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                        (ImVec4){0.13f, 0.45f, 0.25f, 1.0f});
+  if (igButton(already_saved ? "Saved" : "\uea1a Save",
+              (ImVec2){btn_w, btn_h})) {
+    android_jni_save_image_to_gallery(it->filename);
+    it->saved_to_gallery = true;
+  }
+  igPopStyleColor(3);
+  igEndDisabled();
+  crystal_sheen();
+  igSameLine(0, gap);
+#endif
 
   igPushStyleColor_Vec4(ImGuiCol_Button,
                         (ImVec4){0.647f, 0.176f, 0.176f, 1.0f});
@@ -182,8 +206,8 @@ static void draw_viewer(tenv *env, float sw, float sh) {
 
   igSetCursorPosX(sw * 0.5f - row_w * 0.5f);
   igTextWrapped(
-      "Only removes it from this gallery -- if it was also saved to your "
-      "phone's Gallery app, delete it there too.");
+      "Kills are only saved in the app. Tap Save to also add this one to "
+      "your phone's Gallery.");
   (void)style;
 }
 

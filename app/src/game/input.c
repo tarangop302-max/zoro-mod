@@ -6,6 +6,39 @@
     
 #include "../user.h"    
     
+/*
+ * Steering prediction. The server only starts turning the snake when our
+ * steering packet reaches it, and we only see the turn when its echo comes
+ * back -- a full round trip (plus the 33 ms send gate) before the head visibly
+ * reacts to the arrow. So the moment a steering packet is sent we start the
+ * same turn locally, at exactly the turn rate the server applies. The
+ * server's echoes about our own heading are held back for a short window (see
+ * callback.c) so they can't drag the head back to where it was a round trip
+ * ago; once the window closes the normal smoothing reconciles any leftover.
+ */
+static void steer_predict(game_data* gdata, snake* me, int sang,
+                          double now_ms) {
+#if STEER_PREDICT
+  if (me->dead) return;
+  float target = (float)sang * PI2 / 251.0f;
+  float vang = fmodf(target - me->ang, PI2);
+  if (vang < 0) vang += PI2;
+  if (vang > PI) vang -= PI2;
+  if (fabsf(vang) < 0.0005f) return;
+  me->wang = target;
+  me->dir = vang < 0 ? 1 : 2;
+  float window = 2.0f * gdata->data.owd_ms + 50.0f;
+  if (window < STEER_PRED_MIN_WINDOW_MS) window = STEER_PRED_MIN_WINDOW_MS;
+  if (window > STEER_PRED_MAX_WINDOW_MS) window = STEER_PRED_MAX_WINDOW_MS;
+  gdata->data.steer_pred_until_ms = now_ms + window;
+#else
+  (void)gdata;
+  (void)me;
+  (void)sang;
+  (void)now_ms;
+#endif
+}
+
 void input(tenv* env) {    
   tuser_data* usr = env->usr;    
   tcontext* ctx = env->ctx;    
@@ -17,6 +50,9 @@ void input(tenv* env) {
     if (gdata->data.ctm - gdata->data.last_ping_mtm > 250) {    
       gdata->data.last_ping_mtm = gdata->data.ctm;    
       gdata->data.wfpr = true;    
+      /* Real send time, so the pong measures true round-trip ms instead    
+         of a value rounded to whole frames. */    
+      gdata->data.rt_ping_sent_ms = glfwGetTime() * 1000.0;    
       mg_ws_send(connection, (uint8_t[]){251}, 1, WEBSOCKET_OP_BINARY);    
     }    
   }    
@@ -77,6 +113,15 @@ void input(tenv* env) {
      * tracking from actually steering the snake while the bot is on.
      */
 #ifdef ANDROID
+
+      /*
+       * The touch state was last sampled at the top of the frame, BEFORE the
+       * vsync wait inside tcontext_begin(). Under vsync that wait is most of a
+       * frame, so the finger position used to steer was often 8-16 ms stale.
+       * Drain the input queue again right now so the arrow and the boost
+       * button use where the finger is at this instant.
+       */
+      twindow_pump_input(env->wnd);
 
       float tx = env->wnd->touch.x;
       float ty = env->wnd->touch.y;
@@ -269,9 +314,11 @@ void input(tenv* env) {
                       gdata->bot.output.accel;    
 #endif    
     
+    double now_ms = glfwGetTime() * 1000.0;    
     if (gdata->data.md != gdata->data.wmd &&    
-        gdata->data.ctm - gdata->data.last_accel_mtm > 150) {    
+        rt_gate(now_ms, gdata->data.rt_last_accel_ms, STEER_BOOST_MIN_MS)) {    
       gdata->data.md = gdata->data.wmd;    
+      gdata->data.rt_last_accel_ms = now_ms;    
       gdata->data.last_accel_mtm = gdata->data.ctm;    
       mg_ws_send(connection, (uint8_t[]){gdata->data.md ? 253 : 254}, 1,    
                  WEBSOCKET_OP_BINARY);    
@@ -281,8 +328,10 @@ void input(tenv* env) {
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;    
     me->eang = atan2f(ym, xm);    
     float ang;    
-    if (want_e && gdata->data.ctm - gdata->data.last_e_mtm > 50) {    
+    if (want_e &&    
+        rt_gate(now_ms, gdata->data.rt_last_e_ms, STEER_ANGLE_MIN_MS)) {    
       want_e = false;    
+      gdata->data.rt_last_e_ms = now_ms;    
       gdata->data.last_e_mtm = gdata->data.ctm;    
       gdata->data.lsxm = xm;    
       gdata->data.lsym = ym;    
@@ -298,6 +347,7 @@ void input(tenv* env) {
       if (sang != gdata->data.lsang) {    
         gdata->data.lsang = sang;    
         mg_ws_send(connection, (uint8_t[]){sang & 255}, 1, WEBSOCKET_OP_BINARY);    
+        steer_predict(gdata, me, sang, now_ms);    
       }    
     }    
   }    

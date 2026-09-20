@@ -217,6 +217,13 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->head_dot_color[2] = 1.0f;
 
   usr_settings->profile_emoji_id = 0;
+
+  usr_settings->show_net_graph = true;
+  usr_settings->net_graph_pos_custom = false;
+  usr_settings->net_graph_rel_x = 0.02f;
+  usr_settings->net_graph_rel_y = 0.60f;
+  memset(usr_settings->net_graph_reserved, 0,
+         sizeof(usr_settings->net_graph_reserved));
 }
 
 void write_default_settings(user_settings* usr_settings) {
@@ -282,9 +289,17 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v28_prefix = offsetof(user_settings, hud_layout_edit_mode);
   size_t v29_prefix = offsetof(user_settings, key_btn_shape);
   size_t v213_prefix = offsetof(user_settings, profile_emoji_id);
+  size_t v214_prefix = offsetof(user_settings, show_net_graph);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v214_prefix)
+    /* A file saved before the ping/FPS graph fields existed ends at
+       v214_prefix (everything up to and including profile_emoji_id),
+       possibly followed only by compiler tail padding. Read all of it, but do
+       not copy that padding into the graph fields: they keep their
+       defaults. */
+    bytes_to_read = v214_prefix;
   else if ((size_t)file_size >= v213_prefix)
     /* A file saved before profile_emoji_id existed ends at v213_prefix,
        possibly followed only by compiler tail padding. Do not copy that
@@ -466,6 +481,12 @@ void read_user_settings(user_settings* usr_settings) {
   if (loaded.profile_emoji_id < 0 ||
       loaded.profile_emoji_id >= PROFILE_EMOJI_COUNT)
     loaded.profile_emoji_id = 0;
+  if (!isfinite(loaded.net_graph_rel_x) || loaded.net_graph_rel_x < -0.25f ||
+      loaded.net_graph_rel_x > 1.25f)
+    loaded.net_graph_rel_x = 0.02f;
+  if (!isfinite(loaded.net_graph_rel_y) || loaded.net_graph_rel_y < -0.25f ||
+      loaded.net_graph_rel_y > 1.25f)
+    loaded.net_graph_rel_y = 0.60f;
 
   *usr_settings = loaded;
 }

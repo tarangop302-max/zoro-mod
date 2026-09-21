@@ -684,4 +684,270 @@ gallery_save_cleanup:
     if (did_attach) (*vm)->DetachCurrentThread(vm);
 }
 
+void android_jni_request_start_recording(void) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return;
+    }
+
+    jclass cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (cls && !(*env)->ExceptionCheck(env)) {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "requestStartRecording", "(Landroid/app/Activity;)V");
+        if (mid && !(*env)->ExceptionCheck(env)) {
+            (*env)->CallStaticVoidMethod(env, cls, mid,
+                                         g_android_app->activity->clazz);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    } else if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
+void android_jni_request_stop_recording(void) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return;
+    }
+
+    jclass cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (cls && !(*env)->ExceptionCheck(env)) {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "requestStopRecording", "(Landroid/app/Activity;)V");
+        if (mid && !(*env)->ExceptionCheck(env)) {
+            (*env)->CallStaticVoidMethod(env, cls, mid,
+                                         g_android_app->activity->clazz);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    } else if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
+bool android_jni_is_recording(void) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return false;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+    bool result = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return false;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return false;
+    }
+
+    jclass cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (cls && !(*env)->ExceptionCheck(env)) {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "isRecording", "(Landroid/app/Activity;)Z");
+        if (mid && !(*env)->ExceptionCheck(env)) {
+            result = (*env)->CallStaticBooleanMethod(
+                env, cls, mid, g_android_app->activity->clazz);
+        }
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            result = false;
+        }
+    } else if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+    return result;
+}
+
+android_recorder_event android_jni_poll_recorder_event(void) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return ANDROID_RECORDER_EVENT_NONE;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+    int result = ANDROID_RECORDER_EVENT_NONE;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return ANDROID_RECORDER_EVENT_NONE;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return ANDROID_RECORDER_EVENT_NONE;
+    }
+
+    jclass cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (cls && !(*env)->ExceptionCheck(env)) {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "pollRecorderEvent", "(Landroid/app/Activity;)I");
+        if (mid && !(*env)->ExceptionCheck(env)) {
+            result = (*env)->CallStaticIntMethod(
+                env, cls, mid, g_android_app->activity->clazz);
+        }
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            result = ANDROID_RECORDER_EVENT_NONE;
+        }
+    } else if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+    if (result < ANDROID_RECORDER_EVENT_NONE ||
+        result > ANDROID_RECORDER_EVENT_ERROR) {
+        return ANDROID_RECORDER_EVENT_NONE;
+    }
+    return (android_recorder_event)result;
+}
+
+void android_jni_save_clip_to_gallery(const char* filename) {
+    if (!filename || !g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return;
+    }
+
+    jclass cls = NULL;
+    cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (!cls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto clip_gallery_cleanup;
+    }
+
+    {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "saveClipToGallery",
+            "(Landroid/app/Activity;Ljava/lang/String;)V");
+        if (!mid || (*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            goto clip_gallery_cleanup;
+        }
+
+        jstring jfilename = (*env)->NewStringUTF(env, filename);
+        if (!jfilename || (*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            goto clip_gallery_cleanup;
+        }
+
+        if (!(*env)->ExceptionCheck(env)) {
+            (*env)->CallStaticVoidMethod(
+                env, cls, mid, g_android_app->activity->clazz, jfilename);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, jfilename);
+    }
+
+clip_gallery_cleanup:
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
+void android_jni_play_clip(const char* filename) {
+    if (!filename || !g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return;
+    }
+
+    jclass cls = NULL;
+    cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (!cls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto play_clip_cleanup;
+    }
+
+    {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "playClip",
+            "(Landroid/app/Activity;Ljava/lang/String;)V");
+        if (!mid || (*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            goto play_clip_cleanup;
+        }
+
+        jstring jfilename = (*env)->NewStringUTF(env, filename);
+        if (!jfilename || (*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            goto play_clip_cleanup;
+        }
+
+        if (!(*env)->ExceptionCheck(env)) {
+            (*env)->CallStaticVoidMethod(
+                env, cls, mid, g_android_app->activity->clazz, jfilename);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, jfilename);
+    }
+
+play_clip_cleanup:
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
 #endif

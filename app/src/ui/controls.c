@@ -5,6 +5,7 @@
 #include "../arrow_styles.h"
 #include "../user.h"
 #include "key_buttons.h"
+#include "../game/recorder.h"
 
 static const char* const ARROW_STYLE_NAMES[ARROW_STYLE_COUNT] = {
     "Red Arrow", "Red 3D", "Blue 3D", "Blue Neon", "Colourful",
@@ -432,6 +433,38 @@ void ui_controls(tenv* env) {
           save_user_settings(usrs);
           ui_key_buttons_open_editor(env);
         }
+
+#ifdef ANDROID
+        igSpacing();
+        igSeparatorText("Screen Recording");
+        igTextWrapped(
+            "A small record button also appears in-game. Clips are saved "
+            "in the app -- use Save in the Clips gallery to also add one "
+            "to your phone's Gallery.");
+        igSpacing();
+        bool recording_now = recorder_is_recording();
+        if (recording_now) {
+          igPushStyleColor_Vec4(ImGuiCol_Button,
+                                (ImVec4){0.647f, 0.176f, 0.176f, 1.0f});
+          igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                                (ImVec4){0.75f, 0.22f, 0.22f, 1.0f});
+          igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                                (ImVec4){0.55f, 0.14f, 0.14f, 1.0f});
+        } else {
+          igPushStyleColor_Vec4(ImGuiCol_Button,
+                                (ImVec4){0.16f, 0.55f, 0.30f, 1.0f});
+          igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                                (ImVec4){0.20f, 0.65f, 0.36f, 1.0f});
+          igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                                (ImVec4){0.13f, 0.45f, 0.25f, 1.0f});
+        }
+        if (igButton(recording_now ? "Stop Recording" : "Start Recording",
+                    (ImVec2){-1, frame_height * 1.7f})) {
+          recorder_toggle();
+        }
+        igPopStyleColor(3);
+#endif
+
         igEndChild();
 
         igEndTable();

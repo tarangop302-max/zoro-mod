@@ -13,6 +13,7 @@
 #include "ui/key_buttons.h"
 #include "ui/kills_gallery.h"
 #include "ui/kill_review.h"
+#include "ui/clips_gallery.h"
 #include "ui/viewport.h"
 
 #include "user.h"
@@ -257,6 +258,11 @@ void tinit(tenv* env) {
   );
 
 
+  ui_clips_gallery_init(
+      env
+  );
+
+
   ntl_team_init(
       env
   );
@@ -312,6 +318,11 @@ void tdestroy(tenv* env) {
 
 
   ui_kill_review_destroy(
+      env
+  );
+
+
+  ui_clips_gallery_destroy(
       env
   );
 
@@ -638,6 +649,9 @@ void trender(tenv* env) {
 
             gdata->curr_screen ==
                 KILL_SHOTS_REVIEW ||
+
+            gdata->curr_screen ==
+                CLIPS_GALLERY ||
 
             igGetIO_Nil()
                 ->WantTextInput
@@ -1021,6 +1035,14 @@ void trender(tenv* env) {
       case KILL_SHOTS_REVIEW:
 
         ui_kill_review(
+            env
+        );
+
+        break;
+
+      case CLIPS_GALLERY:
+
+        ui_clips_gallery(
             env
         );
 

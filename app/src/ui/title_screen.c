@@ -296,6 +296,14 @@ void ui_title_screen(tenv* env) {
   }
   crystal_sheen();
 
+  igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
+  igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 8 +
+                  frame_height * 7);
+  if (igButton("\ue90c Clips", (ImVec2){logo_size})) {
+    usr->gdata.curr_screen = CLIPS_GALLERY;
+  }
+  crystal_sheen();
+
   crystal_pop_theme();
 
   /* Quit: deliberately NOT part of the main column above (same idea as the

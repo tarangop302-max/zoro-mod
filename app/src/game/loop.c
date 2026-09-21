@@ -11,6 +11,7 @@
 #include "../user.h"
 #include "death_screen.h"
 #include "screenshot.h"
+#include "recorder.h"
 #include "input.h"
 #include "kill_feed.h"
 #include "oef.h"
@@ -78,6 +79,8 @@ void game_loop(tenv* env) {
          kill was ever captured and the death popup / gallery had nothing
          to show. */
       kill_feed_draw(env);
+      recorder_update();
+      recorder_button_draw(env);
 
       if (!gdata->death_pending) {
         if (usrs->hotkeys[HOTKEY_QUIT].active ||

@@ -41,6 +41,44 @@ void android_jni_save_screenshot(const unsigned char* rgba, int width,
    surfaced back to native code. */
 void android_jni_save_image_to_gallery(const char* filename);
 
+/* --- Screen recording (MediaProjection, see GameActivity.kt) ---
+   The permission flow is asynchronous (system consent dialog), so
+   starting/stopping just kick things off; use
+   android_jni_poll_recorder_event() once per frame to find out what
+   actually happened, mirroring android_jni_poll_ime_event()'s pattern but
+   with a plain event code instead of a byte-array payload (there's no
+   data to carry -- Kotlin already knows the clip's filename). */
+typedef enum android_recorder_event {
+    ANDROID_RECORDER_EVENT_NONE = 0,
+    ANDROID_RECORDER_EVENT_STARTED = 1,
+    ANDROID_RECORDER_EVENT_DENIED = 2,
+    ANDROID_RECORDER_EVENT_STOPPED = 3,
+    ANDROID_RECORDER_EVENT_ERROR = 4,
+} android_recorder_event;
+
+/* Shows the system "allow screen recording" dialog. Android requires
+   fresh consent for every recording session -- there's no way to skip
+   this on a second recording within the same app run. */
+void android_jni_request_start_recording(void);
+void android_jni_request_stop_recording(void);
+/* Cheap, synchronous state check (unlike the event queue, safe to call
+   every frame without draining anything). */
+bool android_jni_is_recording(void);
+/* Returns ANDROID_RECORDER_EVENT_NONE if nothing is pending. */
+android_recorder_event android_jni_poll_recorder_event(void);
+
+/* Copies an already-saved clip (filename, bare name, must already exist
+   under the app-private "Movies/clips" directory) into the system
+   MediaStore Videos collection, so it shows up in the phone's own
+   Gallery/Photos app too. Called when the player taps "Save" on a clip
+   in the in-app Clips gallery. */
+void android_jni_save_clip_to_gallery(const char* filename);
+
+/* Hands an already-saved clip off to the phone's own video player via a
+   standard VIEW intent. Called when the player taps "Play" on a clip in
+   the in-app Clips gallery. */
+void android_jni_play_clip(const char* filename);
+
 typedef enum android_ime_event_type {
     ANDROID_IME_EVENT_NONE = 0,
     ANDROID_IME_EVENT_TEXT        = 1,

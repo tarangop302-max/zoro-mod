@@ -24,6 +24,14 @@ static inline void android_build_kills_dir(char* out, int out_size) {
     snprintf(out, (size_t)out_size, "%s/Pictures/kills", android_get_pictures_dir());
 }
 
+/* Same base path as android_build_kills_dir() above (it's the app's
+   external data dir generally, not literally "Pictures"-specific) --
+   Kotlin's getExternalFilesDir(Environment.DIRECTORY_MOVIES) resolves to
+   the same base, just a different subfolder. Used for recorded clips. */
+static inline void android_build_clips_dir(char* out, int out_size) {
+    snprintf(out, (size_t)out_size, "%s/Movies/clips", android_get_pictures_dir());
+}
+
 static inline void android_build_path(char* out, int out_size, const char* filename) {
     snprintf(out, (size_t)out_size, "%s/%s", android_get_files_dir(), filename);
 }

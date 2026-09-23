@@ -25,12 +25,16 @@ typedef struct {
   unsigned char *rgba;
   int w, h;
   int kill_number;
-  /* True while the pixels are still in the swapchain's native BGRA order.
-     The R/B swap over ~2.5M pixels is deliberately NOT done at capture
-     time (that would run mid-match on the render thread); it is done once,
-     later, the first time the capture is actually read -- i.e. on the
-     post-match review screen or when saving. See ensure_rgba(). */
-  bool needs_swap;
+  /* True if the pixels are still in the swapchain's native BGRA order and
+     need an R/B swap. */
+  bool is_bgra;
+  /* False until ensure_rgba() has processed this capture (R/B swap if
+     needed, plus the alpha fix-up below). The R/B swap over ~2.5M pixels
+     is deliberately NOT done at capture time (that would run mid-match on
+     the render thread); it is done once, later, the first time the
+     capture is actually read -- i.e. on the post-match review screen or
+     when saving. See ensure_rgba(). */
+  bool finalized;
 } run_capture;
 
 static run_capture s_captures[MAX_RUN_CAPTURES];
@@ -98,15 +102,32 @@ void screenshot_request(int kill_number) {
 int screenshot_run_count(void) { return s_capture_count; }
 
 static void ensure_rgba(run_capture *c) {
-  if (!c->needs_swap || !c->rgba) return;
+  if (c->finalized || !c->rgba) return;
   size_t pixel_count = (size_t)c->w * (size_t)c->h;
   for (size_t i = 0; i < pixel_count; i++) {
     unsigned char *p = c->rgba + i * 4;
-    unsigned char tmp = p[0];
-    p[0] = p[2];
-    p[2] = tmp;
+    if (c->is_bgra) {
+      unsigned char tmp = p[0];
+      p[0] = p[2];
+      p[2] = tmp;
+    }
+    /* The swapchain is created with VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR (see
+       tcontext_android.c), which tells the window system to ignore this
+       channel entirely -- so nothing in the render path is obliged to
+       leave it at a meaningful value. In practice it ends up holding
+       whatever ImGui's alpha blending left behind (background clear,
+       translucent HUD panels, etc), so most of a captured frame is only
+       partially opaque or fully transparent even though it looked solid
+       on screen. That's invisible during normal presentation (the
+       compositor never reads it), but this same buffer later gets PNG
+       encoded and re-displayed WITH real alpha blending -- in the kill
+       review screen and the in-app Kill Shots gallery -- where those
+       leftover values show through as holes/streaks instead of the actual
+       screenshot. Stamp it fully opaque so it displays the same way it
+       actually looked on screen. */
+    p[3] = 255;
   }
-  c->needs_swap = false;
+  c->finalized = true;
 }
 
 bool screenshot_run_get(int index, const unsigned char **out_rgba,
@@ -128,7 +149,7 @@ void screenshot_run_reset(void) {
 }
 
 static void store_capture(unsigned char *rgba, int w, int h,
-                          int kill_number, bool needs_swap) {
+                          int kill_number, bool is_bgra) {
   if (s_capture_count >= MAX_RUN_CAPTURES) {
     /* Evict the oldest, shift the rest down, keep the newest ones. */
     free(s_captures[0].rgba);
@@ -140,7 +161,8 @@ static void store_capture(unsigned char *rgba, int w, int h,
   s_captures[s_capture_count].w = w;
   s_captures[s_capture_count].h = h;
   s_captures[s_capture_count].kill_number = kill_number;
-  s_captures[s_capture_count].needs_swap = needs_swap;
+  s_captures[s_capture_count].is_bgra = is_bgra;
+  s_captures[s_capture_count].finalized = false;
   s_capture_count++;
 }
 

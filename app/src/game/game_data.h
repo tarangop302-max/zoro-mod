@@ -71,6 +71,12 @@ typedef struct game_data {
     int   joy_last_xm;
     int   joy_last_ym;
 
+    /* Slither-mobile-style joystick state. The base stays fixed at
+       (jcx, jcy) -- it does not drag under the finger -- and steering
+       is purely the angle from that fixed base to the current touch. */
+    float joy_angle;
+    bool  joy_has_direction;
+
     float tp_cursor_x;
     float tp_cursor_y;
     float tp_anchor_x;

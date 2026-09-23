@@ -268,15 +268,39 @@ void input(tenv* env) {
       } else {
 
         if (env->wnd->touch.down) {
-
-          if (env->wnd->touch.just_down || !gdata->touch_ctrl.joy_tracking) {
-            gdata->touch_ctrl.joy_anchor_x = tx;
-            gdata->touch_ctrl.joy_anchor_y = ty;
-            gdata->touch_ctrl.joy_tracking = true;
+          /* Match Slither mobile's joystick mode: the base is fixed at the
+             on-screen ring (same jr/jcx/jcy the ring is drawn at in
+             ui_overlay.c) and the touch's angle from that base steers the
+             snake. The old code anchored to wherever the finger first
+             touched down -- anywhere on screen, not necessarily on the
+             ring -- and scaled the raw pixel offset from there, so the
+             visible ring and the actual steering input were unrelated to
+             each other. */
+          float sw     = (float)ctx->size[0];
+          float sh     = (float)ctx->size[1];
+          float margin = sw * 0.025f;
+          float jr, jcx, jcy;
+          if (usrs->joy_pos_custom) {
+            jr  = sh * usrs->joy_rel_size;
+            jcx = sw * usrs->joy_rel_x;
+            jcy = sh * usrs->joy_rel_y;
+          } else {
+            jr  = sh * 0.175f;
+            jcx = usrs->ctrl_swap_sides ? (sw - jr - margin) : (jr + margin);
+            jcy = sh - jr - margin;
           }
 
-          xm = (int)((tx - gdata->touch_ctrl.joy_anchor_x) * 4.0f);
-          ym = (int)((ty - gdata->touch_ctrl.joy_anchor_y) * 4.0f);
+          float dx = tx - jcx;
+          float dy = ty - jcy;
+          if (dx * dx + dy * dy > 0.0001f) {
+            gdata->touch_ctrl.joy_angle = atan2f(dy, dx);
+            gdata->touch_ctrl.joy_has_direction = true;
+          }
+          gdata->touch_ctrl.joy_tracking = true;
+
+          float steer_len = GLM_MAX(256.0f, jr * 4.0f);
+          xm = (int)(cosf(gdata->touch_ctrl.joy_angle) * steer_len);
+          ym = (int)(sinf(gdata->touch_ctrl.joy_angle) * steer_len);
 
           gdata->touch_ctrl.joy_last_xm = xm;
           gdata->touch_ctrl.joy_last_ym = ym;

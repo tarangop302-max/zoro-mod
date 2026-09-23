@@ -11,11 +11,18 @@
   (((ImU32)(A) << 24) | ((ImU32)(B) << 16) | ((ImU32)(G) << 8) | ((ImU32)(R)))
 #endif
 
+/* Once the player has tapped Start Recording at least once this session,
+   the floating button stays visible from then on -- through stops,
+   restarts, and every screen -- rather than blinking in and out with
+   gdata->curr_screen. See recorder_button_draw() below. */
+static bool s_widget_engaged = false;
+
 void recorder_toggle(void) {
 #ifdef ANDROID
   if (android_jni_is_recording()) {
     android_jni_request_stop_recording();
   } else {
+    s_widget_engaged = true;
     android_jni_request_start_recording();
   }
 #endif
@@ -42,11 +49,16 @@ void recorder_update(void) {
 
 void recorder_button_draw(tenv *env) {
 #ifdef ANDROID
-  game_data *gdata = &env->usr->gdata;
-  if (gdata->curr_screen != PLAYING || !gdata->data.follow_view ||
-      gdata->preview_active) {
-    return;
-  }
+  /* Used to also require curr_screen == PLAYING (plus follow_view and
+     !preview_active), which is why the button only ever showed up once
+     you actually joined a match -- even if recording had already been
+     started from the Clips screen beforehand. Now it's gated purely on
+     "has the player engaged recording this session", so it appears the
+     moment Start Recording is tapped and then stays fixed on every
+     screen regardless of whether recording is subsequently started or
+     stopped again. This is now called every frame from tdraw() (see
+     main.c), not just while a match is running (see loop.c). */
+  if (!s_widget_engaged) return;
 
   tcontext *ctx = env->ctx;
   float sh = ctx->size[1];

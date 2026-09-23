@@ -830,22 +830,14 @@ void ui_overlay(tenv* env) {
       ImDrawList_AddLine(dl,
         (ImVec2){jcx, jcy - jr * 0.78f}, (ImVec2){jcx, jcy + jr * 0.78f}, cross, 1.5f);
 
+      /* Thumb position now comes straight from joy_angle -- the same value
+         that drives steering in input.c -- so the visible thumb always
+         matches what the game is actually reading as your input. */
       float jtx = jcx, jty = jcy;
-      static float s_joy_last_dx = 0.0f, s_joy_last_dy = 0.0f;
-      if (joy_on) {
-        float dx   = env->wnd->touch.x - gdata->touch_ctrl.joy_anchor_x;
-        float dy   = env->wnd->touch.y - gdata->touch_ctrl.joy_anchor_y;
-        float dist = sqrtf(dx * dx + dy * dy);
-        float cap  = jr * 0.68f;
-        float sc   = (dist > cap && dist > 0.001f) ? cap / dist : 1.0f;
-        jtx = jcx + dx * sc;
-        jty = jcy + dy * sc;
-        s_joy_last_dx = jtx - jcx;
-        s_joy_last_dy = jty - jcy;
-      } else {
-
-        jtx = jcx + s_joy_last_dx;
-        jty = jcy + s_joy_last_dy;
+      float cap = jr * 0.68f;
+      if (gdata->touch_ctrl.joy_has_direction) {
+        jtx = jcx + cosf(gdata->touch_ctrl.joy_angle) * cap;
+        jty = jcy + sinf(gdata->touch_ctrl.joy_angle) * cap;
       }
       ImDrawList_AddCircleFilled(dl,
         (ImVec2){jtx, jty}, jr * 0.29f,

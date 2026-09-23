@@ -4,6 +4,7 @@
 #include "game/ntl_team.h"
 #include "game/global_chat.h"
 #include "game/screenshot.h"
+#include "game/recorder.h"
 
 #include "ui/skin_editor.h"
 #include "ui/title_screen.h"
@@ -1048,6 +1049,18 @@ void trender(tenv* env) {
 
         break;
     }
+
+
+    // Floating screen-record button. Drawn on every screen (not just
+    // PLAYING) once the player has engaged recording, same reasoning as
+    // global_chat_draw() below -- it needs to appear the instant Start
+    // Recording is tapped (e.g. from the Clips screen) and stay fixed
+    // from then on, not only while actually connected to a match.
+
+    recorder_update();
+    recorder_button_draw(
+        env
+    );
 
 
     // NEW PUBLIC GLOBAL CHAT

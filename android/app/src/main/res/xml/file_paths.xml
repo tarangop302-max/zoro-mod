@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Matches getExternalFilesDir(Environment.DIRECTORY_MOVIES) + "clips"
+         in GameActivity.kt's recording code. -->
+    <external-files-path name="clips" path="Movies/clips/" />
+</paths>

@@ -11,6 +11,7 @@
 #include "../user.h"
 #include "death_screen.h"
 #include "screenshot.h"
+#include "recorder.h"
 #include "input.h"
 #include "kill_feed.h"
 #include "oef.h"
@@ -78,11 +79,8 @@ void game_loop(tenv* env) {
          kill was ever captured and the death popup / gallery had nothing
          to show. */
       kill_feed_draw(env);
-      /* Recorder controls (recorder_update()/recorder_button_draw()) used
-         to be called from right here, which is why the floating record
-         button only ever showed up while actually connected to a match.
-         They're now called once per frame from tdraw() in main.c instead,
-         same as global_chat_draw(), so they run on every screen. */
+      recorder_update();
+      recorder_button_draw(env);
 
       if (!gdata->death_pending) {
         if (usrs->hotkeys[HOTKEY_QUIT].active ||

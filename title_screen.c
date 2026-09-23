@@ -8,8 +8,6 @@
 #include "../user.h"
 #include "../game/screenshot.h"
 #include "crystal_theme.h"
-#include "kills_gallery.h"
-#include "clips_gallery.h"
 
 bool g_sl_popup_open = false;
 
@@ -294,15 +292,6 @@ void ui_title_screen(tenv* env) {
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 7 +
                   frame_height * 6);
   if (igButton("\ue90c Kill Shots", (ImVec2){logo_size})) {
-    /* ui_kills_gallery_init()/_destroy() are only ever called once each,
-       at app startup/shutdown (see main.c's tinit/tdestroy) -- so the
-       gallery's own s_scanned flag (kills_gallery.c) stayed true for the
-       rest of the app's life after the first visit, and new screenshots
-       saved after that never showed up until the whole game restarted.
-       Force a fresh disk scan (and properly release any GPU thumbnail
-       textures from the previous visit) every time we enter the screen. */
-    ui_kills_gallery_destroy(env);
-    ui_kills_gallery_init(env);
     usr->gdata.curr_screen = KILLS_GALLERY;
   }
   crystal_sheen();
@@ -311,11 +300,6 @@ void ui_title_screen(tenv* env) {
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 8 +
                   frame_height * 7);
   if (igButton("\ue90c Clips", (ImVec2){logo_size})) {
-    /* Same fix as Kill Shots above -- clips_gallery.c's s_scanned flag
-       only ever got reset at app shutdown, so a clip saved after the
-       first visit to this screen never appeared until a restart. */
-    ui_clips_gallery_destroy(env);
-    ui_clips_gallery_init(env);
     usr->gdata.curr_screen = CLIPS_GALLERY;
   }
   crystal_sheen();

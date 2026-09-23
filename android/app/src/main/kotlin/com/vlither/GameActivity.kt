@@ -10,9 +10,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.MediaRecorder
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -312,6 +318,284 @@ class GameActivity : NativeActivity() {
                     Log.e(TAG, "saveImageToGallery error: ${e.message}")
                 }
             }.start()
+        }
+
+        // ---------------------------------------------------------------
+        // Screen recording (MediaProjection). Clips are saved app-private
+        // only (Movies/clips under getExternalFilesDir) -- pushing a copy
+        // to the phone's own Gallery only happens when the player taps
+        // Save on a clip in the in-app Clips gallery, same pattern as kill
+        // screenshots (see saveImageToGallery() above and
+        // saveClipToGallery() below).
+        //
+        // The permission flow is asynchronous (system consent dialog via
+        // startActivityForResult/onActivityResult), unlike every other
+        // JNI-callable function here which is a synchronous call-and-
+        // return. Native code finds out what happened via
+        // pollRecorderEvent(), mirroring the existing IME event queue
+        // pattern (see pollImeEvent() above) but with plain integer event
+        // codes since there's no payload to carry. Android also requires
+        // fresh user consent for every single recording session -- a
+        // previously granted MediaProjection can't be reused for a new
+        // recording after a previous one was stopped, so
+        // requestStartRecording() always shows the system dialog again.
+        // ---------------------------------------------------------------
+
+        const val REC_EVENT_STARTED = 1
+        const val REC_EVENT_DENIED = 2
+        const val REC_EVENT_STOPPED = 3
+        const val REC_EVENT_ERROR = 4
+        private const val REQUEST_CODE_SCREEN_RECORD = 4202
+
+        private val recorderEvents = ConcurrentLinkedQueue<Int>()
+        private var mediaProjection: MediaProjection? = null
+        private var mediaRecorder: MediaRecorder? = null
+        private var virtualDisplay: VirtualDisplay? = null
+        @Volatile private var recordingActive = false
+
+        /** Kicks off the (asynchronous) system permission dialog. Result
+         * arrives later via GameActivity.onActivityResult(), which either
+         * starts the actual recording or pushes REC_EVENT_DENIED. */
+        @JvmStatic
+        fun requestStartRecording(activity: Activity) {
+            if (recordingActive) return
+            try {
+                val manager = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                    as MediaProjectionManager
+                val intent = manager.createScreenCaptureIntent()
+                activity.startActivityForResult(intent, REQUEST_CODE_SCREEN_RECORD)
+            } catch (e: Exception) {
+                Log.e(TAG, "requestStartRecording error: ${e.message}")
+                recorderEvents.add(REC_EVENT_ERROR)
+            }
+        }
+
+        /** Called from GameActivity.onActivityResult() once the player
+         * responds to the system dialog and grants permission. Starts the
+         * foreground service (required by the platform for
+         * MediaProjection), obtains the projection, and wires up a
+         * VirtualDisplay feeding a MediaRecorder writing straight to the
+         * app-private clips folder. */
+        private fun startRecordingSessionInternal(activity: Activity, resultCode: Int, data: Intent) {
+            try {
+                val serviceIntent = Intent(activity, ScreenRecordService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    activity.startForegroundService(serviceIntent)
+                } else {
+                    activity.startService(serviceIntent)
+                }
+
+                val manager = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                    as MediaProjectionManager
+                val projection = manager.getMediaProjection(resultCode, data)
+                if (projection == null) {
+                    recorderEvents.add(REC_EVENT_ERROR)
+                    activity.stopService(serviceIntent)
+                    return
+                }
+                projection.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        // The OS itself can revoke/end a projection (e.g.
+                        // the player denies a re-prompt some devices show,
+                        // or the system reclaims it) -- treat that exactly
+                        // like the player tapping Stop.
+                        stopRecordingInternal(activity, notifyEvent = true)
+                    }
+                }, null)
+
+                val metrics = activity.resources.displayMetrics
+                val width = metrics.widthPixels
+                val height = metrics.heightPixels
+                val density = metrics.densityDpi
+
+                val moviesBase = activity.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+                if (moviesBase == null) {
+                    Log.e(TAG, "startRecordingSession: no external files dir available")
+                    recorderEvents.add(REC_EVENT_ERROR)
+                    projection.stop()
+                    activity.stopService(serviceIntent)
+                    return
+                }
+                val clipsDir = File(moviesBase, "clips")
+                clipsDir.mkdirs()
+                val filename = "clip_${System.currentTimeMillis() / 1000L}.mp4"
+                val outFile = File(clipsDir, filename)
+
+                val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    MediaRecorder(activity)
+                } else {
+                    @Suppress("DEPRECATION")
+                    MediaRecorder()
+                }
+                recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                recorder.setVideoSize(width, height)
+                recorder.setVideoFrameRate(30)
+                recorder.setVideoEncodingBitRate(8_000_000)
+                recorder.setOutputFile(outFile.absolutePath)
+                recorder.prepare()
+
+                val display = projection.createVirtualDisplay(
+                    "VlitherRecording",
+                    width, height, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    recorder.surface,
+                    null, null
+                )
+                if (display == null) {
+                    recorder.release()
+                    projection.stop()
+                    activity.stopService(serviceIntent)
+                    recorderEvents.add(REC_EVENT_ERROR)
+                    return
+                }
+
+                recorder.start()
+
+                mediaProjection = projection
+                mediaRecorder = recorder
+                virtualDisplay = display
+                recordingActive = true
+                recorderEvents.add(REC_EVENT_STARTED)
+            } catch (e: Exception) {
+                Log.e(TAG, "startRecordingSession error: ${e.message}")
+                recorderEvents.add(REC_EVENT_ERROR)
+                stopRecordingInternal(activity, notifyEvent = false)
+            }
+        }
+
+        @JvmStatic
+        fun requestStopRecording(activity: Activity) {
+            stopRecordingInternal(activity, notifyEvent = true)
+        }
+
+        private fun stopRecordingInternal(activity: Activity, notifyEvent: Boolean) {
+            if (!recordingActive && mediaRecorder == null) return
+            try {
+                mediaRecorder?.let {
+                    try {
+                        it.stop()
+                    } catch (e: Exception) {
+                        // stop() throws if called too soon after start() or if
+                        // nothing was ever written -- the file may be
+                        // unusable, but this must never crash the app.
+                        Log.e(TAG, "mediaRecorder.stop error: ${e.message}")
+                    }
+                    it.release()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "stopRecordingInternal error: ${e.message}")
+            }
+            mediaRecorder = null
+            try {
+                virtualDisplay?.release()
+            } catch (e: Exception) {
+                Log.e(TAG, "virtualDisplay.release error: ${e.message}")
+            }
+            virtualDisplay = null
+            try {
+                mediaProjection?.stop()
+            } catch (e: Exception) {
+                Log.e(TAG, "mediaProjection.stop error: ${e.message}")
+            }
+            mediaProjection = null
+            val wasActive = recordingActive
+            recordingActive = false
+            try {
+                activity.stopService(Intent(activity, ScreenRecordService::class.java))
+            } catch (e: Exception) {
+                Log.e(TAG, "stopService error: ${e.message}")
+            }
+            if (notifyEvent && wasActive) recorderEvents.add(REC_EVENT_STOPPED)
+        }
+
+        @JvmStatic
+        fun isRecording(activity: Activity): Boolean = recordingActive
+
+        /** Polls one queued recorder event (REC_EVENT_* above), or 0 if
+         * none is pending. Mirrors pollImeEvent()'s "poll once per frame"
+         * pattern but with a plain int instead of a byte-array payload. */
+        @JvmStatic
+        fun pollRecorderEvent(activity: Activity): Int {
+            return recorderEvents.poll() ?: 0
+        }
+
+        /** Called from C via JNI when the player taps "Save" on a clip in
+         * the in-app Clips gallery -- copies the already-saved app-private
+         * clip (filename, bare name, must already exist under
+         * Movies/clips) into the system MediaStore Videos collection so
+         * it also shows up in the phone's own Gallery/Photos app. */
+        @JvmStatic
+        fun saveClipToGallery(activity: Activity, filename: String) {
+            Thread {
+                try {
+                    val moviesBase = activity.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+                    val sourceFile = moviesBase?.let { File(File(it, "clips"), filename) }
+                    if (sourceFile == null || !sourceFile.exists()) {
+                        Log.e(TAG, "saveClipToGallery: source file not found: $filename")
+                        return@Thread
+                    }
+
+                    val resolver = activity.contentResolver
+                    val values = ContentValues().apply {
+                        put(MediaStore.Video.Media.DISPLAY_NAME, filename)
+                        put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/Vlither")
+                            put(MediaStore.Video.Media.IS_PENDING, 1)
+                        }
+                    }
+                    val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    } else {
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    }
+                    val uri = resolver.insert(collection, values)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { out ->
+                            sourceFile.inputStream().use { input -> input.copyTo(out) }
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            values.clear()
+                            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                            resolver.update(uri, values, null, null)
+                        }
+                    } else {
+                        Log.e(TAG, "saveClipToGallery: MediaStore insert failed")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "saveClipToGallery error: ${e.message}")
+                }
+            }.start()
+        }
+
+        /** Called from C via JNI when the player taps "Play" on a clip in
+         * the in-app Clips gallery -- hands off to the phone's own video
+         * player via a standard VIEW intent rather than an in-app player.
+         * filename must already exist under the app-private Movies/clips
+         * directory. */
+        @JvmStatic
+        fun playClip(activity: Activity, filename: String) {
+            try {
+                val moviesBase = activity.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+                val sourceFile = moviesBase?.let { File(File(it, "clips"), filename) }
+                if (sourceFile == null || !sourceFile.exists()) {
+                    Log.e(TAG, "playClip: source file not found: $filename")
+                    return
+                }
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    activity, "${activity.packageName}.fileprovider", sourceFile
+                )
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "video/mp4")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                activity.startActivity(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "playClip error: ${e.message}")
+            }
         }
 
         /** Enable or disable the real Android IME bridge used by ImGui. */
@@ -778,7 +1062,22 @@ class GameActivity : NativeActivity() {
         scanAnimator?.cancel()
         overlayRef  = null
         scanAnimator = null
+        // Safety net: don't leak the MediaProjection/foreground service if
+        // the activity is destroyed mid-recording (backgrounded and
+        // reclaimed, crash elsewhere, etc).
+        stopRecordingInternal(this, notifyEvent = false)
         super.onDestroy()
         Log.d(TAG, "GameActivity destroyed")
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_SCREEN_RECORD) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                startRecordingSessionInternal(this, resultCode, data)
+            } else {
+                recorderEvents.add(REC_EVENT_DENIED)
+            }
+        }
     }
 }

@@ -57,6 +57,7 @@ class MainActivity : Activity() {
     }
 
     private lateinit var btnPlay: Button
+    private lateinit var btnPlay2: Button
     private lateinit var btnChangelog: Button
 
     private lateinit var layoutUpdate: LinearLayout
@@ -627,6 +628,33 @@ Changes made by Lucky
             launchGame()
         }
 
+        // Window 2 — opens a second, independent game instance (own
+        // process, own connection) that can be dragged into a floating
+        // pop-up window alongside Window 1.
+        btnPlay2 = Button(this)
+
+        btnPlay2.text = "▶  PLAY (Window 2)"
+
+        btnPlay2.textSize = 18f
+
+        btnPlay2.setPadding(
+            56,
+            28,
+            56,
+            28
+        )
+
+        btnPlay2.layoutParams =
+            buttonParams
+
+        btnPlay2.isEnabled = true
+
+        btnPlay2.alpha = 1.0f
+
+        btnPlay2.setOnClickListener {
+            launchGame2()
+        }
+
         // Changelog
 
         btnChangelog = Button(this)
@@ -795,6 +823,10 @@ Changes made by Lucky
         )
 
         column.addView(
+            btnPlay2
+        )
+
+        column.addView(
             btnChangelog
         )
 
@@ -817,15 +849,28 @@ Changes made by Lucky
     // ─────────────────────────────────────────────────────────────
 
     private fun launchGame() {
+        launchGameWindow(GameActivity::class.java, "GameActivity")
+    }
+
+    // Window 2 — separate process (:game2), separate task, so it shows as
+    // its own Recents entry and can be dragged into a floating pop-up /
+    // split-screen window independently of Window 1.
+    private fun launchGame2() {
+        launchGameWindow(GameActivity2::class.java, "GameActivity2")
+    }
+
+    private fun launchGameWindow(activityClass: Class<*>, tag: String) {
         try {
             val intent =
                 Intent(
                     this,
-                    GameActivity::class.java
+                    activityClass
                 )
 
             intent.addFlags(
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_MULTIPLE_TASK
             )
 
             startActivity(
@@ -835,7 +880,7 @@ Changes made by Lucky
         } catch (e: Exception) {
             Log.e(
                 TAG,
-                "Failed to launch GameActivity: ${e.message}"
+                "Failed to launch $tag: ${e.message}"
             )
 
             android.widget.Toast.makeText(

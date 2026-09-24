@@ -224,6 +224,17 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->net_graph_rel_y = 0.60f;
   memset(usr_settings->net_graph_reserved, 0,
          sizeof(usr_settings->net_graph_reserved));
+
+  memset(usr_settings->snakey_rain_settings_reserved, 0,
+         sizeof(usr_settings->snakey_rain_settings_reserved));
+  usr_settings->snakey_rain_enabled = false;
+  strcpy(usr_settings->snakey_rain_username, "snakeyuser");
+  strcpy(usr_settings->snakey_rain_password, "wormfood");
+  usr_settings->snakey_rain_max_bots = 1000;
+  strcpy(usr_settings->snakey_rain_bot_name, "SnakeyRain");
+  strcpy(usr_settings->snakey_rain_bot_skin,
+         "uuuuuuuauuuuuuaauuuuuaaauuuuaaaauuuaaaaauuaaaaaauaaaaaaa"
+         "uuaaaaaauuuaaaaauuuuaaaauuuuuaaauuuuuuaa");
 }
 
 void write_default_settings(user_settings* usr_settings) {
@@ -290,9 +301,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v29_prefix = offsetof(user_settings, key_btn_shape);
   size_t v213_prefix = offsetof(user_settings, profile_emoji_id);
   size_t v214_prefix = offsetof(user_settings, show_net_graph);
+  size_t v215_prefix = offsetof(user_settings, snakey_rain_settings_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v215_prefix)
+    /* A file saved before Snakey Rain existed ends at v215_prefix (everything
+       up to and including net_graph_reserved), possibly followed only by
+       compiler tail padding. Preserve every value in it, but keep Snakey Rain
+       disabled with default credentials until the player opts in. */
+    bytes_to_read = v215_prefix;
   else if ((size_t)file_size >= v214_prefix)
     /* A file saved before the ping/FPS graph fields existed ends at
        v214_prefix (everything up to and including profile_emoji_id),
@@ -487,6 +505,24 @@ void read_user_settings(user_settings* usr_settings) {
   if (!isfinite(loaded.net_graph_rel_y) || loaded.net_graph_rel_y < -0.25f ||
       loaded.net_graph_rel_y > 1.25f)
     loaded.net_graph_rel_y = 0.60f;
+
+  loaded.snakey_rain_enabled = !!loaded.snakey_rain_enabled;
+  loaded.snakey_rain_username[sizeof loaded.snakey_rain_username - 1] = 0;
+  loaded.snakey_rain_password[sizeof loaded.snakey_rain_password - 1] = 0;
+  if (!loaded.snakey_rain_username[0])
+    strcpy(loaded.snakey_rain_username, "snakeyuser");
+  if (!loaded.snakey_rain_password[0])
+    strcpy(loaded.snakey_rain_password, "wormfood");
+  if (loaded.snakey_rain_max_bots < 1 || loaded.snakey_rain_max_bots > 1000)
+    loaded.snakey_rain_max_bots = 1000;
+  loaded.snakey_rain_bot_name[sizeof loaded.snakey_rain_bot_name - 1] = 0;
+  loaded.snakey_rain_bot_skin[sizeof loaded.snakey_rain_bot_skin - 1] = 0;
+  if (!loaded.snakey_rain_bot_name[0])
+    strcpy(loaded.snakey_rain_bot_name, "SnakeyRain");
+  if (!loaded.snakey_rain_bot_skin[0])
+    strcpy(loaded.snakey_rain_bot_skin,
+           "uuuuuuuauuuuuuaauuuuuaaauuuuaaaauuuaaaaauuaaaaaauaaaaaaa"
+         "uuaaaaaauuuaaaaauuuuaaaauuuuuaaauuuuuuaa");
 
   *usr_settings = loaded;
 }

@@ -1,4 +1,5 @@
 #include "title_screen.h"
+#include <math.h>
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
 #include "../android_jni.h"
@@ -7,6 +8,7 @@
 #include "../network/server.h"
 #include "../user.h"
 #include "../game/screenshot.h"
+#include "../game/snakey_rain.h"
 #include "crystal_theme.h"
 #include "kills_gallery.h"
 #include "clips_gallery.h"
@@ -19,6 +21,123 @@ bool g_sl_popup_open = false;
    editor and other screens can share the exact same look. */
 
 void ui_title_screen_init(tenv* env) {}
+
+/* Snakey Rain: small ON/OFF button under Quit (top-right) that opens a
+   settings popup. Every change is saved and applied live -- no restart. */
+static void draw_snakey_rain_homepage(tenv* env, float frame_height) {
+  tuser_data* usr = env->usr;
+  tcontext* ctx = env->ctx;
+  user_settings* usrs = &usr->usrs;
+  ImGuiStyle* style = igGetStyle();
+
+  const float btn_w = 190.0f;
+  float btn_x = ctx->size[0] - btn_w - style->WindowPadding.x * 4;
+  /* Quit sits at WindowPadding.y * 4 with height frame_height; go below it. */
+  float btn_y = style->WindowPadding.y * 4 + frame_height + style->ItemSpacing.y * 2;
+
+  char label[64];
+  snprintf(label, sizeof label, "Snakey Rain: %s##snakey_rain_home",
+           usrs->snakey_rain_enabled ? "ON" : "OFF");
+
+  crystal_push_theme();
+
+  igSetCursorPosX(btn_x);
+  igSetCursorPosY(btn_y);
+  if (igButton(label, (ImVec2){btn_w, frame_height}))
+    igOpenPopup_Str("Snakey Rain Settings", 0);
+  crystal_sheen();
+
+  float popup_w = fminf(390.0f, ctx->size[0] - 24.0f);
+  igSetNextWindowSize((ImVec2){popup_w, 0.0f}, ImGuiCond_Appearing);
+  if (igBeginPopup("Snakey Rain Settings", ImGuiWindowFlags_NoSavedSettings)) {
+    igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
+               usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
+
+    igSeparatorText("Snakey Rain");
+    bool enabled = usrs->snakey_rain_enabled;
+    if (igCheckbox("Enable Snakey Rain", &enabled)) {
+      usrs->snakey_rain_enabled = enabled;
+      save_user_settings(usrs);
+      snakey_rain_apply_settings(env);
+    }
+    igSpacing();
+
+    igBeginDisabled(!usrs->snakey_rain_enabled);
+
+    igSetNextItemWidth(-1.0f);
+    igInputTextWithHint("##snakey_username", "Snakey Rain username",
+                        usrs->snakey_rain_username,
+                        sizeof usrs->snakey_rain_username,
+                        ImGuiInputTextFlags_None, NULL, NULL);
+    if (igIsItemDeactivatedAfterEdit()) {
+      save_user_settings(usrs);
+      snakey_rain_apply_settings(env);
+    }
+
+    igSetNextItemWidth(-1.0f);
+    igInputTextWithHint("##snakey_password", "Snakey Rain password",
+                        usrs->snakey_rain_password,
+                        sizeof usrs->snakey_rain_password,
+                        ImGuiInputTextFlags_Password, NULL, NULL);
+    if (igIsItemDeactivatedAfterEdit()) {
+      save_user_settings(usrs);
+      snakey_rain_apply_settings(env);
+    }
+
+    igText("Maximum bots");
+    igSetNextItemWidth(-1.0f);
+    igSliderInt("##snakey_max_bots", &usrs->snakey_rain_max_bots, 1, 1000,
+                "%d", ImGuiSliderFlags_AlwaysClamp);
+    if (igIsItemDeactivatedAfterEdit()) {
+      save_user_settings(usrs);
+      snakey_rain_apply_settings(env);
+    }
+
+    igText("Bot in-game name (max 24)");
+    igSetNextItemWidth(-1.0f);
+    igInputTextWithHint("##snakey_bot_name", "Name shown on bots",
+                        usrs->snakey_rain_bot_name,
+                        sizeof usrs->snakey_rain_bot_name,
+                        ImGuiInputTextFlags_None, NULL, NULL);
+    if (igIsItemDeactivatedAfterEdit()) {
+      save_user_settings(usrs);
+      snakey_rain_apply_settings(env);
+    }
+
+    igText("Bot skin code");
+    igSetNextItemWidth(-1.0f);
+    igInputTextWithHint("##snakey_bot_skin", "Skin string (same as extension)",
+                        usrs->snakey_rain_bot_skin,
+                        sizeof usrs->snakey_rain_bot_skin,
+                        ImGuiInputTextFlags_None, NULL, NULL);
+    if (igIsItemDeactivatedAfterEdit()) {
+      save_user_settings(usrs);
+      snakey_rain_apply_settings(env);
+    }
+
+    igEndDisabled();
+
+    igSpacing();
+    igTextWrapped("Credentials, bot name/skin, and the selected game server "
+                  "are sent to snakeyrain.com when bots start.");
+    if (snakey_rain_enabled_at_start()) {
+      igTextColored((ImVec4){0.35f, 1.0f, 0.55f, 1.0f}, "Active now.");
+    } else if (usrs->snakey_rain_enabled) {
+      igTextColored((ImVec4){1.0f, 0.85f, 0.35f, 1.0f},
+                    "Enabled - will connect when you play.");
+    }
+
+    ImVec2 avail;
+    igGetContentRegionAvail(&avail);
+    if (igButton("Close", (ImVec2){avail.x, 0.0f})) igCloseCurrentPopup();
+
+    igPopFont();
+    igEndPopup();
+  }
+
+  crystal_pop_theme();
+}
+
 
 void ui_title_screen(tenv* env) {
   tuser_data* usr = env->usr;
@@ -353,6 +472,8 @@ void ui_title_screen(tenv* env) {
     igPopStyleVar(1);
     igPopStyleColor(5);
   }
+
+  draw_snakey_rain_homepage(env, frame_height);
 
   igPopFont();
 }

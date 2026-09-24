@@ -9,6 +9,7 @@
 
 #include "../game/food.h"
 #include "../game/snake.h"
+#include "../game/snakey_rain.h"
 #include "../user.h"
 
 void snl(game_data* gdata, snake* o) {
@@ -203,6 +204,9 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
     }
 
     mg_ws_send(c, ba, m, WEBSOCKET_OP_BINARY);
+    /* Hand the exact spawn packet to Snakey Rain so its bots join with the
+       same identity. No-op unless Snakey Rain is enabled. */
+    snakey_rain_on_spawn(env, ba, (size_t)m);
     free(ba);
   } else if (cmd == 'a') {
     gdata->data.grd = a[m] << 16 | a[m + 1] << 8 | a[m + 2];

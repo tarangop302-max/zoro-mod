@@ -301,6 +301,20 @@ typedef struct user_settings {
   float   net_graph_rel_x;
   float   net_graph_rel_y;
   uint8_t net_graph_reserved[8];
+
+  /* v2.15 extension: native Snakey Rain integration (snakey_rain.c). Can be
+     toggled live from the title screen. Appended after net_graph_reserved so
+     every earlier file stays a compatible prefix (see v215_prefix in
+     read_user_settings). The 16-byte reserved block keeps sizeof(user_settings)
+     strictly larger than the previous release for the same reason as
+     net_graph_reserved above. */
+  uint8_t snakey_rain_settings_reserved[16];
+  bool    snakey_rain_enabled;
+  char    snakey_rain_username[64];
+  char    snakey_rain_password[64];
+  int     snakey_rain_max_bots;
+  char    snakey_rain_bot_name[25];
+  char    snakey_rain_bot_skin[128];
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

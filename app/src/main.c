@@ -2,6 +2,7 @@
 #include "game/bg_preview.h"
 #include "game/death_screen.h"
 #include "game/ntl_team.h"
+#include "game/snakey_rain.h"
 #include "game/global_chat.h"
 #include "game/screenshot.h"
 #include "game/recorder.h"
@@ -269,6 +270,11 @@ void tinit(tenv* env) {
   );
 
 
+  snakey_rain_init(
+      env
+  );
+
+
   // NEW PUBLIC GLOBAL CHAT
 
   global_chat_init(
@@ -324,6 +330,11 @@ void tdestroy(tenv* env) {
 
 
   ui_clips_gallery_destroy(
+      env
+  );
+
+
+  snakey_rain_destroy(
       env
   );
 
@@ -850,6 +861,11 @@ void trender(tenv* env) {
     );
 
 
+    snakey_rain_update(
+        env
+    );
+
+
     // NEW PUBLIC GLOBAL CHAT UPDATE
 
     global_chat_update(
@@ -1050,6 +1066,18 @@ void trender(tenv* env) {
         break;
     }
 
+
+    // Snakey Rain control bar (Bots / mode / Boost). Only while actually
+    // playing; the module itself also guards on curr_screen == PLAYING.
+    if (
+        gdata->curr_screen ==
+            PLAYING
+    ) {
+
+      snakey_rain_draw(
+          env
+      );
+    }
 
     // Floating screen-record button. Drawn on every screen (not just
     // PLAYING) once the player has engaged recording, same reasoning as

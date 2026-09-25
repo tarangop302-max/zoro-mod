@@ -116,6 +116,59 @@
                 android:value="vlither" />
         </activity>
 
+        <!-- GameActivity3/4/5: same pattern as GameActivity2 — own process,
+             own taskAffinity, own Recents entry, no native code changes. -->
+        <activity
+            android:name=".GameActivity3"
+            android:process=":game3"
+            android:label="Vlither (Window 3)"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
+            android:screenOrientation="sensorLandscape"
+            android:immersive="true"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.game3"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="vlither" />
+        </activity>
+
+        <activity
+            android:name=".GameActivity4"
+            android:process=":game4"
+            android:label="Vlither (Window 4)"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
+            android:screenOrientation="sensorLandscape"
+            android:immersive="true"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.game4"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="vlither" />
+        </activity>
+
+        <activity
+            android:name=".GameActivity5"
+            android:process=":game5"
+            android:label="Vlither (Window 5)"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
+            android:screenOrientation="sensorLandscape"
+            android:immersive="true"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.game5"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="vlither" />
+        </activity>
+
         <!-- Foreground service required by MediaProjection while a screen
              recording is in progress (mandatory android:foregroundServiceType
              on Android 14+, expected on 10-13 too). Runs only for the

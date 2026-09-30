@@ -158,7 +158,11 @@ void android_main(struct android_app* app) {
     env.config.fullscreen   = false;
     env.config.resizable    = false;
     env.config.aspect_ratio = 16 / 9.0f;
-    env.config.fif          = 3;
+    /* Frames in flight. 3 let the CPU run up to three frames ahead of the
+     * screen, which is ~50 ms of extra input-to-photon delay at 60 Hz (and it
+     * shows up as "died before touching the body": what you see is older than
+     * what the server checked). 2 keeps the GPU busy but cuts one frame. */
+    env.config.fif          = 2;
     env.config.title        = "Vlither";
     env.usr = malloc(sizeof(tuser_data));
 

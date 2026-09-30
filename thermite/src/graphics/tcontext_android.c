@@ -225,7 +225,17 @@ void _tcontext_create_swapchain(tcontext* context, bool vsync) {
       snprintf(_lb2, sizeof(_lb2), "ctx->size=%dx%d swapchain=%dx%d rotated=%d",
                context->size[0], context->size[1], _ew, _eh, _rotated);
       LOGE("%s", _lb2); }
-    context->min_image_count = caps.minImageCount + 1;
+    /* Swapchain depth. With FIFO every extra image is one more finished frame
+     * that can sit in the present queue before it reaches the screen, i.e. one
+     * more frame of latency between the game state and what you see.
+     * SWAPCHAIN_EXTRA_IMAGES = 1 restores the old (smoother, laggier) depth. */
+#ifndef SWAPCHAIN_EXTRA_IMAGES
+#define SWAPCHAIN_EXTRA_IMAGES 0
+#endif
+    context->min_image_count = caps.minImageCount + SWAPCHAIN_EXTRA_IMAGES;
+    if (context->min_image_count < 2) context->min_image_count = 2;
+    if (caps.maxImageCount > 0 && context->min_image_count > caps.maxImageCount)
+        context->min_image_count = caps.maxImageCount;
 
     VkCompositeAlphaFlagBitsKHR composite_alpha =
         (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)

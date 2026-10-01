@@ -44,13 +44,18 @@
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 
-/* 0 = NTL behaviour: the head turns when the server confirms the turn, so what
-   you see is exactly what the server is checking for collisions.
-   1 = the head starts turning on your finger immediately, a full round trip
-   before the server does. It looks instant, but the server keeps moving you
-   straight for that whole time -- which is why you could see the head fully
-   turned away and still die. */
-#define STEER_PREDICT 0
+/* 0 = NTL behaviour: the head only turns once the server confirms the turn.
+   1 = the head turns locally (same turn rate the server uses) up to
+   STEER_PRED_LEAD_MS before the server confirmation arrives; the server's
+   echoes are reconciled afterwards. */
+#define STEER_PREDICT 1
+/* How far (ms) the turn you see is allowed to run ahead of the moment the
+   server confirms it. 0 = NTL (turn shows only after the server round trip, so
+   a death always matches the picture, but turning feels late). A big value =
+   the head turns the instant you move your finger, but you can then see the
+   head turned away and still die. Every ms here is ~0.17 world units of
+   mismatch (50 ms is about half a body width). */
+#define STEER_PRED_LEAD_MS 50.0
 /* While a locally-predicted turn is still "in flight", server echoes about our
    own heading are not allowed to yank it backwards. The window is
    2 * one-way-delay + 50 ms, clamped to this range. */

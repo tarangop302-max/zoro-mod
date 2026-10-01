@@ -35,19 +35,22 @@
 
 /* Minimum real-time gap between steering (angle) packets. Was 50 ms measured on
    the per-frame clock (which really meant 50-67 ms at 60 Hz). NTL uses 33 ms.
-   30 ms (not 33) so that at 60 Hz a packet goes out on EVERY 2nd frame: with
-   33.0 a frame that came in at 32.9 ms just missed the gate and the packet slid
-   to the 3rd frame (50 ms), which made the server-side heading advance in
-   uneven steps -- visible as the head turning, pausing, turning. */
-#define STEER_ANGLE_MIN_MS 30.0
+   20 ms (not 33): at 60 Hz a packet still goes out on every 2nd frame, but at
+   90/120 Hz it goes out every 2nd/3rd frame (22/25 ms) instead of every
+   3rd/4th. With 33.0 a frame that came in at 32.9 ms also just missed the
+   gate and the packet slid to 50 ms, so the server-side heading advanced in
+   uneven steps. The first change after a pause is always sent immediately. */
+#define STEER_ANGLE_MIN_MS 20.0
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 
-/* 1 = the moment a steering packet is sent, the head starts turning locally
-   (same turn rate the server uses) instead of waiting a full round trip for
-   the server to echo the turn back. Server echoes are reconciled afterwards.
-   0 = old behaviour. */
-#define STEER_PREDICT 1
+/* 0 = NTL behaviour: the head turns when the server confirms the turn, so what
+   you see is exactly what the server is checking for collisions.
+   1 = the head starts turning on your finger immediately, a full round trip
+   before the server does. It looks instant, but the server keeps moving you
+   straight for that whole time -- which is why you could see the head fully
+   turned away and still die. */
+#define STEER_PREDICT 0
 /* While a locally-predicted turn is still "in flight", server echoes about our
    own heading are not allowed to yank it backwards. The window is
    2 * one-way-delay + 50 ms, clamped to this range. */
@@ -62,17 +65,19 @@
    own head uses a higher value so the sprite keeps up with your finger. */
 #define EHANG_RATE_OTHERS 0.12f
 #define EHANG_RATE_SELF   0.22f
-/* 1 = your own head sprite points along your real (locally predicted) heading
-   instead of the angle of the first body segment, which trails the heading by
-   a couple of hundred ms in a turn. 0 = old behaviour. */
-#define HEAD_SPRITE_FOLLOWS_HEADING 1
+/* 0 = the head sprite follows the angle of the first body segment (NTL).
+   1 = it points along the locally predicted heading (only makes sense with
+   STEER_PREDICT 1). */
+#define HEAD_SPRITE_FOLLOWS_HEADING 0
 
 /* Latency lead: server positions arrive one network trip late, so every head
    is drawn where it was ~one-way-delay ago -- i.e. short of where the server
    actually has it, which is a big part of "died before touching the body".
    Extrapolating that much (along the snake's own heading) draws heads where
-   the server has them now. 0 = off, 1 = full estimate. */
-#define NET_LEAD_FACTOR 1.0f
+   the server has them now. 0 = off (NTL: heads are drawn exactly at the
+   server-reported position, so a death always lines up with the picture),
+   1 = full estimate. */
+#define NET_LEAD_FACTOR 0.0f
 #define NET_LEAD_MAX_MS 100.0f
 
 /* Lag-spike handling. A spike shorter than LAG_START_MS is simply ridden out by

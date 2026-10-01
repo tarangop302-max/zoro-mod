@@ -6,37 +6,6 @@
     
 #include "../user.h"    
     
-#if STEER_PREDICT
-/* Short history of the steering angle (one entry per frame). The head is steered
- * from the entry that is STEER_PRED_LEAD_MS short of a full round trip old, i.e.
- * it shows your turn at most that much before the server really makes it. */
-#define STEER_RING 128
-static double s_ring_t[STEER_RING];
-static int s_ring_a[STEER_RING];
-static int s_ring_head = 0; /* next slot to write */
-static int s_ring_n = 0;
-static int s_ring_owner = -2;
-
-static void steer_ring_push(double t, int a) {
-  s_ring_t[s_ring_head] = t;
-  s_ring_a[s_ring_head] = a;
-  s_ring_head = (s_ring_head + 1) % STEER_RING;
-  if (s_ring_n < STEER_RING) s_ring_n++;
-}
-
-/* Newest entry that is at least as old as t_cut. 0 if there is none yet. */
-static int steer_ring_at(double t_cut, int* out) {
-  for (int i = 1; i <= s_ring_n; i++) {
-    int idx = (s_ring_head - i + STEER_RING) % STEER_RING;
-    if (s_ring_t[idx] <= t_cut) {
-      *out = s_ring_a[idx];
-      return 1;
-    }
-  }
-  return 0;
-}
-#endif
-
 /*
  * Steering prediction. The server only starts turning the snake when our
  * steering packet reaches it, and we only see the turn when its echo comes
@@ -379,33 +348,20 @@ void input(tenv* env) {
                  WEBSOCKET_OP_BINARY);    
     }    
     
-#if STEER_PREDICT
-    /* Steer the head locally EVERY frame, not only on the frames a packet goes
-       out (every ~20-30 ms): the head used to be given a new target only at send
-       time, reached it within a frame or two and then sat still until the next
-       send -- the turn / stop / turn / stop. The target is the finger angle from
-       (round trip - STEER_PRED_LEAD_MS) ago, quantised like the packet (251
-       steps), so the head turns shortly before the server does and not a whole
-       round trip before it. */
-    if (me->id != s_ring_owner) {
-      s_ring_owner = me->id;
-      s_ring_n = 0;
-    }
-    if ((float)xm * (float)xm + (float)ym * (float)ym > 256.0f) {
-      float la = fmodf(atan2f((float)ym, (float)xm), PI2);
-      if (la < 0) la += PI2;
-      int lsang_now = (int)floorf((250 + 1) * la / PI2);
-      if (lsang_now > 250) lsang_now = 250;
-      steer_ring_push(now_ms, lsang_now);
-      double d_ms = 2.0 * gdata->data.owd_ms + 10.0 - STEER_PRED_LEAD_MS;
-      if (d_ms < 0.0) d_ms = 0.0;
-      if (d_ms > STEER_PRED_MAX_WINDOW_MS) d_ms = STEER_PRED_MAX_WINDOW_MS;
-      int a_delayed;
-      if (steer_ring_at(now_ms - d_ms, &a_delayed))
-        steer_predict(gdata, me, a_delayed, now_ms);
-    }
-#endif
-
+    /* Steer the head locally EVERY frame from the live finger angle, not only
+       on the frames a packet goes out (every ~30 ms). The head used to be told
+       a new target only at send time, so it turned to it within a frame or two
+       and then sat still until the next send -- the turn / stop / turn / stop
+       you saw. The target is quantised exactly like the packet (251 steps) so
+       the local head ends on the same heading the server will. */
+    if ((float)xm * (float)xm + (float)ym * (float)ym > 256.0f) {    
+      float la = fmodf(atan2f((float)ym, (float)xm), PI2);    
+      if (la < 0) la += PI2;    
+      int lsang_now = (int)floorf((250 + 1) * la / PI2);    
+      if (lsang_now > 250) lsang_now = 250;    
+      steer_predict(gdata, me, lsang_now, now_ms);    
+    }    
+    
     bool want_e = false;    
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;    
     me->eang = atan2f(ym, xm);    

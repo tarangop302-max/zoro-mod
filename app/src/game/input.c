@@ -348,6 +348,20 @@ void input(tenv* env) {
                  WEBSOCKET_OP_BINARY);    
     }    
     
+    /* Steer the head locally EVERY frame from the live finger angle, not only
+       on the frames a packet goes out (every ~30 ms). The head used to be told
+       a new target only at send time, so it turned to it within a frame or two
+       and then sat still until the next send -- the turn / stop / turn / stop
+       you saw. The target is quantised exactly like the packet (251 steps) so
+       the local head ends on the same heading the server will. */
+    if ((float)xm * (float)xm + (float)ym * (float)ym > 256.0f) {    
+      float la = fmodf(atan2f((float)ym, (float)xm), PI2);    
+      if (la < 0) la += PI2;    
+      int lsang_now = (int)floorf((250 + 1) * la / PI2);    
+      if (lsang_now > 250) lsang_now = 250;    
+      steer_predict(gdata, me, lsang_now, now_ms);    
+    }    
+    
     bool want_e = false;    
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;    
     me->eang = atan2f(ym, xm);    
@@ -371,7 +385,6 @@ void input(tenv* env) {
       if (sang != gdata->data.lsang) {    
         gdata->data.lsang = sang;    
         mg_ws_send(connection, (uint8_t[]){sang & 255}, 1, WEBSOCKET_OP_BINARY);    
-        steer_predict(gdata, me, sang, now_ms);    
       }    
     }    
   }    

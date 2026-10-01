@@ -54,8 +54,9 @@
    a death always matches the picture, but turning feels late). A big value =
    the head turns the instant you move your finger, but you can then see the
    head turned away and still die. Every ms here is ~0.17 world units of
-   mismatch (50 ms is about half a body width). */
-#define STEER_PRED_LEAD_MS 50.0
+   mismatch (50 ms is about half a body width). The real gap is a bit bigger
+   than this number because the server also waits for its own tick. */
+#define STEER_PRED_LEAD_MS 25.0
 /* While a locally-predicted turn is still "in flight", server echoes about our
    own heading are not allowed to yank it backwards. The window is
    2 * one-way-delay + 50 ms, clamped to this range. */

@@ -34,9 +34,12 @@
  * ------------------------------------------------------------------------- */
 
 /* Minimum real-time gap between steering (angle) packets. Was 50 ms measured on
-   the per-frame clock (which really meant 50-67 ms at 60 Hz). 33 ms is the rate
-   the NTL client uses, i.e. ~30 steering updates per second. */
-#define STEER_ANGLE_MIN_MS 33.0
+   the per-frame clock (which really meant 50-67 ms at 60 Hz). NTL uses 33 ms.
+   30 ms (not 33) so that at 60 Hz a packet goes out on EVERY 2nd frame: with
+   33.0 a frame that came in at 32.9 ms just missed the gate and the packet slid
+   to the 3rd frame (50 ms), which made the server-side heading advance in
+   uneven steps -- visible as the head turning, pausing, turning. */
+#define STEER_ANGLE_MIN_MS 30.0
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 
@@ -50,6 +53,19 @@
    2 * one-way-delay + 50 ms, clamped to this range. */
 #define STEER_PRED_MIN_WINDOW_MS 80.0f
 #define STEER_PRED_MAX_WINDOW_MS 400.0f
+
+/* Head-sprite smoothing, fraction of the remaining angle closed per 8 ms tick
+   (this was the fixed 0.12 table p12[], indexed by the whole number of ticks in
+   the frame -- so a 60 Hz frame alternated between 2 and 3 ticks and a 144 Hz
+   frame was sometimes 0 ticks = the head froze for a frame). It is now applied
+   continuously from the real frame time. Other snakes keep the old 0.12; your
+   own head uses a higher value so the sprite keeps up with your finger. */
+#define EHANG_RATE_OTHERS 0.12f
+#define EHANG_RATE_SELF   0.22f
+/* 1 = your own head sprite points along your real (locally predicted) heading
+   instead of the angle of the first body segment, which trails the heading by
+   a couple of hundred ms in a turn. 0 = old behaviour. */
+#define HEAD_SPRITE_FOLLOWS_HEADING 1
 
 /* Latency lead: server positions arrive one network trip late, so every head
    is drawn where it was ~one-way-delay ago -- i.e. short of where the server

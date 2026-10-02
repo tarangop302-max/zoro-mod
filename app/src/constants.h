@@ -34,13 +34,12 @@
  * ------------------------------------------------------------------------- */
 
 /* Minimum real-time gap between steering (angle) packets. Was 50 ms measured on
-   the per-frame clock (which really meant 50-67 ms at 60 Hz). NTL uses 33 ms.
-   20 ms (not 33): at 60 Hz a packet still goes out on every 2nd frame, but at
-   90/120 Hz it goes out every 2nd/3rd frame (22/25 ms) instead of every
-   3rd/4th. With 33.0 a frame that came in at 32.9 ms also just missed the
-   gate and the packet slid to 50 ms, so the server-side heading advanced in
-   uneven steps. The first change after a pause is always sent immediately. */
-#define STEER_ANGLE_MIN_MS 20.0
+   the per-frame clock (which really meant 50-67 ms at 60 Hz); NTL uses 33 ms.
+   16 ms means at 60 Hz a packet goes out on EVERY frame (at 90/120 Hz on every
+   2nd frame), so the server hears about your finger as early as the screen
+   refresh allows. The first change after a pause is always sent immediately.
+   If the server ever seems to ignore or drop you, put this back to 33. */
+#define STEER_ANGLE_MIN_MS 16.0
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 
@@ -48,7 +47,7 @@
    1 = the head turns locally (same turn rate the server uses) up to
    STEER_PRED_LEAD_MS before the server confirmation arrives; the server's
    echoes are reconciled afterwards. */
-#define STEER_PREDICT 1
+#define STEER_PREDICT 0
 /* How far (ms) the turn you see is allowed to run ahead of the moment the
    server confirms it. 0 = NTL (turn shows only after the server round trip, so
    a death always matches the picture, but turning feels late). A big value =

@@ -47,7 +47,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-class GameActivity : NativeActivity() {
+open class GameActivity : NativeActivity() {
 
     companion object {
         private const val TAG = "VlitherGame"

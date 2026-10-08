@@ -645,12 +645,6 @@ void redraw(tenv* env) {
           o->wehang = gdata->data.pba[1] + PI;
         } else
           o->wehang = o->ang;
-#if HEAD_SPRITE_FOLLOWS_HEADING
-        /* Own head: point the sprite along the real heading (already
-           rate-limited and predicted), not along the first body segment. */
-        if (o->id >= 0 && o->id == gdata->data.snake_id && !o->dead)
-          o->wehang = o->ang;
-#endif
 
         float shsz = gdata->data.gsc * lsz * 1.5f;
         a *= a;

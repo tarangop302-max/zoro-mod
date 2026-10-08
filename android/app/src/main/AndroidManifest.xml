@@ -38,7 +38,7 @@
         android:hardwareAccelerated="true"
         android:appCategory="game"
         android:isGame="true"
-        android:resizeableActivity="false">
+        android:resizeableActivity="true">
 
         <!-- AdMob App ID -->
         <meta-data
@@ -82,9 +82,88 @@
             android:screenOrientation="sensorLandscape"
             android:immersive="true"
             android:exported="false"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.game1"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
 
             <!-- Tell NativeActivity which .so to load -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="vlither" />
+        </activity>
+
+        <!-- GameActivity2: identical to GameActivity but runs in its own
+             process (":game2"), so it gets its own independent copy of every
+             native global (socket, snake/world state, Vulkan context) with
+             no code changes to thermite/. A distinct taskAffinity gives it
+             its own Recents entry, so it can be dragged into a floating
+             pop-up / split-screen window separately from Window 1. See
+             GameActivity2.kt (extends GameActivity, no logic of its own). -->
+        <activity
+            android:name=".GameActivity2"
+            android:process=":game2"
+            android:label="Vlither (Window 2)"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
+            android:screenOrientation="sensorLandscape"
+            android:immersive="true"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.game2"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="vlither" />
+        </activity>
+
+        <!-- GameActivity3/4/5: same pattern as GameActivity2 — own process,
+             own taskAffinity, own Recents entry, no native code changes. -->
+        <activity
+            android:name=".GameActivity3"
+            android:process=":game3"
+            android:label="Vlither (Window 3)"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
+            android:screenOrientation="sensorLandscape"
+            android:immersive="true"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.game3"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="vlither" />
+        </activity>
+
+        <activity
+            android:name=".GameActivity4"
+            android:process=":game4"
+            android:label="Vlither (Window 4)"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
+            android:screenOrientation="sensorLandscape"
+            android:immersive="true"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.game4"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="vlither" />
+        </activity>
+
+        <activity
+            android:name=".GameActivity5"
+            android:process=":game5"
+            android:label="Vlither (Window 5)"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
+            android:screenOrientation="sensorLandscape"
+            android:immersive="true"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.game5"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="vlither" />

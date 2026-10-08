@@ -57,6 +57,10 @@ class MainActivity : Activity() {
     }
 
     private lateinit var btnPlay: Button
+    private lateinit var btnPlay2: Button
+    private lateinit var btnPlay3: Button
+    private lateinit var btnPlay4: Button
+    private lateinit var btnPlay5: Button
     private lateinit var btnChangelog: Button
 
     private lateinit var layoutUpdate: LinearLayout
@@ -627,6 +631,66 @@ Changes made by Lucky
             launchGame()
         }
 
+        // Window 2 — opens a second, independent game instance (own
+        // process, own connection) that can be dragged into a floating
+        // pop-up window alongside Window 1.
+        btnPlay2 = Button(this)
+
+        btnPlay2.text = "▶  PLAY (Window 2)"
+
+        btnPlay2.textSize = 18f
+
+        btnPlay2.setPadding(
+            56,
+            28,
+            56,
+            28
+        )
+
+        btnPlay2.layoutParams =
+            buttonParams
+
+        btnPlay2.isEnabled = true
+
+        btnPlay2.alpha = 1.0f
+
+        btnPlay2.setOnClickListener {
+            launchGame2()
+        }
+
+        btnPlay3 = Button(this)
+        btnPlay3.text = "▶  PLAY (Window 3)"
+        btnPlay3.textSize = 18f
+        btnPlay3.setPadding(56, 28, 56, 28)
+        btnPlay3.layoutParams = buttonParams
+        btnPlay3.isEnabled = true
+        btnPlay3.alpha = 1.0f
+        btnPlay3.setOnClickListener {
+            launchGame3()
+        }
+
+        btnPlay4 = Button(this)
+        btnPlay4.text = "▶  PLAY (Window 4)"
+        btnPlay4.textSize = 18f
+        btnPlay4.setPadding(56, 28, 56, 28)
+        btnPlay4.layoutParams = buttonParams
+        btnPlay4.isEnabled = true
+        btnPlay4.alpha = 1.0f
+        btnPlay4.setOnClickListener {
+            launchGame4()
+        }
+
+        btnPlay5 = Button(this)
+        btnPlay5.text = "▶  PLAY (Window 5)"
+        btnPlay5.textSize = 18f
+        btnPlay5.setPadding(56, 28, 56, 28)
+        btnPlay5.layoutParams = buttonParams
+        btnPlay5.isEnabled = true
+        btnPlay5.alpha = 1.0f
+        btnPlay5.setOnClickListener {
+            launchGame5()
+        }
+
         // Changelog
 
         btnChangelog = Button(this)
@@ -795,6 +859,22 @@ Changes made by Lucky
         )
 
         column.addView(
+            btnPlay2
+        )
+
+        column.addView(
+            btnPlay3
+        )
+
+        column.addView(
+            btnPlay4
+        )
+
+        column.addView(
+            btnPlay5
+        )
+
+        column.addView(
             btnChangelog
         )
 
@@ -817,15 +897,40 @@ Changes made by Lucky
     // ─────────────────────────────────────────────────────────────
 
     private fun launchGame() {
+        launchGameWindow(GameActivity::class.java, "GameActivity")
+    }
+
+    // Window 2 — separate process (:game2), separate task, so it shows as
+    // its own Recents entry and can be dragged into a floating pop-up /
+    // split-screen window independently of Window 1.
+    private fun launchGame2() {
+        launchGameWindow(GameActivity2::class.java, "GameActivity2")
+    }
+
+    private fun launchGame3() {
+        launchGameWindow(GameActivity3::class.java, "GameActivity3")
+    }
+
+    private fun launchGame4() {
+        launchGameWindow(GameActivity4::class.java, "GameActivity4")
+    }
+
+    private fun launchGame5() {
+        launchGameWindow(GameActivity5::class.java, "GameActivity5")
+    }
+
+    private fun launchGameWindow(activityClass: Class<*>, tag: String) {
         try {
             val intent =
                 Intent(
                     this,
-                    GameActivity::class.java
+                    activityClass
                 )
 
             intent.addFlags(
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_MULTIPLE_TASK
             )
 
             startActivity(
@@ -835,7 +940,7 @@ Changes made by Lucky
         } catch (e: Exception) {
             Log.e(
                 TAG,
-                "Failed to launch GameActivity: ${e.message}"
+                "Failed to launch $tag: ${e.message}"
             )
 
             android.widget.Toast.makeText(

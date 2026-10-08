@@ -25,6 +25,7 @@ struct vs_output {
   [[vk::location(4)]] float shape;
   [[vk::location(5)]] float glow;
   [[vk::location(6)]] float angle;
+  [[vk::location(7)]] float px;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<Global> global;
@@ -45,13 +46,20 @@ vs_output vs_main(vs_input input) {
   output.flicker = input.flicker;
   output.shape = input.shape;
   output.glow = input.glow;
-  output.angle = input.angle;
+
+  // The angle comes from a food id that can be in the millions. GPUs return
+  // garbage for sin/cos of huge values, so wrap it into 0..2*PI here.
+  float tau = 6.2831853;
+  output.angle = input.angle - tau * floor(input.angle / tau);
+
+  // Size of one screen pixel in shape units (food radius = 1, quad edge = 2).
+  output.px = 2.0 / (input.circ.z + EDGE_SOFTNESS * 0.5);
 
   return output;
 }
 
-float sd_box(float2 p, float2 b) {
-  float2 d = abs(p) - b;
+float sd_box(float2 p, float b) {
+  float2 d = abs(p) - float2(b, b);
   return length(max(d, float2(0.0, 0.0))) + min(max(d.x, d.y), 0.0);
 }
 
@@ -85,18 +93,17 @@ float sd_star(float2 p, float r, float n, float m) {
 }
 
 float4 fs_main(vs_output input) {
-  // u: food radius = 1, quad edge = 2. px: size of one screen pixel in u.
   float2 u = (input.uv * 2.0 - 1.0) * 2.0;
-  float px = max(length(ddx(u)), 0.0001);
+  float px = input.px;
 
   float cs = cos(input.angle);
   float sn = sin(input.angle);
   float2 p = float2(cs * u.x + sn * u.y, -sn * u.x + cs * u.y);
 
-  // Outline half-width: bold, but never thinner than ~1 screen pixel so
+  // Bold outlines that never get thinner than about 2 screen pixels, so the
   // hollow shapes stay readable when Food scale is small.
-  float hw = max(0.19, 0.9 * px);
-  float lw = max(0.14, 0.8 * px);
+  float hw = max(0.2, 0.9 * px);
+  float lw = max(0.17, 0.75 * px);
 
   int s = int(input.shape + 0.5);
   float sd = 0.0;
@@ -104,28 +111,28 @@ float4 fs_main(vs_output input) {
   if (s == 0) {
     sd = length(p) - 0.95;
   } else if (s == 1) {
-    sd = abs(length(p) - 0.86) - max(0.14, 0.9 * px * 0.6);
+    sd = abs(length(p) - 0.86) - max(0.14, 0.7 * px);
   } else if (s == 2) {
-    sd = abs(sd_box(p, float2(0.78, 0.78))) - hw;
+    sd = abs(sd_box(p, 0.8)) - hw;
   } else if (s == 3) {
-    sd = abs(sd_star(p, 0.92, 5.0, 2.8)) - hw * 0.8;
+    sd = abs(sd_star(p, 1.0, 5.0, 2.8)) - hw * 0.8;
   } else if (s == 4) {
-    sd = sd_star(p, 1.05, 5.0, 2.8);
+    sd = sd_star(p, 1.1, 5.0, 2.8);
   } else if (s == 5) {
-    sd = abs(sd_tri(p, 0.82)) - hw;
+    sd = abs(sd_tri(p, 0.85)) - hw;
   } else if (s == 6) {
-    float m0 = sd_seg(p, float2(1.0, 0.0), 1.0);
-    float m1 = sd_seg(p, float2(0.5, 0.8660254), 1.0);
-    float m2 = sd_seg(p, float2(-0.5, 0.8660254), 1.0);
+    float m0 = sd_seg(p, float2(1.0, 0.0), 1.05);
+    float m1 = sd_seg(p, float2(0.5, 0.8660254), 1.05);
+    float m2 = sd_seg(p, float2(-0.5, 0.8660254), 1.05);
     sd = min(min(m0, m1), m2) - lw;
   } else {
-    sd = sd_star(p, 1.2, 4.0, 3.6);
+    sd = sd_star(p, 1.35, 4.0, 3.0);
   }
 
-  float shape_a = smoothstep(0.0, EDGE_SOFTNESS, -sd / px) * 0.9;
+  // One-pixel anti-aliased edge.
+  float shape_a = clamp(0.5 - sd / px, 0.0, 1.0) * 0.9;
 
-  // Glow halo: only when the Food glow setting is on. Fades to zero well
-  // before the quad edge so nothing is clipped.
+  // Glow halo: only when the Food glow setting is on.
   float halo = 0.0;
   if (input.glow > 0.5) {
     float g = 1.0 - smoothstep(0.0, 0.9, max(sd, 0.0));

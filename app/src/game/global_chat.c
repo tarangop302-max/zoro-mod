@@ -9,7 +9,11 @@
 
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
+#include "../android_jni.h"
+#include "../android_path.h"
 #endif
+
+#include <stdio.h>
 
 #include <string.h>
 #include <math.h>
@@ -112,6 +116,153 @@ static void global_chat_panel_contents(
     ImVec2 wp,
     ImVec2 ws
 );
+
+/* =====================================================================
+ * Quick messages: one-tap buttons in the side rail. The label (shown on
+ * the button) and the text (sent to chat) of each of the 4 slots can be
+ * edited in the Settings tab. Stored in their own small text file so the
+ * main settings file layout is untouched.
+ * ===================================================================== */
+#define GC_QM_COUNT 4
+#define GC_QM_LABEL_LEN 7
+#define GC_QM_TEXT_LEN 80
+
+/* Wire tag so every teammate's client knows a message is a quick message
+ * (and which slot's sound to play) no matter what text each of them has
+ * set. It is a 6-byte prefix of invisible Unicode characters: U+2063
+ * followed by one of 4 zero-width characters (one per slot). The text
+ * after it is the normal chat text; our own client strips the tag before
+ * showing the message. */
+#define GC_QM_TAG_LEN 6
+static const char gc_qm_tag[GC_QM_COUNT][GC_QM_TAG_LEN + 1] = {
+    "\xE2\x81\xA3\xE2\x80\x8B",
+    "\xE2\x81\xA3\xE2\x80\x8C",
+    "\xE2\x81\xA3\xE2\x80\x8D",
+    "\xE2\x81\xA3\xE2\x81\xA0"
+};
+
+static char gc_qm_label[GC_QM_COUNT][GC_QM_LABEL_LEN];
+static char gc_qm_text[GC_QM_COUNT][GC_QM_TEXT_LEN];
+static bool gc_qm_sound = true;
+static bool gc_qm_loaded = false;
+
+static void gc_qm_defaults(void) {
+    static const char* const def_label[GC_QM_COUNT] = {
+        "HELP", "GG", "JOIN", "NICE"
+    };
+    static const char* const def_text[GC_QM_COUNT] = {
+        "Help me!", "GG", "Join me!", "Nice!"
+    };
+
+    for (int i = 0; i < GC_QM_COUNT; i++) {
+        snprintf(gc_qm_label[i], GC_QM_LABEL_LEN, "%s", def_label[i]);
+        snprintf(gc_qm_text[i], GC_QM_TEXT_LEN, "%s", def_text[i]);
+    }
+
+    gc_qm_sound = true;
+}
+
+static void gc_qm_path(char* out, int out_size) {
+#ifdef ANDROID
+    android_build_path(out, out_size, "quick_msgs.txt");
+#else
+    snprintf(out, (size_t)out_size, "%s", "quick_msgs.txt");
+#endif
+}
+
+static void gc_qm_save(void) {
+    char path[600];
+    gc_qm_path(path, (int)sizeof(path));
+
+    FILE* f = fopen(path, "w");
+
+    if (f == NULL) {
+        return;
+    }
+
+    fprintf(f, "sound=%d\n", gc_qm_sound ? 1 : 0);
+
+    for (int i = 0; i < GC_QM_COUNT; i++) {
+        char l[GC_QM_LABEL_LEN];
+        char t[GC_QM_TEXT_LEN];
+
+        snprintf(l, sizeof(l), "%s", gc_qm_label[i]);
+        snprintf(t, sizeof(t), "%s", gc_qm_text[i]);
+
+        /* The file is line/'|' based, so keep those out of the data. */
+        for (char* c = l; *c; c++) {
+            if (*c == '|' || *c == '\n' || *c == '\r') *c = ' ';
+        }
+        for (char* c = t; *c; c++) {
+            if (*c == '|' || *c == '\n' || *c == '\r') *c = ' ';
+        }
+
+        fprintf(f, "%s|%s\n", l, t);
+    }
+
+    fclose(f);
+}
+
+static void gc_qm_ensure_loaded(void) {
+    if (gc_qm_loaded) {
+        return;
+    }
+
+    gc_qm_loaded = true;
+    gc_qm_defaults();
+
+    char path[600];
+    gc_qm_path(path, (int)sizeof(path));
+
+    FILE* f = fopen(path, "r");
+
+    if (f == NULL) {
+        return;
+    }
+
+    char line[256];
+    int slot = 0;
+
+    while (fgets(line, sizeof(line), f) != NULL) {
+        size_t n = strlen(line);
+
+        while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
+            line[--n] = '\0';
+        }
+
+        if (strncmp(line, "sound=", 6) == 0) {
+            gc_qm_sound = line[6] != '0';
+            continue;
+        }
+
+        if (slot >= GC_QM_COUNT) {
+            break;
+        }
+
+        char* bar = strchr(line, '|');
+
+        if (bar == NULL) {
+            continue;
+        }
+
+        *bar = '\0';
+
+        snprintf(gc_qm_label[slot], GC_QM_LABEL_LEN, "%s", line);
+        snprintf(gc_qm_text[slot], GC_QM_TEXT_LEN, "%s", bar + 1);
+
+        slot++;
+    }
+
+    fclose(f);
+}
+
+static void gc_play_quick_sound(int id) {
+#ifdef ANDROID
+    android_jni_play_quick_sound(id);
+#else
+    (void)id;
+#endif
+}
 
 /* =====================================================================
  * TEAM CHAT "Tabbed Hub" look -- small drawing helpers.
@@ -482,11 +633,33 @@ static void global_chat_on_network_message(
         sizeof(owner)
     );
 
+    /* Quick message from a teammate: strip the invisible tag, show the
+     * clean text, and play that slot's sound (their text can differ
+     * from ours -- the tag is what tells us). */
+    int qm_slot = -1;
+    const char* shown = msg->message;
+
+    for (int i = 0; i < GC_QM_COUNT; i++) {
+        if (strncmp(msg->message, gc_qm_tag[i], GC_QM_TAG_LEN) == 0) {
+            qm_slot = i;
+            shown = msg->message + GC_QM_TAG_LEN;
+            break;
+        }
+    }
+
     global_chat_add_message(
         msg->username,
         owner,
-        msg->message
+        shown
     );
+
+    if (qm_slot >= 0) {
+        gc_qm_ensure_loaded();
+
+        if (gc_qm_sound) {
+            gc_play_quick_sound(qm_slot);
+        }
+    }
 }
 
 void global_chat_init(tenv* env) {
@@ -1059,8 +1232,10 @@ void global_chat_draw(tenv* env) {
  * Panel contents helpers
  * ------------------------------------------------------------------- */
 
-static void gc_submit_message(tenv* env) {
-    if (global_chat_input[0] == '\0') {
+/* `text` is what we show locally; `wire` (may equal text) is what is
+ * relayed to everyone else. */
+static void gc_send_text_ex(tenv* env, const char* text, const char* wire) {
+    if (text == NULL || text[0] == '\0') {
         return;
     }
 
@@ -1074,18 +1249,48 @@ static void gc_submit_message(tenv* env) {
     global_chat_add_message(
         nickname,
         NULL,
-        global_chat_input
+        text
     );
 
     /* Relay it to everyone else. */
     if (global_chat_net != NULL) {
         jsr_network_send_message(
             global_chat_net,
-            global_chat_input
+            wire
         );
     }
+}
+
+static void gc_send_text(tenv* env, const char* text) {
+    gc_send_text_ex(env, text, text);
+}
+
+static void gc_submit_message(tenv* env) {
+    if (global_chat_input[0] == '\0') {
+        return;
+    }
+
+    gc_send_text(env, global_chat_input);
 
     memset(global_chat_input, 0, sizeof(global_chat_input));
+}
+
+/* One-tap quick message from the side rail. */
+static void gc_send_quick(tenv* env, int slot) {
+    if (slot < 0 || slot >= GC_QM_COUNT || gc_qm_text[slot][0] == '\0') {
+        return;
+    }
+
+    /* Relay with the invisible quick-message tag so teammates hear this
+     * slot's sound whatever their own quick texts are. */
+    char wire[GC_QM_TAG_LEN + GC_QM_TEXT_LEN];
+    snprintf(wire, sizeof(wire), "%s%s", gc_qm_tag[slot], gc_qm_text[slot]);
+
+    gc_send_text_ex(env, gc_qm_text[slot], wire);
+
+    if (gc_qm_sound) {
+        gc_play_quick_sound(slot);
+    }
 }
 
 static void gc_toggle_sos(void) {
@@ -2015,6 +2220,112 @@ static void global_chat_panel_contents(
         }
     }
 
+    gc_qm_ensure_loaded();
+
+    /* ---- rail extras: online count badge + quick messages ---- */
+    {
+        float y = rail_y + 4.0f * (btn + rail_gap);
+        float rail_bottom = pmax.y - u * 0.85f;
+
+        /* Online badge: green/red dot + number of players online. */
+        float ob_h = u * 1.5f;
+
+        if (y + ob_h <= rail_bottom) {
+            char ob[12];
+            snprintf(ob, sizeof(ob), "%d", online_count);
+
+            ImVec2 omn = gc_v2(rail_x, y);
+
+            ImDrawList_AddRectFilled(
+                dl, omn, gc_add(omn, btn, ob_h),
+                IM_COL32(255, 255, 255, 16), ob_h * 0.5f, 0
+            );
+
+            float dot_r = u * 0.2f;
+            float tw = gc_text_w(ob);
+            float total = dot_r * 2.0f + u * 0.4f + tw;
+            float sx0 = omn.x + (btn - total) * 0.5f;
+
+            ImDrawList_AddCircleFilled(
+                dl,
+                gc_v2(sx0 + dot_r, omn.y + ob_h * 0.5f),
+                dot_r,
+                is_connected ?
+                    IM_COL32(125, 255, 176, 255) :
+                    IM_COL32(242, 77, 77, 255),
+                10
+            );
+
+            ImDrawList_AddText_Vec2(
+                dl,
+                gc_v2(
+                    sx0 + dot_r * 2.0f + u * 0.4f,
+                    omn.y + (ob_h - u) * 0.5f
+                ),
+                IM_COL32(241, 236, 255, 255),
+                ob,
+                NULL
+            );
+
+            y += ob_h + rail_gap;
+        }
+
+        /* Quick message buttons, as many as fit the rail's height. */
+        float qh = btn * 0.72f;
+        float qgap = rail_gap * 0.6f;
+
+        if (y + qh <= rail_bottom) {
+            ImDrawList_AddLine(
+                dl,
+                gc_v2(rail_x + btn * 0.15f, y - rail_gap * 0.5f),
+                gc_v2(rail_x + btn * 0.85f, y - rail_gap * 0.5f),
+                IM_COL32(190, 160, 255, 50),
+                1.0f
+            );
+        }
+
+        for (int q = 0; q < GC_QM_COUNT; q++) {
+            if (gc_qm_text[q][0] == '\0' || gc_qm_label[q][0] == '\0') {
+                continue;
+            }
+
+            if (y + qh > rail_bottom) {
+                break;
+            }
+
+            ImVec2 qmn = gc_v2(rail_x, y);
+
+            char qid[16];
+            snprintf(qid, sizeof(qid), "##gc_qm%d", q);
+
+            if (
+                gc_button(
+                    qid,
+                    qmn,
+                    gc_v2(btn, qh),
+                    q == 0 ?
+                        IM_COL32(224, 56, 44, 120) :
+                        IM_COL32(124, 74, 232, 90),
+                    q == 0 ?
+                        IM_COL32(245, 90, 76, 190) :
+                        IM_COL32(150, 100, 250, 170),
+                    qh * 0.3f,
+                    IM_COL32(190, 160, 255, 70)
+                )
+            ) {
+                gc_send_quick(env, q);
+            }
+
+            gc_text_center(
+                dl, qmn, gc_v2(btn, qh),
+                IM_COL32(255, 255, 255, 255),
+                gc_qm_label[q]
+            );
+
+            y += qh + qgap;
+        }
+    }
+
     if (gc_tab == GC_TAB_CHAT) {
         gc_seen_messages = gc_total_messages;
     }
@@ -2244,22 +2555,12 @@ static void global_chat_panel_contents(
     } else if (gc_tab == GC_TAB_CHAT) {
         float in_h = gc_clampf(ws.y * 0.07f, u * 2.3f, u * 3.1f);
         float in_y = content_bot - in_h;
-        float chip_h = u * 1.95f;
-        float chip_y = in_y - u * 0.45f - chip_h;
-        float msg_bot = chip_y - u * 0.3f;
+        float msg_bot = in_y - u * 0.45f;
 
         gc_draw_messages(
             env,
             gc_v2(area_x, content_top),
             gc_v2(area_w, msg_bot - content_top),
-            u,
-            !adjusting_pos
-        );
-
-        gc_draw_emoji_row(
-            usrs,
-            gc_v2(mx + pad, chip_y),
-            gc_v2(mw - pad * 2.0f, chip_h),
             u,
             !adjusting_pos
         );
@@ -2426,7 +2727,8 @@ static void global_chat_panel_contents(
             "##gc_settings",
             gc_v2(area_w, content_bot - content_top),
             0,
-            ImGuiWindowFlags_NoBackground
+            ImGuiWindowFlags_NoBackground |
+            ImGuiWindowFlags_NoScrollbar
         );
 
         ImVec2 av;
@@ -2531,6 +2833,167 @@ static void global_chat_panel_contents(
         igPopItemWidth();
         igPopStyleColor(1);
         igPopStyleVar(1);
+
+        igDummy(gc_v2(1.0f, u * 0.3f));
+
+        igTextColored(
+            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
+            "Profile emoji"
+        );
+
+        {
+            ImVec2 ep;
+            igGetCursorScreenPos(&ep);
+
+            gc_draw_emoji_row(
+                usrs,
+                ep,
+                gc_v2(av.x, u * 1.95f),
+                u,
+                !adjusting_pos
+            );
+
+            igSetCursorScreenPos(ep);
+            igDummy(gc_v2(av.x, u * 2.2f));
+        }
+
+        /* ---- quick messages editor ---- */
+        igTextColored(
+            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
+            "Quick messages"
+        );
+
+        igTextDisabled("Button label  |  message it sends");
+
+        igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, u * 0.5f);
+        igPushStyleColor_Vec4(
+            ImGuiCol_FrameBg, (ImVec4){1.0f, 1.0f, 1.0f, 0.10f}
+        );
+
+        for (int q = 0; q < GC_QM_COUNT; q++) {
+            igPushID_Int(q);
+
+            igPushItemWidth(u * 5.0f);
+
+            igInputTextWithHint(
+                "##qml",
+                "Label",
+                gc_qm_label[q],
+                GC_QM_LABEL_LEN,
+                ImGuiInputTextFlags_None,
+                NULL,
+                NULL
+            );
+
+            if (igIsItemDeactivatedAfterEdit()) {
+                gc_qm_save();
+            }
+
+            igPopItemWidth();
+
+            igSameLine(0.0f, u * 0.4f);
+
+            igPushItemWidth(-1.0f);
+
+            igInputTextWithHint(
+                "##qmt",
+                "Message",
+                gc_qm_text[q],
+                GC_QM_TEXT_LEN,
+                ImGuiInputTextFlags_None,
+                NULL,
+                NULL
+            );
+
+            if (igIsItemDeactivatedAfterEdit()) {
+                gc_qm_save();
+            }
+
+            igPopItemWidth();
+
+            igPopID();
+        }
+
+        igPopStyleColor(1);
+        igPopStyleVar(1);
+
+        igDummy(gc_v2(1.0f, u * 0.3f));
+
+        /* Sound on/off + restore defaults */
+        {
+            ImVec2 sp;
+            igGetCursorScreenPos(&sp);
+
+            float sgap = u * 0.5f;
+            float sbw = (av.x - sgap) * 0.5f;
+            float sbh = u * 2.3f;
+
+            if (
+                gc_button(
+                    "##gc_qm_sound",
+                    sp,
+                    gc_v2(sbw, sbh),
+                    gc_qm_sound ?
+                        IM_COL32(40, 160, 90, 255) :
+                        IM_COL32(255, 255, 255, 20),
+                    gc_qm_sound ?
+                        IM_COL32(55, 190, 110, 255) :
+                        IM_COL32(255, 255, 255, 42),
+                    u * 0.6f, 0
+                )
+            ) {
+                gc_qm_sound = !gc_qm_sound;
+                gc_qm_save();
+
+                if (gc_qm_sound) {
+                    gc_play_quick_sound(1);
+                }
+            }
+
+            gc_text_center(
+                igGetWindowDrawList(), sp, gc_v2(sbw, sbh),
+                IM_COL32(241, 236, 255, 255),
+                gc_qm_sound ? "SOUND: ON" : "SOUND: OFF"
+            );
+
+            ImVec2 rp = gc_v2(sp.x + sbw + sgap, sp.y);
+
+            if (
+                gc_button(
+                    "##gc_qm_reset",
+                    rp,
+                    gc_v2(sbw, sbh),
+                    IM_COL32(255, 255, 255, 20),
+                    IM_COL32(255, 255, 255, 42),
+                    u * 0.6f, 0
+                )
+            ) {
+                bool keep_sound = gc_qm_sound;
+                gc_qm_defaults();
+                gc_qm_sound = keep_sound;
+                gc_qm_save();
+            }
+
+            gc_text_center(
+                igGetWindowDrawList(), rp, gc_v2(sbw, sbh),
+                IM_COL32(241, 236, 255, 255), "RESET TEXTS"
+            );
+
+            igSetCursorScreenPos(sp);
+            igDummy(gc_v2(av.x, sbh + u * 0.5f));
+        }
+
+        /* Touch/mouse drag scrolls this page. */
+        if (
+            !adjusting_pos &&
+            igIsWindowHovered(0) &&
+            !igIsAnyItemActive() &&
+            igIsMouseDragging(0, 6.0f)
+        ) {
+            igSetScrollY_Float(
+                igGetScrollY() - igGetIO_Nil()->MouseDelta.y
+            );
+        }
 
         igEndChild();
     }

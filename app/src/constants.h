@@ -34,55 +34,29 @@
  * ------------------------------------------------------------------------- */
 
 /* Minimum real-time gap between steering (angle) packets. Was 50 ms measured on
-   the per-frame clock (which really meant 50-67 ms at 60 Hz); NTL uses 33 ms.
-   16 ms means at 60 Hz a packet goes out on EVERY frame (at 90/120 Hz on every
-   2nd frame), so the server hears about your finger as early as the screen
-   refresh allows. The first change after a pause is always sent immediately.
-   If the server ever seems to ignore or drop you, put this back to 33. */
-#define STEER_ANGLE_MIN_MS 16.0
+   the per-frame clock (which really meant 50-67 ms at 60 Hz). 33 ms is the rate
+   the NTL client uses, i.e. ~30 steering updates per second. */
+#define STEER_ANGLE_MIN_MS 33.0
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 
-/* 0 = NTL behaviour: the head only turns once the server confirms the turn.
-   1 = the head turns locally (same turn rate the server uses) up to
-   STEER_PRED_LEAD_MS before the server confirmation arrives; the server's
-   echoes are reconciled afterwards. */
-#define STEER_PREDICT 0
-/* How far (ms) the turn you see is allowed to run ahead of the moment the
-   server confirms it. 0 = NTL (turn shows only after the server round trip, so
-   a death always matches the picture, but turning feels late). A big value =
-   the head turns the instant you move your finger, but you can then see the
-   head turned away and still die. Every ms here is ~0.17 world units of
-   mismatch (50 ms is about half a body width). The real gap is a bit bigger
-   than this number because the server also waits for its own tick. */
-#define STEER_PRED_LEAD_MS 25.0
+/* 1 = the moment a steering packet is sent, the head starts turning locally
+   (same turn rate the server uses) instead of waiting a full round trip for
+   the server to echo the turn back. Server echoes are reconciled afterwards.
+   0 = old behaviour. */
+#define STEER_PREDICT 1
 /* While a locally-predicted turn is still "in flight", server echoes about our
    own heading are not allowed to yank it backwards. The window is
    2 * one-way-delay + 50 ms, clamped to this range. */
 #define STEER_PRED_MIN_WINDOW_MS 80.0f
 #define STEER_PRED_MAX_WINDOW_MS 400.0f
 
-/* Head-sprite smoothing, fraction of the remaining angle closed per 8 ms tick
-   (this was the fixed 0.12 table p12[], indexed by the whole number of ticks in
-   the frame -- so a 60 Hz frame alternated between 2 and 3 ticks and a 144 Hz
-   frame was sometimes 0 ticks = the head froze for a frame). It is now applied
-   continuously from the real frame time. Other snakes keep the old 0.12; your
-   own head uses a higher value so the sprite keeps up with your finger. */
-#define EHANG_RATE_OTHERS 0.12f
-#define EHANG_RATE_SELF   0.22f
-/* 0 = the head sprite follows the angle of the first body segment (NTL).
-   1 = it points along the locally predicted heading (only makes sense with
-   STEER_PREDICT 1). */
-#define HEAD_SPRITE_FOLLOWS_HEADING 0
-
 /* Latency lead: server positions arrive one network trip late, so every head
    is drawn where it was ~one-way-delay ago -- i.e. short of where the server
    actually has it, which is a big part of "died before touching the body".
    Extrapolating that much (along the snake's own heading) draws heads where
-   the server has them now. 0 = off (NTL: heads are drawn exactly at the
-   server-reported position, so a death always lines up with the picture),
-   1 = full estimate. */
-#define NET_LEAD_FACTOR 0.0f
+   the server has them now. 0 = off, 1 = full estimate. */
+#define NET_LEAD_FACTOR 1.0f
 #define NET_LEAD_MAX_MS 100.0f
 
 /* Lag-spike handling. A spike shorter than LAG_START_MS is simply ridden out by

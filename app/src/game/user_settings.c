@@ -230,6 +230,8 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->snakey_rain_enabled = false;
   strcpy(usr_settings->snakey_rain_username, "snakeyuser");
   strcpy(usr_settings->snakey_rain_password, "wormfood");
+  usr_settings->food_glow[0] = false;
+  usr_settings->food_glow[1] = false;
   usr_settings->snakey_rain_max_bots = 1000;
   strcpy(usr_settings->snakey_rain_bot_name, "SnakeyRain");
   strcpy(usr_settings->snakey_rain_bot_skin,
@@ -302,9 +304,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v213_prefix = offsetof(user_settings, profile_emoji_id);
   size_t v214_prefix = offsetof(user_settings, show_net_graph);
   size_t v215_prefix = offsetof(user_settings, snakey_rain_settings_reserved);
+  size_t v216_prefix = offsetof(user_settings, food_glow_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v216_prefix)
+    /* A file saved before Food glow existed ends at v216_prefix, possibly
+       followed only by compiler tail padding. Keep every saved value; Food
+       glow keeps its default (off). */
+    bytes_to_read = v216_prefix;
   else if ((size_t)file_size >= v215_prefix)
     /* A file saved before Snakey Rain existed ends at v215_prefix (everything
        up to and including net_graph_reserved), possibly followed only by
@@ -369,6 +377,10 @@ void read_user_settings(user_settings* usr_settings) {
   /* Validate appended settings in case a truncated or hand-edited file was
      loaded. */
   for (int i = 0; i < 2; ++i) {
+    /* Food shader has 8 types (Solid, Rings + 6 shapes); reject garbage. */
+    if (loaded.modes[i].food_type < 0 || loaded.modes[i].food_type > 7)
+      loaded.modes[i].food_type = (i == 1) ? 1 : 0;
+    loaded.food_glow[i] = loaded.food_glow[i] ? true : false;
     /* Assist mode's Flat render mode allows a 0% floor (see settings.c);
        every other mode/render-mode combination keeps the 15% floor. */
     float opacity_floor = (i == 1 && loaded.modes[i].render_mode == 2)

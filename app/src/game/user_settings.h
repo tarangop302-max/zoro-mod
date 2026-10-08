@@ -315,6 +315,14 @@ typedef struct user_settings {
   int     snakey_rain_max_bots;
   char    snakey_rain_bot_name[25];
   char    snakey_rain_bot_skin[128];
+
+  /* v2.16 extension: per-mode Food glow toggle ([0]=Normal, [1]=Assist).
+     Off by default; when off, no food type draws any glow halo. Appended
+     after snakey_rain_bot_skin so every earlier file stays a compatible
+     prefix (see v216_prefix in read_user_settings). The reserved block keeps
+     sizeof(user_settings) strictly larger than the previous release. */
+  uint8_t food_glow_reserved[8];
+  bool    food_glow[2];
 } user_settings;
 
 void user_settings_default(user_settings* usr_settings);

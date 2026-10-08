@@ -7,10 +7,13 @@ typedef struct fd_instance {
   vec3s circle;
   vec4s color;
   float flicker;
+  float shape; /* 0..7, see Food shader list in settings.c */
+  float glow;  /* 1 = draw glow halo (Food glow setting) */
+  float angle; /* shape rotation, radians */
 } fd_instance;
 
 typedef struct fd_renderer {
-  VkPipeline pipelines[2];
+  VkPipeline pipelines[3];
   tdbuffer* instance_buffer;
   tdbuffer* p_instance_buffer;
   fd_instance* instances;
@@ -20,6 +23,7 @@ typedef struct fd_renderer {
   int num_p_instances;
   int max_p_instances;
   int pipeline_idx;
+  int glow;
 } fd_renderer;
 
 fd_renderer* fd_renderer_create(tcontext* ctx, int max_instance, int max_p_instances,

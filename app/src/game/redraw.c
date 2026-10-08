@@ -112,7 +112,12 @@ void redraw(tenv* env) {
                          &(fd_instance){{fx, fy, d},
                                         (vec4s){c.r, c.g, c.b, fo->fr},
                                         mode->food_flicker *
-                                            (.5 + .5 * cosf(fo->gfr / 13))});
+                                            (.5 + .5 * cosf(fo->gfr / 13)),
+                                        (float)mode->food_type,
+                                        usrs->food_glow[mode_index] ? 1.0f : 0.0f,
+                                        mode->food_float
+                                            ? fo->gfr * 0.02f + fo->id * 0.37f
+                                            : fo->id * 0.37f});
       }
     }
   } else {
@@ -136,7 +141,12 @@ void redraw(tenv* env) {
                          &(fd_instance){{fx, fy, d},
                                         (vec4s){c.r, c.g, c.b, fo->fr},
                                         mode->food_flicker *
-                                            (.5 + .5 * cosf(fo->gfr / 13))});
+                                            (.5 + .5 * cosf(fo->gfr / 13)),
+                                        (float)mode->food_type,
+                                        usrs->food_glow[mode_index] ? 1.0f : 0.0f,
+                                        mode->food_float
+                                            ? fo->gfr * 0.02f + fo->id * 0.37f
+                                            : fo->id * 0.37f});
       }
     }
   }
@@ -1698,6 +1708,7 @@ void redraw(tenv* env) {
   usr->r->global.bg_color[0] = usr->r->global.bg_color[1] =
       usr->r->global.bg_color[2] = mode->show_background;
   usr->r->fdr->pipeline_idx = mode->food_type;
+  usr->r->fdr->glow = usrs->food_glow[mode_index] ? 1 : 0;
 
   lerp_minimap_float(gdata->data.mm_data_follow, gdata->data.mm_data,
                      gdata->data.mmsz, 0.05f * gdata->data.vfr);

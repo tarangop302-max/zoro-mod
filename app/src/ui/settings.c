@@ -203,6 +203,8 @@ void ui_settings(tenv* env) {
         igAlignTextToFramePadding();
         igText("Food shader");
         igAlignTextToFramePadding();
+        igText("Food glow");
+        igAlignTextToFramePadding();
         igText("Food scale");
         igAlignTextToFramePadding();
         igText("Food float");
@@ -256,7 +258,12 @@ void ui_settings(tenv* env) {
         igEndDisabled();
         igSetNextItemWidth(-1);
         igCombo_Str_arr("##food type", &mode->food_type,
-                        (const char*[]){"Solid", "Rings"}, 2, -1);
+                        (const char*[]){"Solid", "Rings", "Hollow square",
+                                        "Star outline", "Star solid",
+                                        "Hollow triangle", "Asterisk",
+                                        "Sparkle"},
+                        8, 8);
+        igCheckbox("##food glow", &usrs->food_glow[i]);
         igSetNextItemWidth(-1);
         igSliderFloat("##food scale", &mode->food_scale, 0.25f, 3, "%.2f",
                       ImGuiSliderFlags_AlwaysClamp);

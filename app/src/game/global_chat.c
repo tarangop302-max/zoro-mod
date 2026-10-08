@@ -40,7 +40,26 @@ typedef struct {
 
 static bool global_chat_initialized = false;
 static bool global_chat_open = false;
-static bool global_chat_players_open = false;
+
+/* TEAM CHAT panel state (side-rail tab, close request, panel opacity,
+ * unread counter, and the teammate highlighted by LOCATE). */
+typedef enum {
+    GC_TAB_CHAT = 0,
+    GC_TAB_PLAYERS,
+    GC_TAB_SOS,
+    GC_TAB_SETTINGS
+} gc_tab_id;
+
+static int gc_tab = GC_TAB_CHAT;
+static bool gc_close_requested = false;
+static float gc_panel_alpha = 0.82f;
+static unsigned long gc_total_messages = 0;
+static unsigned long gc_seen_messages = 0;
+static char gc_locate_name[32] = "";
+
+static const char* const gc_tab_ids[4] = {
+    "##gc_tab0", "##gc_tab1", "##gc_tab2", "##gc_tab3"
+};
 
 /* Epoch milliseconds our own SOS signal is active until; 0 (or any value
  * <= now) means inactive. Session-only -- deliberately never saved to
@@ -90,138 +109,208 @@ static char global_chat_input[GLOBAL_CHAT_TEXT_LEN] = "";
 
 static void global_chat_panel_contents(
     tenv* env,
-    ImVec2 live_size
+    ImVec2 wp,
+    ImVec2 ws
 );
 
-/*
- * Matches the "crystal glass" purple theme used on the title
- * screen (see title_screen.c) so the collapsed TEAM CHAT widget
- * doesn't look like a stock ImGui window dropped on top of it.
- * Only used for the collapsed state for now -- the expanded
- * panel keeps its own styling.
- */
-#define GLOBAL_CHAT_COLLAPSED_COLOR_COUNT 8
-#define GLOBAL_CHAT_COLLAPSED_STYLEVAR_COUNT 4
+/* =====================================================================
+ * TEAM CHAT "Tabbed Hub" look -- small drawing helpers.
+ * Everything below only changes how the chat is drawn; the relay,
+ * messages, SOS, emoji and position/size logic are unchanged.
+ * ===================================================================== */
+static ImVec2 gc_v2(float x, float y) {
+    ImVec2 v;
+    v.x = x;
+    v.y = y;
+    return v;
+}
 
-static void global_chat_push_collapsed_theme(void) {
-    igPushStyleVar_Vec2(
-        ImGuiStyleVar_WindowTitleAlign,
-        (ImVec2){0.5f, 0.5f}
-    );
-    igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 14.0f);
-    igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 1.5f);
-    igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, 10.0f);
+static ImVec2 gc_add(ImVec2 a, float x, float y) {
+    return gc_v2(a.x + x, a.y + y);
+}
 
-    igPushStyleColor_Vec4(
-        ImGuiCol_WindowBg,
-        (ImVec4){0.145f, 0.098f, 0.220f, 1.0f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_Border,
-        (ImVec4){0.690f, 0.580f, 0.960f, 0.45f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_Text,
-        (ImVec4){0.945f, 0.925f, 1.0f, 1.0f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_TitleBg,
-        (ImVec4){0.114f, 0.063f, 0.212f, 1.0f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_TitleBgActive,
-        (ImVec4){0.176f, 0.106f, 0.306f, 1.0f}
-    );
+static float gc_clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
 
-    /* Same bright accent as the Play button, since Open is the
-     * one action on this widget. */
-    igPushStyleColor_Vec4(
-        ImGuiCol_Button,
-        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_ButtonHovered,
-        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_ButtonActive,
-        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f}
+static float gc_text_w(const char* s) {
+    ImVec2 sz;
+    igCalcTextSize(&sz, s, NULL, false, -1.0f);
+    return sz.x;
+}
+
+static void gc_text_center(
+    ImDrawList* dl,
+    ImVec2 mn,
+    ImVec2 sz,
+    ImU32 col,
+    const char* s
+) {
+    float w = gc_text_w(s);
+    float h = igGetTextLineHeight();
+
+    ImDrawList_AddText_Vec2(
+        dl,
+        gc_v2(
+            mn.x + (sz.x - w) * 0.5f,
+            mn.y + (sz.y - h) * 0.5f
+        ),
+        col,
+        s,
+        NULL
     );
 }
 
-static void global_chat_pop_collapsed_theme(void) {
-    igPopStyleColor(GLOBAL_CHAT_COLLAPSED_COLOR_COUNT);
-    igPopStyleVar(GLOBAL_CHAT_COLLAPSED_STYLEVAR_COUNT);
+/* Rounded flat button: invisible hit area + custom fill. The caller
+ * draws the label/icon on top afterwards. */
+static bool gc_button(
+    const char* id,
+    ImVec2 mn,
+    ImVec2 sz,
+    ImU32 col,
+    ImU32 col_hot,
+    float rounding,
+    ImU32 border
+) {
+    igSetCursorScreenPos(mn);
+
+    bool clicked =
+        igInvisibleButton(id, sz, ImGuiButtonFlags_None);
+
+    bool hot = igIsItemHovered(0) || igIsItemActive();
+
+    ImDrawList* dl = igGetWindowDrawList();
+
+    ImDrawList_AddRectFilled(
+        dl,
+        mn,
+        gc_add(mn, sz.x, sz.y),
+        hot ? col_hot : col,
+        rounding,
+        0
+    );
+
+    if (border != 0) {
+        ImDrawList_AddRect(
+            dl,
+            mn,
+            gc_add(mn, sz.x, sz.y),
+            border,
+            rounding,
+            0,
+            1.0f
+        );
+    }
+
+    return clicked;
 }
 
-/*
- * Expanded panel keeps its own near-transparent WindowBg (it
- * stays on screen during gameplay, so the see-through message
- * area over the game world can't turn into a solid card) --
- * but the opaque chrome sitting on top of that -- the title
- * bar strip, the Show players / SEND buttons, and the message
- * input box -- are solid UI elements, not the see-through part,
- * so those get the same purple theme as the rest of the mod.
- */
-#define GLOBAL_CHAT_EXPANDED_COLOR_COUNT 10
-#define GLOBAL_CHAT_EXPANDED_STYLEVAR_COUNT 1
-
-static void global_chat_push_expanded_theme(void) {
-    igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, 8.0f);
-
-    igPushStyleColor_Vec4(
-        ImGuiCol_Border,
-        (ImVec4){0.690f, 0.580f, 0.960f, 0.45f}
+/* ---- vector icons (the game font has no emoji glyphs) ---- */
+static void gc_icon_chat(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
+    ImDrawList_AddRectFilled(
+        dl,
+        gc_v2(c.x - s * 0.5f, c.y - s * 0.42f),
+        gc_v2(c.x + s * 0.5f, c.y + s * 0.2f),
+        col,
+        s * 0.18f,
+        0
     );
-    igPushStyleColor_Vec4(
-        ImGuiCol_Text,
-        (ImVec4){0.945f, 0.925f, 1.0f, 1.0f}
-    );
-
-    /* Title bar strip -- where "{ J S R } TEAM CHAT" is drawn. */
-    igPushStyleColor_Vec4(
-        ImGuiCol_TitleBg,
-        (ImVec4){0.114f, 0.063f, 0.212f, 1.0f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_TitleBgActive,
-        (ImVec4){0.176f, 0.106f, 0.306f, 1.0f}
-    );
-
-    /* Show players / SEND -- same ambient translucent-purple
-     * buttons as the rest of the mod's panels (not the bright
-     * Play accent -- these are secondary actions). */
-    igPushStyleColor_Vec4(
-        ImGuiCol_Button,
-        (ImVec4){0.373f, 0.290f, 0.607f, 0.28f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_ButtonHovered,
-        (ImVec4){0.430f, 0.330f, 0.680f, 0.34f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_ButtonActive,
-        (ImVec4){0.470f, 0.360f, 0.720f, 0.42f}
-    );
-
-    /* "Type your message..." input box. */
-    igPushStyleColor_Vec4(
-        ImGuiCol_FrameBg,
-        (ImVec4){0.373f, 0.290f, 0.607f, 0.28f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_FrameBgHovered,
-        (ImVec4){0.430f, 0.330f, 0.680f, 0.34f}
-    );
-    igPushStyleColor_Vec4(
-        ImGuiCol_FrameBgActive,
-        (ImVec4){0.470f, 0.360f, 0.720f, 0.42f}
+    ImDrawList_AddTriangleFilled(
+        dl,
+        gc_v2(c.x - s * 0.22f, c.y + s * 0.15f),
+        gc_v2(c.x - s * 0.30f, c.y + s * 0.5f),
+        gc_v2(c.x + s * 0.08f, c.y + s * 0.15f),
+        col
     );
 }
 
-static void global_chat_pop_expanded_theme(void) {
-    igPopStyleColor(GLOBAL_CHAT_EXPANDED_COLOR_COUNT);
-    igPopStyleVar(GLOBAL_CHAT_EXPANDED_STYLEVAR_COUNT);
+static void gc_icon_players(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
+    ImDrawList_AddCircleFilled(
+        dl, gc_v2(c.x, c.y - s * 0.18f), s * 0.2f, col, 16
+    );
+    ImDrawList_AddRectFilled(
+        dl,
+        gc_v2(c.x - s * 0.38f, c.y + s * 0.08f),
+        gc_v2(c.x + s * 0.38f, c.y + s * 0.46f),
+        col,
+        s * 0.3f,
+        ImDrawFlags_RoundCornersTop
+    );
+}
+
+static void gc_icon_sos(ImDrawList* dl, ImVec2 c, float s, ImU32 col, ImU32 cut) {
+    ImDrawList_AddTriangleFilled(
+        dl,
+        gc_v2(c.x, c.y - s * 0.46f),
+        gc_v2(c.x - s * 0.52f, c.y + s * 0.4f),
+        gc_v2(c.x + s * 0.52f, c.y + s * 0.4f),
+        col
+    );
+    ImDrawList_AddLine(
+        dl,
+        gc_v2(c.x, c.y - s * 0.12f),
+        gc_v2(c.x, c.y + s * 0.1f),
+        cut,
+        s * 0.1f
+    );
+    ImDrawList_AddCircleFilled(
+        dl, gc_v2(c.x, c.y + s * 0.26f), s * 0.055f, cut, 8
+    );
+}
+
+static void gc_icon_gear(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
+    ImDrawList_AddCircle(dl, c, s * 0.26f, col, 20, s * 0.2f);
+
+    for (int i = 0; i < 8; i++) {
+        float a = (float)i * 0.785398f;
+        float ca = cosf(a);
+        float sa = sinf(a);
+
+        ImDrawList_AddLine(
+            dl,
+            gc_v2(c.x + ca * s * 0.32f, c.y + sa * s * 0.32f),
+            gc_v2(c.x + ca * s * 0.47f, c.y + sa * s * 0.47f),
+            col,
+            s * 0.13f
+        );
+    }
+}
+
+static void gc_icon_x(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
+    ImDrawList_AddLine(
+        dl,
+        gc_v2(c.x - s * 0.5f, c.y - s * 0.5f),
+        gc_v2(c.x + s * 0.5f, c.y + s * 0.5f),
+        col,
+        2.0f
+    );
+    ImDrawList_AddLine(
+        dl,
+        gc_v2(c.x + s * 0.5f, c.y - s * 0.5f),
+        gc_v2(c.x - s * 0.5f, c.y + s * 0.5f),
+        col,
+        2.0f
+    );
+}
+
+static void gc_icon_minus(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
+    ImDrawList_AddLine(
+        dl,
+        gc_v2(c.x - s * 0.5f, c.y),
+        gc_v2(c.x + s * 0.5f, c.y),
+        col,
+        2.0f
+    );
+}
+
+static void gc_icon_send(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
+    ImDrawList_AddTriangleFilled(
+        dl,
+        gc_v2(c.x - s * 0.45f, c.y - s * 0.5f),
+        gc_v2(c.x + s * 0.55f, c.y),
+        gc_v2(c.x - s * 0.45f, c.y + s * 0.5f),
+        col
+    );
 }
 
 static void global_chat_try_connect(
@@ -255,6 +344,8 @@ static void global_chat_add_message(
         global_chat_message_count =
             GLOBAL_CHAT_MAX_MESSAGES - 1;
     }
+
+    gc_total_messages++;
 
     global_chat_message* message =
         &global_chat_messages[
@@ -725,18 +816,11 @@ void global_chat_draw(tenv* env) {
         igGetMainViewport();
 
     /*
-     * One window, one persistent ID ("##zoro_chat_window"),
-     * used for both the small collapsed button and the
-     * full expanded chat box. Because the ID never changes,
-     * ImGui keeps the same position across the transition --
-     * so dragging it (by its title bar, which already works
-     * reliably, unlike a hand-rolled per-widget drag) moves
-     * the "button" and the chat box together as one thing.
+     * One window, one persistent ID, used for both the small
+     * collapsed card and the full expanded chat box, so the
+     * position stays put across the transition.
      */
-    const char* title =
-        global_chat_open ?
-            "{ J S R } TEAM CHAT##zoro_chat_window" :
-            "TEAM CHAT##zoro_chat_window";
+    const char* title = "##zoro_chat_window";
 
     ImVec2 collapsed_size = {
         170.0f,
@@ -748,12 +832,6 @@ void global_chat_draw(tenv* env) {
             &env->usr->usrs :
             NULL;
 
-    /*
-     * Default: a compact box in the top-left corner. Once the
-     * player has adjusted position/size via the TEAM CHAT panel,
-     * usrs->public_chat_pos_custom is set and their saved rect
-     * (relative to the work area) is used instead.
-     */
     ImVec2 expanded_size;
     ImVec2 fixed_pos;
 
@@ -794,12 +872,10 @@ void global_chat_draw(tenv* env) {
     }
 
     /*
-     * Normally position and size are forced every frame (no drag,
-     * no resize) -- the window stays pinned wherever it's set to.
-     * While the player is actively adjusting position or size from
-     * the TEAM CHAT panel, the relevant one is instead only set on
-     * "Appearing" so ImGui's own drag/resize handles it, and the
-     * matching lock flag below is lifted.
+     * Position and size are forced every frame (no drag, no resize)
+     * unless the player is adjusting them (RESIZE button, Settings
+     * tab, or the TEAM CHAT settings panel) -- then ImGui's own
+     * drag/resize takes over until they confirm.
      */
     bool adjusting_pos =
         global_chat_open &&
@@ -831,16 +907,13 @@ void global_chat_draw(tenv* env) {
         );
     }
 
-    igSetNextWindowBgAlpha(
-        global_chat_open ? 0.1f : 0.85f
-    );
-
-    bool open = true;
-
     ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoScrollbar;
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse |
+        ImGuiWindowFlags_NoBackground;
 
     if (!adjusting_pos) {
         flags |= ImGuiWindowFlags_NoMove;
@@ -850,45 +923,16 @@ void global_chat_draw(tenv* env) {
         flags |= ImGuiWindowFlags_NoResize;
     }
 
-    /*
-     * Reduced top/bottom window padding while expanded, so the
-     * header row (Connected to relay / Show players) sits right
-     * up against the title bar's bottom edge instead of leaving
-     * a visible gap -- per request, this has to happen before
-     * igBegin() since WindowPadding is only read at that point.
-     */
-    ImVec2 base_padding = igGetStyle()->WindowPadding;
-    bool pushed_padding = false;
-    bool pushed_collapsed_theme = false;
-    bool pushed_expanded_theme = false;
+    /* The whole look is drawn by hand, so the window itself is just
+     * a transparent, border-less, padding-less canvas. */
+    igPushStyleVar_Vec2(
+        ImGuiStyleVar_WindowPadding,
+        (ImVec2){0.0f, 0.0f}
+    );
+    igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 0.0f);
 
-    if (global_chat_open) {
-        igPushStyleVar_Vec2(
-            ImGuiStyleVar_WindowPadding,
-            (ImVec2){base_padding.x, 6.0f}
-        );
-        pushed_padding = true;
-
-        global_chat_push_expanded_theme();
-        pushed_expanded_theme = true;
-    } else {
-        global_chat_push_collapsed_theme();
-        pushed_collapsed_theme = true;
-
-        igPushStyleVar_Vec2(
-            ImGuiStyleVar_WindowPadding,
-            (ImVec2){12.0f, 10.0f}
-        );
-        pushed_padding = true;
-    }
-
-    if (
-        igBegin(
-            title,
-            global_chat_open ? &open : NULL,
-            flags
-        )
-    ) {
+    if (igBegin(title, NULL, flags)) {
         ImVec2 live_pos;
         ImVec2 live_size;
 
@@ -896,11 +940,6 @@ void global_chat_draw(tenv* env) {
         igGetWindowSize(&live_size);
 
 #ifdef ANDROID
-        /*
-         * Live position/size so touch capture follows this
-         * window wherever it gets dragged to, in either
-         * state.
-         */
         android_ui_capture_rect(
             live_pos.x,
             live_pos.y,
@@ -914,9 +953,8 @@ void global_chat_draw(tenv* env) {
             viewport->WorkSize.x > 0.0f &&
             viewport->WorkSize.y > 0.0f
         ) {
-            /* Track the live rect (relative to the work area) so
-             * whatever it is the instant the player confirms via
-             * global_chat_set_adjust_mode() is what gets saved. */
+            /* Track the live rect so whatever it is the instant the
+             * player confirms is what gets saved. */
             global_chat_adjust_x =
                 (live_pos.x - viewport->WorkPos.x) / viewport->WorkSize.x;
             global_chat_adjust_y =
@@ -928,20 +966,70 @@ void global_chat_draw(tenv* env) {
         }
 
         if (!global_chat_open) {
+            /* ---- collapsed card: "TEAM CHAT" + Open ---- */
+            ImDrawList* dl = igGetWindowDrawList();
+            ImVec2 p = live_pos;
+            ImVec2 sz = live_size;
+
+            ImDrawList_AddRectFilled(
+                dl, p, gc_add(p, sz.x, sz.y),
+                IM_COL32(36, 22, 64, 230), 20.0f, 0
+            );
+            ImDrawList_AddRect(
+                dl, p, gc_add(p, sz.x, sz.y),
+                IM_COL32(190, 160, 255, 115), 20.0f, 0, 1.5f
+            );
+
+            float head_h = 44.0f;
+
+            gc_text_center(
+                dl, p, gc_v2(sz.x, head_h),
+                IM_COL32(241, 236, 255, 255), "TEAM CHAT"
+            );
+
+            ImDrawList_AddLine(
+                dl,
+                gc_v2(p.x + 1.0f, p.y + head_h),
+                gc_v2(p.x + sz.x - 1.0f, p.y + head_h),
+                IM_COL32(190, 160, 255, 64),
+                1.0f
+            );
+
+            ImVec2 bmn = gc_v2(p.x + 12.0f, p.y + head_h + 11.0f);
+            ImVec2 bsz = gc_v2(sz.x - 24.0f, sz.y - head_h - 23.0f);
+
             if (
-                igButton(
-                    "Open",
-                    (ImVec2){
-                        -1.0f,
-                        34.0f
-                    }
+                gc_button(
+                    "##gc_open",
+                    bmn,
+                    bsz,
+                    IM_COL32(120, 70, 220, 255),
+                    IM_COL32(145, 92, 245, 255),
+                    12.0f,
+                    0
                 )
             ) {
                 global_chat_open = true;
             }
+
+            /* Soft highlight on the top half = the gradient look. */
+            ImDrawList_AddRectFilled(
+                dl,
+                bmn,
+                gc_v2(bmn.x + bsz.x, bmn.y + bsz.y * 0.5f),
+                IM_COL32(255, 255, 255, 34),
+                12.0f,
+                ImDrawFlags_RoundCornersTop
+            );
+
+            gc_text_center(
+                dl, bmn, bsz,
+                IM_COL32(255, 255, 255, 255), "Open"
+            );
         } else {
             global_chat_panel_contents(
                 env,
+                live_pos,
                 live_size
             );
         }
@@ -949,21 +1037,11 @@ void global_chat_draw(tenv* env) {
 
     igEnd();
 
-    if (pushed_padding) {
-        igPopStyleVar(1);
-    }
-
-    if (pushed_collapsed_theme) {
-        global_chat_pop_collapsed_theme();
-    }
-
-    if (pushed_expanded_theme) {
-        global_chat_pop_expanded_theme();
-    }
+    igPopStyleVar(3);
 
     if (
         global_chat_open &&
-        !open
+        gc_close_requested
     ) {
         global_chat_open = false;
 
@@ -974,241 +1052,804 @@ void global_chat_draw(tenv* env) {
         }
     }
 
-    if (
-        global_chat_open &&
-        global_chat_players_open
-    ) {
-        ImVec2 players_pos = {
-            fixed_pos.x,
-            fixed_pos.y +
-                expanded_size.y +
-                8.0f
-        };
+    gc_close_requested = false;
+}
 
-        ImVec2 players_size = {
-            expanded_size.x,
-            180.0f
-        };
+/* ---------------------------------------------------------------------
+ * Panel contents helpers
+ * ------------------------------------------------------------------- */
 
-        igSetNextWindowPos(
-            players_pos,
-            ImGuiCond_Always,
-            (ImVec2){0.0f, 0.0f}
+static void gc_submit_message(tenv* env) {
+    if (global_chat_input[0] == '\0') {
+        return;
+    }
+
+    const char* nickname = env->usr->usrs.nickname;
+
+    if (nickname == NULL || nickname[0] == '\0') {
+        nickname = "Player";
+    }
+
+    /* Show it immediately for the sender. */
+    global_chat_add_message(
+        nickname,
+        NULL,
+        global_chat_input
+    );
+
+    /* Relay it to everyone else. */
+    if (global_chat_net != NULL) {
+        jsr_network_send_message(
+            global_chat_net,
+            global_chat_input
         );
+    }
 
-        igSetNextWindowSize(
-            players_size,
-            ImGuiCond_Always
+    memset(global_chat_input, 0, sizeof(global_chat_input));
+}
+
+static void gc_toggle_sos(void) {
+    if (global_chat_is_sos_active()) {
+        global_chat_set_sos(0);
+    } else {
+        /* Active for 5 minutes, or until manually cancelled --
+         * whichever comes first. Re-broadcast happens automatically
+         * on the next twice-a-second location update. */
+        global_chat_set_sos(
+            global_chat_now_ms() + 5LL * 60LL * 1000LL
         );
+    }
+}
 
-        igSetNextWindowBgAlpha(
-            0.1f
-        );
+static void gc_toggle_adjust(tenv* env, global_chat_adjust_mode mode) {
+    if (global_chat_adjust == mode) {
+        /* Confirms (saves) and locks back down. */
+        global_chat_set_adjust_mode(env, GLOBAL_CHAT_ADJUST_NONE);
+    } else if (global_chat_adjust != GLOBAL_CHAT_ADJUST_NONE) {
+        /* Switching straight from one mode to the other. */
+        global_chat_set_adjust_mode(env, mode);
+    } else {
+        global_chat_set_adjust_mode(env, mode);
+    }
+}
 
-        ImGuiWindowFlags players_flags =
-            ImGuiWindowFlags_NoCollapse |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoResize;
+/* Red "needs help" cards for every teammate whose SOS is active, each
+ * with a LOCATE button (jumps to the Players tab, highlighting them).
+ * Returns how many cards were drawn. */
+static int gc_draw_sos_cards(float u, float width, const char* own_name) {
+    if (global_chat_net == NULL) {
+        return 0;
+    }
+
+    int count = jsr_network_location_count(global_chat_net);
+    int shown = 0;
+    float lh = igGetTextLineHeight();
+    float card_h = lh * 1.7f + u * 0.4f;
+
+    for (int i = 0; i < count; i++) {
+        char name[32];
+        char ip[64];
+        bool sos = false;
+        int emoji_id = 0;
+
+        name[0] = '\0';
+        ip[0] = '\0';
 
         if (
-            igBegin(
-                "Online Players##zoro_chat_players",
-                NULL,
-                players_flags
+            !jsr_network_get_location(
+                global_chat_net,
+                i,
+                name,
+                sizeof(name),
+                ip,
+                sizeof(ip),
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                &sos,
+                &emoji_id
             )
         ) {
-#ifdef ANDROID
-            ImVec2 pl_pos;
-            ImVec2 pl_size;
-
-            igGetWindowPos(&pl_pos);
-            igGetWindowSize(&pl_size);
-
-            android_ui_capture_rect(
-                pl_pos.x,
-                pl_pos.y,
-                pl_pos.x + pl_size.x,
-                pl_pos.y + pl_size.y
-            );
-#endif
-
-            int roster_count =
-                global_chat_net != NULL ?
-                    jsr_network_roster_count(
-                        global_chat_net
-                    ) :
-                    0;
-
-            if (roster_count == 0) {
-                igTextDisabled(
-                    "No players online."
-                );
-            } else {
-                for (
-                    int i = 0;
-                    i < roster_count;
-                    i++
-                ) {
-                    char name[32];
-                    char owner[32];
-
-                    if (
-                        !jsr_network_roster_name(
-                            global_chat_net,
-                            i,
-                            name,
-                            sizeof(name)
-                        )
-                    ) {
-                        continue;
-                    }
-
-                    owner[0] = '\0';
-
-                    jsr_network_roster_owner(
-                        global_chat_net,
-                        i,
-                        owner,
-                        sizeof(owner)
-                    );
-
-                    if (owner[0] != '\0') {
-                        igTextColored(
-                            (ImVec4){
-                                0.95f,
-                                0.3f,
-                                0.3f,
-                                1.0f
-                            },
-                            "%s",
-                            owner
-                        );
-
-                        igSameLine(
-                            0.0f,
-                            6.0f
-                        );
-                    }
-
-                    igTextColored(
-                        (ImVec4){
-                            0.25f,
-                            0.75f,
-                            1.0f,
-                            1.0f
-                        },
-                        "%s",
-                        name
-                    );
-
-                    /* The server IP a teammate is currently playing on --
-                     * looked up from the same location broadcast that
-                     * already powers the minimap markers/Teammates panel,
-                     * matched here by name since the roster (this list)
-                     * and the location feed are two separate JSR
-                     * subsystems. Left blank if they're connected to chat
-                     * but haven't broadcast a position yet (e.g. still in
-                     * the lobby). Their SOS state and chosen profile emoji
-                     * ride along on the same lookup. */
-                    char loc_ip[64] = "";
-                    bool loc_sos = false;
-                    int loc_emoji_id = 0;
-
-                    if (global_chat_net != NULL) {
-                        int loc_count =
-                            jsr_network_location_count(
-                                global_chat_net
-                            );
-
-                        for (
-                            int j = 0;
-                            j < loc_count;
-                            j++
-                        ) {
-                            char loc_name[32];
-
-                            if (
-                                !jsr_network_get_location(
-                                    global_chat_net,
-                                    j,
-                                    loc_name,
-                                    sizeof(loc_name),
-                                    loc_ip,
-                                    sizeof(loc_ip),
-                                    NULL,
-                                    NULL,
-                                    NULL,
-                                    NULL,
-                                    NULL,
-                                    NULL,
-                                    NULL,
-                                    NULL,
-                                    &loc_sos,
-                                    &loc_emoji_id
-                                )
-                            ) {
-                                loc_ip[0] = '\0';
-                                continue;
-                            }
-
-                            if (
-                                strcmp(
-                                    loc_name,
-                                    name
-                                ) == 0
-                            ) {
-                                break;
-                            }
-
-                            loc_ip[0] = '\0';
-                            loc_sos = false;
-                            loc_emoji_id = 0;
-                        }
-                    }
-
-                    const char *loc_emoji = profile_emoji_at(loc_emoji_id);
-                    if (loc_emoji[0] != '\0') {
-                        igSameLine(0.0f, 4.0f);
-                        igText("%s", loc_emoji);
-                    }
-
-                    if (loc_sos) {
-                        igSameLine(0.0f, 6.0f);
-                        igTextColored(
-                            (ImVec4){1.0f, 0.25f, 0.2f, 1.0f},
-                            "SOS"
-                        );
-                    }
-
-                    if (loc_ip[0] != '\0') {
-                        igSameLine(
-                            0.0f,
-                            10.0f
-                        );
-
-                        igTextColored(
-                            (ImVec4){
-                                0.55f,
-                                0.55f,
-                                0.62f,
-                                0.85f
-                            },
-                            "%s",
-                            loc_ip
-                        );
-                    }
-                }
-            }
+            continue;
         }
 
-        igEnd();
+        if (!sos || name[0] == '\0') {
+            continue;
+        }
+
+        if (own_name != NULL && strcmp(own_name, name) == 0) {
+            continue;
+        }
+
+        ImVec2 p;
+        igGetCursorScreenPos(&p);
+
+        ImDrawList* dl = igGetWindowDrawList();
+
+        ImDrawList_AddRectFilled(
+            dl, p, gc_add(p, width, card_h),
+            IM_COL32(224, 56, 44, 56), u * 0.6f, 0
+        );
+        ImDrawList_AddRect(
+            dl, p, gc_add(p, width, card_h),
+            IM_COL32(255, 90, 74, 128), u * 0.6f, 0, 1.0f
+        );
+
+        ImVec2 icon_c = gc_v2(p.x + u * 1.0f, p.y + card_h * 0.5f);
+        gc_icon_sos(
+            dl, icon_c, lh * 0.95f,
+            IM_COL32(255, 90, 74, 255),
+            IM_COL32(60, 20, 20, 255)
+        );
+
+        char line[80];
+        snprintf(line, sizeof(line), "%s needs help", name);
+
+        ImDrawList_AddText_Vec2(
+            dl,
+            gc_v2(p.x + u * 1.9f, p.y + (card_h - lh) * 0.5f),
+            IM_COL32(255, 214, 208, 255),
+            line,
+            NULL
+        );
+
+        float bw = gc_text_w("LOCATE") + u * 1.2f;
+        float bh = card_h * 0.64f;
+        ImVec2 bmn = gc_v2(
+            p.x + width - bw - u * 0.5f,
+            p.y + (card_h - bh) * 0.5f
+        );
+
+        char btn_id[24];
+        snprintf(btn_id, sizeof(btn_id), "##gc_loc%d", i);
+
+        if (
+            gc_button(
+                btn_id, bmn, gc_v2(bw, bh),
+                IM_COL32(224, 56, 44, 255),
+                IM_COL32(245, 85, 70, 255),
+                u * 0.4f, 0
+            )
+        ) {
+            strncpy(gc_locate_name, name, sizeof(gc_locate_name) - 1);
+            gc_locate_name[sizeof(gc_locate_name) - 1] = '\0';
+            gc_tab = GC_TAB_PLAYERS;
+        }
+
+        gc_text_center(
+            dl, bmn, gc_v2(bw, bh),
+            IM_COL32(255, 255, 255, 255), "LOCATE"
+        );
+
+        igSetCursorScreenPos(p);
+        igDummy(gc_v2(width, card_h + u * 0.35f));
+
+        shown++;
     }
+
+    return shown;
+}
+
+/* Roster list (Players tab). Same data the old "Online Players"
+ * window used: roster + the location feed for IP / SOS / emoji. */
+static void gc_draw_players_list(float u, float width, const char* own_name) {
+    (void)own_name;
+
+    int roster_count =
+        global_chat_net != NULL ?
+            jsr_network_roster_count(global_chat_net) :
+            0;
+
+    if (roster_count == 0) {
+        igTextDisabled("No players online.");
+        return;
+    }
+
+    static const ImU32 avatar_cols[6] = {
+        IM_COL32(224, 112, 154, 255),
+        IM_COL32(56, 182, 165, 255),
+        IM_COL32(124, 74, 232, 255),
+        IM_COL32(230, 160, 60, 255),
+        IM_COL32(77, 140, 255, 255),
+        IM_COL32(150, 200, 90, 255)
+    };
+
+    float lh = igGetTextLineHeight();
+    float row_h = lh * 2.3f;
+
+    for (int i = 0; i < roster_count; i++) {
+        char name[32];
+        char owner[32];
+
+        if (
+            !jsr_network_roster_name(
+                global_chat_net, i, name, sizeof(name)
+            )
+        ) {
+            continue;
+        }
+
+        owner[0] = '\0';
+        jsr_network_roster_owner(
+            global_chat_net, i, owner, sizeof(owner)
+        );
+
+        char loc_ip[64] = "";
+        bool loc_sos = false;
+        int loc_emoji_id = 0;
+
+        int loc_count =
+            jsr_network_location_count(global_chat_net);
+
+        for (int j = 0; j < loc_count; j++) {
+            char loc_name[32];
+
+            if (
+                !jsr_network_get_location(
+                    global_chat_net,
+                    j,
+                    loc_name,
+                    sizeof(loc_name),
+                    loc_ip,
+                    sizeof(loc_ip),
+                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                    &loc_sos,
+                    &loc_emoji_id
+                )
+            ) {
+                loc_ip[0] = '\0';
+                continue;
+            }
+
+            if (strcmp(loc_name, name) == 0) {
+                break;
+            }
+
+            loc_ip[0] = '\0';
+            loc_sos = false;
+            loc_emoji_id = 0;
+        }
+
+        ImVec2 p;
+        igGetCursorScreenPos(&p);
+
+        ImDrawList* dl = igGetWindowDrawList();
+
+        bool located =
+            gc_locate_name[0] != '\0' &&
+            strcmp(gc_locate_name, name) == 0;
+
+        ImDrawList_AddRectFilled(
+            dl, p, gc_add(p, width, row_h - 4.0f),
+            located ?
+                IM_COL32(124, 74, 232, 90) :
+                IM_COL32(255, 255, 255, 12),
+            u * 0.5f, 0
+        );
+
+        if (located) {
+            ImDrawList_AddRect(
+                dl, p, gc_add(p, width, row_h - 4.0f),
+                IM_COL32(190, 160, 255, 160), u * 0.5f, 0, 1.0f
+            );
+        }
+
+        /* Avatar */
+        unsigned hash = 0;
+        for (const char* c = name; *c; c++) {
+            hash = hash * 31u + (unsigned char)*c;
+        }
+
+        ImVec2 ac = gc_v2(p.x + u * 1.1f, p.y + (row_h - 4.0f) * 0.5f);
+        ImDrawList_AddCircleFilled(
+            dl, ac, lh * 0.8f, avatar_cols[hash % 6u], 20
+        );
+
+        char initial[2] = { name[0] != '\0' ? name[0] : '?', '\0' };
+        gc_text_center(
+            dl,
+            gc_v2(ac.x - lh, ac.y - lh),
+            gc_v2(lh * 2.0f, lh * 2.0f),
+            IM_COL32(255, 255, 255, 255),
+            initial
+        );
+
+        float tx = p.x + u * 2.4f;
+        float ty = p.y + (row_h - 4.0f - lh) * 0.5f;
+
+        if (owner[0] != '\0') {
+            ImDrawList_AddText_Vec2(
+                dl, gc_v2(tx, ty),
+                IM_COL32(242, 77, 77, 255), owner, NULL
+            );
+            tx += gc_text_w(owner) + u * 0.4f;
+        }
+
+        ImDrawList_AddText_Vec2(
+            dl, gc_v2(tx, ty),
+            IM_COL32(180, 156, 245, 255), name, NULL
+        );
+        tx += gc_text_w(name) + u * 0.5f;
+
+        const char* loc_emoji = profile_emoji_at(loc_emoji_id);
+
+        if (loc_emoji[0] != '\0') {
+            ImDrawList_AddText_Vec2(
+                dl, gc_v2(tx, ty),
+                IM_COL32(255, 255, 255, 255), loc_emoji, NULL
+            );
+            tx += gc_text_w(loc_emoji) + u * 0.4f;
+        }
+
+        if (loc_sos) {
+            ImDrawList_AddText_Vec2(
+                dl, gc_v2(tx, ty),
+                IM_COL32(255, 70, 55, 255), "SOS", NULL
+            );
+        }
+
+        if (loc_ip[0] != '\0') {
+            float iw = gc_text_w(loc_ip);
+
+            ImDrawList_AddText_Vec2(
+                dl,
+                gc_v2(p.x + width - iw - u * 0.7f, ty),
+                IM_COL32(140, 133, 170, 230),
+                loc_ip,
+                NULL
+            );
+        }
+
+        igDummy(gc_v2(width, row_h));
+    }
+}
+
+/* Slim draggable scrollbar for the message list, drawn flush with the
+ * right edge of the main area. Same absolute-drag logic as before: a
+ * fat invisible hit area (fingers) and no per-frame delta
+ * accumulation (touch-move events get coalesced). */
+static void gc_message_scrollbar(
+    ImVec2 track_pos,
+    float track_h,
+    float hit_w,
+    float view_h,
+    float scroll_max,
+    float scroll_y,
+    ImGuiWindow* msg_window,
+    float u
+) {
+    static float drag_anchor_mouse_y = 0.0f;
+    static float drag_anchor_scroll = 0.0f;
+
+    float bar_w = fmaxf(5.0f, u * 0.3f);
+    float bar_x = track_pos.x + (hit_w - bar_w) * 0.5f;
+
+    float thumb_h = track_h;
+
+    if (scroll_max > 0.0f) {
+        thumb_h = track_h * (view_h / (view_h + scroll_max));
+        thumb_h = gc_clampf(thumb_h, u * 2.0f, track_h);
+    }
+
+    float ratio = scroll_max > 0.0f ? (scroll_y / scroll_max) : 0.0f;
+    float thumb_y = track_pos.y + ratio * (track_h - thumb_h);
+
+    ImDrawList* dl = igGetWindowDrawList();
+
+    ImDrawList_AddRectFilled(
+        dl,
+        gc_v2(bar_x, track_pos.y),
+        gc_v2(bar_x + bar_w, track_pos.y + track_h),
+        IM_COL32(176, 148, 245, 28),
+        bar_w * 0.5f, 0
+    );
+
+    ImDrawList_AddRectFilled(
+        dl,
+        gc_v2(bar_x, thumb_y),
+        gc_v2(bar_x + bar_w, thumb_y + thumb_h),
+        IM_COL32(191, 165, 245, 170),
+        bar_w * 0.5f, 0
+    );
+
+    igSetCursorScreenPos(track_pos);
+    igInvisibleButton(
+        "##gc_scrollbar",
+        gc_v2(hit_w, track_h),
+        ImGuiButtonFlags_None
+    );
+
+    if (scroll_max <= 0.0f) {
+        return;
+    }
+
+    float usable = track_h - thumb_h;
+
+    if (usable <= 0.0f) {
+        return;
+    }
+
+    if (igIsItemActivated()) {
+        ImVec2 mouse;
+        igGetMousePos(&mouse);
+
+        float click_ratio =
+            gc_clampf(
+                (mouse.y - track_pos.y - thumb_h * 0.5f) / usable,
+                0.0f, 1.0f
+            );
+
+        float jump = click_ratio * scroll_max;
+
+        igSetScrollY_WindowPtr(msg_window, jump);
+
+        drag_anchor_mouse_y = mouse.y;
+        drag_anchor_scroll = jump;
+    }
+
+    if (igIsItemActive()) {
+        ImVec2 mouse;
+        igGetMousePos(&mouse);
+
+        float new_scroll =
+            drag_anchor_scroll +
+            ((mouse.y - drag_anchor_mouse_y) / usable) * scroll_max;
+
+        igSetScrollY_WindowPtr(
+            msg_window,
+            gc_clampf(new_scroll, 0.0f, scroll_max)
+        );
+    }
+}
+
+static void gc_draw_messages(
+    tenv* env,
+    ImVec2 area_pos,
+    ImVec2 area_size,
+    float u,
+    bool allow_drag_scroll
+) {
+    const char* own_name = env->usr->usrs.nickname;
+
+    float hit_w = u * 1.6f;
+    float child_w = area_size.x - hit_w;
+
+    if (child_w < 60.0f) child_w = 60.0f;
+
+    igSetCursorScreenPos(area_pos);
+
+    igBeginChild_Str(
+        "##global_chat_messages",
+        gc_v2(child_w, area_size.y),
+        0,
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBackground
+    );
+
+    static int last_seen_message_count = 0;
+
+    ImVec2 avail;
+    igGetContentRegionAvail(&avail);
+
+    bool was_at_bottom =
+        igGetScrollY() >= igGetScrollMaxY() - 1.0f;
+
+    float ts_w = gc_text_w("00:00") + u * 0.8f;
+
+    for (int i = 0; i < global_chat_message_count; i++) {
+        global_chat_message* m = &global_chat_messages[i];
+
+        bool is_system = strcmp(m->name, "[SYSTEM]") == 0;
+        bool is_own =
+            own_name != NULL &&
+            own_name[0] != '\0' &&
+            strcmp(m->name, own_name) == 0;
+
+        char hm[8];
+        snprintf(hm, sizeof(hm), "%.5s", m->time_str);
+
+        igPushID_Int(i);
+
+        igTextColored(
+            (ImVec4){0.55f, 0.50f, 0.72f, 1.0f},
+            "%s",
+            hm
+        );
+
+        igSameLine(ts_w, -1.0f);
+
+        if (is_system) {
+            igPushStyleColor_Vec4(
+                ImGuiCol_Text,
+                (ImVec4){0.62f, 0.91f, 1.0f, 1.0f}
+            );
+            igTextWrapped("%s", m->text);
+            igPopStyleColor(1);
+        } else {
+            if (m->owner[0] != '\0') {
+                igTextColored(
+                    (ImVec4){0.95f, 0.3f, 0.3f, 1.0f},
+                    "%s",
+                    m->owner
+                );
+                igSameLine(0.0f, 6.0f);
+            }
+
+            if (is_own) {
+                igTextColored(
+                    (ImVec4){0.49f, 1.0f, 0.69f, 1.0f},
+                    "%s",
+                    m->name
+                );
+            } else {
+                igTextColored(
+                    (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
+                    "%s",
+                    m->name
+                );
+            }
+
+            igSameLine(0.0f, u * 0.5f);
+            igTextWrapped("%s", m->text);
+        }
+
+        igPopID();
+
+        igDummy(gc_v2(1.0f, u * 0.2f));
+    }
+
+    /* Teammates asking for help show up as cards at the end. */
+    gc_draw_sos_cards(u, avail.x, own_name);
+
+    if (
+        global_chat_message_count != last_seen_message_count &&
+        (was_at_bottom || last_seen_message_count == 0)
+    ) {
+        /* Only auto-scroll if the player was already at (or near)
+         * the bottom. */
+        igSetScrollHereY(1.0f);
+    }
+
+    last_seen_message_count = global_chat_message_count;
+
+    /* Touch/mouse drag on the list itself scrolls it. */
+    if (
+        allow_drag_scroll &&
+        igIsWindowHovered(0) &&
+        !igIsAnyItemActive() &&
+        igIsMouseDragging(0, 6.0f)
+    ) {
+        igSetScrollY_Float(
+            igGetScrollY() - igGetIO_Nil()->MouseDelta.y
+        );
+    }
+
+    float scroll_max = igGetScrollMaxY();
+    float scroll_y = igGetScrollY();
+    ImGuiWindow* msg_window = igGetCurrentWindow();
+
+    igEndChild();
+
+    gc_message_scrollbar(
+        gc_v2(area_pos.x + child_w, area_pos.y),
+        area_size.y,
+        hit_w,
+        area_size.y,
+        scroll_max,
+        scroll_y,
+        msg_window,
+        u
+    );
+}
+
+/* Emoji chips row (the profile emoji picker). Drag sideways to scroll. */
+static void gc_draw_emoji_row(
+    user_settings* usrs,
+    ImVec2 pos,
+    ImVec2 size,
+    float u,
+    bool allow_drag_scroll
+) {
+    static bool chips_dragged = false;
+
+    igSetCursorScreenPos(pos);
+
+    igBeginChild_Str(
+        "##gc_chips",
+        size,
+        0,
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBackground
+    );
+
+    if (igIsMouseClicked_Bool(0, false)) {
+        chips_dragged = false;
+    }
+
+    if (
+        allow_drag_scroll &&
+        igIsWindowHovered(0) &&
+        igIsMouseDragging(0, 6.0f)
+    ) {
+        igSetScrollX_Float(
+            igGetScrollX() - igGetIO_Nil()->MouseDelta.x
+        );
+        chips_dragged = true;
+    }
+
+    float chip_h = size.y - 4.0f;
+    float chip_w = chip_h * 1.15f;
+    ImDrawList* dl = igGetWindowDrawList();
+
+    for (int e = 0; e < PROFILE_EMOJI_COUNT; e++) {
+        if (e > 0) {
+            igSameLine(0.0f, u * 0.45f);
+        }
+
+        ImVec2 p;
+        igGetCursorScreenPos(&p);
+
+        char id[16];
+        snprintf(id, sizeof(id), "##pe%d", e);
+
+        bool clicked =
+            igInvisibleButton(
+                id,
+                gc_v2(chip_w, chip_h),
+                ImGuiButtonFlags_None
+            );
+
+        bool hot = igIsItemHovered(0);
+        bool selected = usrs->profile_emoji_id == e;
+
+        ImU32 fill =
+            selected ?
+                IM_COL32(77, 140, 255, 255) :
+                (hot ?
+                    IM_COL32(255, 255, 255, 40) :
+                    IM_COL32(255, 255, 255, 20));
+
+        ImDrawList_AddRectFilled(
+            dl, p, gc_add(p, chip_w, chip_h),
+            fill, chip_h * 0.5f, 0
+        );
+
+        const char* label =
+            profile_emoji_at(e)[0] != '\0' ?
+                profile_emoji_at(e) :
+                "-";
+
+        gc_text_center(
+            dl, p, gc_v2(chip_w, chip_h),
+            IM_COL32(255, 255, 255, 255), label
+        );
+
+        if (clicked && !chips_dragged) {
+            usrs->profile_emoji_id = e;
+            save_user_settings(usrs);
+        }
+    }
+
+    igEndChild();
+}
+
+/* "This server requires an access key" screen. Same logic as before,
+ * drawn inside the main area. */
+static void gc_draw_key_screen(
+    tenv* env,
+    user_settings* usrs,
+    bool rejected,
+    ImVec2 pos,
+    ImVec2 size,
+    float u
+) {
+    igSetCursorScreenPos(gc_add(pos, u * 0.9f, u * 0.6f));
+
+    igBeginChild_Str(
+        "##gc_keyscreen",
+        gc_v2(size.x - u * 1.8f, size.y - u * 0.6f),
+        0,
+        ImGuiWindowFlags_NoBackground
+    );
+
+    igText("This server requires an access key.");
+
+    igTextWrapped(
+        "Ask your clan owner for your key, "
+        "then enter it below."
+    );
+
+    igSpacing();
+
+    static char key_input[96] = "";
+    static bool key_input_seeded = false;
+
+    if (!key_input_seeded) {
+        strncpy(key_input, usrs->public_chat_key, sizeof(key_input) - 1);
+        key_input[sizeof(key_input) - 1] = '\0';
+        key_input_seeded = true;
+    }
+
+    igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, u * 0.5f);
+    igPushStyleColor_Vec4(
+        ImGuiCol_FrameBg, (ImVec4){1.0f, 1.0f, 1.0f, 0.10f}
+    );
+
+    igPushItemWidth(-1.0f);
+
+    igInputTextWithHint(
+        "##public_chat_key_input",
+        "Access key",
+        key_input,
+        sizeof(key_input),
+        ImGuiInputTextFlags_None,
+        NULL,
+        NULL
+    );
+
+    igPopItemWidth();
+    igPopStyleColor(1);
+    igPopStyleVar(1);
+
+    if (rejected) {
+        igTextColored(
+            (ImVec4){0.9f, 0.3f, 0.3f, 1.0f},
+            "%s",
+            jsr_network_get_last_error(global_chat_net)
+        );
+    }
+
+    igSpacing();
+
+    ImVec2 p;
+    igGetCursorScreenPos(&p);
+
+    float bh = u * 2.4f;
+    float bw;
+    {
+        ImVec2 av;
+        igGetContentRegionAvail(&av);
+        bw = av.x;
+    }
+
+    if (
+        gc_button(
+            "##gc_connect",
+            p,
+            gc_v2(bw, bh),
+            IM_COL32(124, 74, 232, 255),
+            IM_COL32(150, 100, 250, 255),
+            u * 0.6f,
+            0
+        )
+    ) {
+        if (key_input[0] != '\0') {
+            strncpy(
+                usrs->public_chat_key,
+                key_input,
+                sizeof(usrs->public_chat_key) - 1
+            );
+
+            usrs->public_chat_key[
+                sizeof(usrs->public_chat_key) - 1
+            ] = '\0';
+
+            save_user_settings(usrs);
+
+            global_chat_try_connect(env);
+        }
+    }
+
+    gc_text_center(
+        igGetWindowDrawList(), p, gc_v2(bw, bh),
+        IM_COL32(255, 255, 255, 255), "Connect"
+    );
+
+    igEndChild();
 }
 
 static void global_chat_panel_contents(
     tenv* env,
-    ImVec2 live_size
+    ImVec2 wp,
+    ImVec2 ws
 ) {
     if (env == NULL || env->usr == NULL) {
         return;
@@ -1216,808 +1857,682 @@ static void global_chat_panel_contents(
 
     user_settings* usrs = &env->usr->usrs;
 
-    /*
-     * Smaller than the default panel scale -- more chat history
-     * fits on screen at once, per request. This scale applies to
-     * everything in the panel: header row, messages, input box.
-     * (This ImGui version has no SetWindowFontScale -- font size
-     * is instead set via PushFont/PopFont, so every return path
-     * below must PopFont() to match.)
-     */
+    /* Same panel text scale as before. (This ImGui version has no
+     * SetWindowFontScale -- font size is set via PushFont/PopFont, so
+     * every return path below must PopFont() to match.) */
     igPushFont(NULL, igGetStyle()->FontSizeBase * 0.85f);
+
+    ImDrawList* dl = igGetWindowDrawList();
+
+    float u = igGetTextLineHeight();
 
     bool rejected =
         global_chat_net != NULL &&
-        jsr_network_is_auth_rejected(
-            global_chat_net
-        );
+        jsr_network_is_auth_rejected(global_chat_net);
 
-    if (usrs->public_chat_key[0] == '\0' ||
-        rejected) {
-        igText(
-            "This server requires an access key."
-        );
-
-        igTextWrapped(
-            "Ask your clan owner for your key, "
-            "then enter it below."
-        );
-
-        igSeparator();
-
-        static char key_input[96] = "";
-        static bool key_input_seeded = false;
-
-        if (!key_input_seeded) {
-            strncpy(
-                key_input,
-                usrs->public_chat_key,
-                sizeof(key_input) - 1
-            );
-
-            key_input[
-                sizeof(key_input) - 1
-            ] = '\0';
-
-            key_input_seeded = true;
-        }
-
-        igPushItemWidth(
-            live_size.x - 30.0f
-        );
-
-        igInputTextWithHint(
-            "##public_chat_key_input",
-            "Access key",
-            key_input,
-            sizeof(key_input),
-            ImGuiInputTextFlags_None,
-            NULL,
-            NULL
-        );
-
-        igPopItemWidth();
-
-        if (rejected) {
-            igTextColored(
-                (ImVec4){
-                    0.9f,
-                    0.3f,
-                    0.3f,
-                    1.0f
-                },
-                "%s",
-                jsr_network_get_last_error(
-                    global_chat_net
-                )
-            );
-        }
-
-        if (
-            igButton(
-                "Connect",
-                (ImVec2){
-                    -1.0f,
-                    0.0f
-                }
-            )
-        ) {
-            if (key_input[0] != '\0') {
-                strncpy(
-                    usrs->public_chat_key,
-                    key_input,
-                    sizeof(usrs->public_chat_key) - 1
-                );
-
-                usrs->public_chat_key[
-                    sizeof(usrs->public_chat_key) - 1
-                ] = '\0';
-
-                save_user_settings(usrs);
-
-                global_chat_try_connect(env);
-            }
-        }
-
-        igPopFont();
-        return;
-    }
+    bool needs_key =
+        usrs->public_chat_key[0] == '\0' || rejected;
 
     bool is_connected =
         global_chat_net != NULL &&
-        jsr_network_is_connected(
-            global_chat_net
-        );
-
-    ImVec2 row_avail;
-    igGetContentRegionAvail(&row_avail);
-    float row_width = row_avail.x;
-
-    if (is_connected) {
-        igTextColored(
-            (ImVec4){
-                0.3f,
-                0.9f,
-                0.3f,
-                1.0f
-            },
-            "Connected to relay"
-        );
-    } else {
-        igTextColored(
-            (ImVec4){
-                0.9f,
-                0.3f,
-                0.3f,
-                1.0f
-            },
-            "Not connected"
-        );
-    }
-
-    igSameLine(
-        0.0f,
-        8.0f
-    );
+        jsr_network_is_connected(global_chat_net);
 
     int online_count =
         global_chat_net != NULL ?
-            jsr_network_roster_count(
-                global_chat_net
-            ) :
+            jsr_network_roster_count(global_chat_net) :
             0;
 
-    igTextDisabled(
-        "%d online",
-        online_count
+    bool adjusting_pos =
+        global_chat_adjust == GLOBAL_CHAT_ADJUST_POSITION;
+    bool adjusting_size =
+        global_chat_adjust == GLOBAL_CHAT_ADJUST_SIZE;
+
+    /* ---------- panel + rail backgrounds ---------- */
+    float radius = u * 1.1f;
+    float rail_w = gc_clampf(ws.x * 0.126f, u * 2.7f, u * 4.2f);
+    float alpha = gc_clampf(gc_panel_alpha, 0.05f, 1.0f);
+
+    ImVec2 pmax = gc_add(wp, ws.x, ws.y);
+
+    ImDrawList_AddRectFilled(
+        dl, wp, pmax,
+        IM_COL32(28, 16, 52, (int)(255.0f * alpha)),
+        radius, 0
     );
 
-    const char* players_label =
-        global_chat_players_open ?
-            "Hide players" :
-            "Show players";
-
-    ImGuiStyle* style = igGetStyle();
-    ImVec2 label_size;
-    igCalcTextSize(
-        &label_size,
-        players_label,
-        NULL,
-        false,
-        -1.0f
+    ImDrawList_AddRectFilled(
+        dl, wp, gc_v2(wp.x + rail_w, pmax.y),
+        IM_COL32(10, 5, 25, (int)(130.0f * alpha)),
+        radius, ImDrawFlags_RoundCornersLeft
     );
 
-    /*
-     * Fully snug fit -- just the label plus ImGui's own frame
-     * padding, no extra margin, per request ("more smaller").
-     */
-    float button_w =
-        label_size.x +
-        style->FramePadding.x * 2.0f;
-
-    float target_x = row_width - button_w;
-    if (target_x < 0.0f) target_x = 0.0f;
-
-    igSameLine(
-        target_x,
-        -1.0f
+    ImDrawList_AddRect(
+        dl, wp, pmax,
+        IM_COL32(190, 160, 255, 105),
+        radius, 0, 1.5f
     );
 
-    if (
-        igButton(
-            players_label,
-            (ImVec2){
-                button_w,
-                0.0f
-            }
-        )
-    ) {
-        global_chat_players_open =
-            !global_chat_players_open;
+    /* While moving/resizing, make that obvious. */
+    if (adjusting_pos || adjusting_size) {
+        ImDrawList_AddRect(
+            dl, wp, pmax,
+            IM_COL32(93, 255, 154, 220),
+            radius, 0, 2.5f
+        );
     }
 
-    /*
-     * No separator here (removed per request) -- the message
-     * area now starts immediately below the header row, so its
-     * top-right corner touches the button's bottom-right corner
-     * instead of leaving a gap.
-     */
+    /* ---------- side rail: Chat / Players / SOS / Settings ---------- */
+    unsigned long unread =
+        gc_total_messages - gc_seen_messages;
 
-    /*
-     * Smaller reserved input-box height (was 50) -- the smaller
-     * font means the input box itself doesn't need as much
-     * space, so the freed height goes to the message area.
-     */
-    float input_height =
-        40.0f;
+    float btn = rail_w * 0.68f;
+    float rail_x = wp.x + (rail_w - btn) * 0.5f;
+    float rail_y = wp.y + u * 0.9f;
+    float rail_gap = u * 0.7f;
 
-    ImVec2 avail;
-    igGetContentRegionAvail(&avail);
-
-    float message_area_height =
-        avail.y -
-        input_height;
-
-    if (
-        message_area_height <
-        80.0f
-    ) {
-        message_area_height =
-            80.0f;
-    }
-
-    /*
-     * Custom scrollbar: ImGui's built-in one can only be given
-     * a *minimum* size, not forced to an exact ratio. A slim
-     * track + a thumb fixed at a set fraction of the track
-     * height is drawn manually below, positioned to match the
-     * current scroll position (or pinned to the top if there's
-     * nothing to scroll yet) and draggable via an invisible
-     * button. It's always drawn, per request, rather than only
-     * appearing once content overflows.
-     */
-    const float SCROLLBAR_WIDTH = 24.0f;
-    const float SCROLLBAR_MARGIN = 4.0f;
-    const float SCROLLBAR_THUMB_RATIO = 0.18f;
-
-    /* The draggable hit-region is much wider than the visible bar
-     * itself -- a slim 12px bar is nearly impossible to land a
-     * fingertip on reliably, so the actual tap/drag target extends
-     * well past it on both sides while staying visually unchanged. */
-    const float SCROLLBAR_HIT_PADDING = 14.0f;
-
-    /* Anchor point for the absolute-position drag tracking below --
-     * must persist across frames while the same drag is held. */
-    static float drag_anchor_mouse_y = 0.0f;
-    static float drag_anchor_scroll = 0.0f;
-
-    /* Captured now (still in the outer window's context) so the
-     * scrollbar can be drawn flush against the *outer* window's
-     * right edge afterward, rather than tucked inside the child --
-     * this is what actually frees up width for the message area. */
-    ImVec2 outer_pos;
-    ImVec2 outer_size;
-    igGetWindowPos(&outer_pos);
-    igGetWindowSize(&outer_size);
-
-    ImVec2 msg_area_screen_pos;
-    igGetCursorScreenPos(&msg_area_screen_pos);
-
-    /*
-     * Reserve a strip on the right for the scrollbar (including its
-     * widened touch-hit region) so the message child -- a real,
-     * separate ImGui window, not just drawn content -- doesn't
-     * physically extend underneath it. It previously did, at full
-     * width, and being a nested window it won a touch/click there
-     * over the invisible drag-button drawn on top of it afterward:
-     * the scrollbar was rendered on top visually, but the child
-     * beneath it was what actually caught the input, so dragging
-     * (and even tapping) it did nothing.
-     */
-    float scrollbar_reserved_w =
-        SCROLLBAR_WIDTH +
-        SCROLLBAR_MARGIN +
-        SCROLLBAR_HIT_PADDING +
-        2.0f;
-
-    float msg_child_w = avail.x - scrollbar_reserved_w;
-    if (msg_child_w < 80.0f) msg_child_w = 80.0f;
-
-    igBeginChild_Str(
-        "##global_chat_messages",
-        (ImVec2){
-            msg_child_w,
-            message_area_height
-        },
-        true,
-        ImGuiWindowFlags_NoScrollbar
-    );
-
-    static int last_seen_message_count = 0;
-
-    ImVec2 msg_area_avail;
-    igGetContentRegionAvail(&msg_area_avail);
-    float msg_row_width = msg_area_avail.x;
-
-    bool was_at_bottom =
-        igGetScrollY() >=
-        igGetScrollMaxY() - 1.0f;
-
-    for (
-        int i = 0;
-        i < global_chat_message_count;
-        i++
-    ) {
-        global_chat_message* message =
-            &global_chat_messages[i];
-
-        bool is_system =
-            strcmp(
-                message->name,
-                "[SYSTEM]"
-            ) == 0;
-
-        /* Right-aligned timestamp, drawn first so the name/text below
-         * can simply flow left without worrying about its width. */
-        ImVec2 time_size;
-        igCalcTextSize(
-            &time_size,
-            message->time_str,
-            NULL,
-            false,
-            -1.0f
+    for (int t = 0; t < 4; t++) {
+        ImVec2 bmn = gc_v2(
+            rail_x,
+            rail_y + (float)t * (btn + rail_gap)
         );
 
-        float time_x = msg_row_width - time_size.x;
-        if (time_x < 0.0f) time_x = 0.0f;
+        bool on = gc_tab == t;
 
-        if (is_system) {
-            /*
-             * Label + timestamp on their own line, then the actual
-             * system text wrapped below -- same two-line pattern
-             * player messages use. Combining name+text on one
-             * line (the old behavior) let a long system message
-             * run straight into the timestamp, overlapping it.
-             */
-            igTextColored(
-                (ImVec4){
-                    0.3f,
-                    0.85f,
-                    0.95f,
-                    1.0f
-                },
-                "%s",
-                message->name
-            );
-
-            igSameLine(
-                time_x,
-                -1.0f
-            );
-
-            igTextDisabled(
-                "%s",
-                message->time_str
-            );
-
-            igTextColored(
-                (ImVec4){
-                    0.3f,
-                    0.85f,
-                    0.95f,
-                    1.0f
-                },
-                "%s",
-                message->text
-            );
-
-            continue;
-        }
-
-        if (message->owner[0] != '\0') {
-            igTextColored(
-                (ImVec4){
-                    0.95f,
-                    0.3f,
-                    0.3f,
-                    1.0f
-                },
-                "%s",
-                message->owner
-            );
-
-            igSameLine(
-                0.0f,
-                6.0f
+        if (on) {
+            ImDrawList_AddRectFilled(
+                dl,
+                gc_add(bmn, -3.0f, -3.0f),
+                gc_add(bmn, btn + 3.0f, btn + 3.0f),
+                IM_COL32(124, 74, 232, 70),
+                btn * 0.32f, 0
             );
         }
 
-        igTextColored(
-            (ImVec4){
-                0.95f,
-                0.3f,
-                0.3f,
-                1.0f
-            },
-            "%s:",
-            message->name
-        );
+        if (
+            gc_button(
+                gc_tab_ids[t],
+                bmn,
+                gc_v2(btn, btn),
+                on ?
+                    IM_COL32(124, 74, 232, 255) :
+                    IM_COL32(255, 255, 255, 16),
+                on ?
+                    IM_COL32(140, 90, 245, 255) :
+                    IM_COL32(255, 255, 255, 38),
+                btn * 0.28f,
+                0
+            )
+        ) {
+            gc_tab = t;
+        }
 
-        igSameLine(
-            time_x,
-            -1.0f
-        );
+        ImVec2 c = gc_add(bmn, btn * 0.5f, btn * 0.5f);
+        float is = btn * 0.52f;
+        ImU32 ic = IM_COL32(255, 255, 255, 255);
 
-        igTextDisabled(
-            "%s",
-            message->time_str
-        );
+        if (t == GC_TAB_CHAT) {
+            gc_icon_chat(dl, c, is, ic);
+        } else if (t == GC_TAB_PLAYERS) {
+            gc_icon_players(dl, c, is, ic);
+        } else if (t == GC_TAB_SOS) {
+            gc_icon_sos(
+                dl, c, is,
+                global_chat_is_sos_active() ?
+                    IM_COL32(255, 90, 74, 255) : ic,
+                on ?
+                    IM_COL32(124, 74, 232, 255) :
+                    IM_COL32(44, 30, 78, 255)
+            );
+        } else {
+            gc_icon_gear(dl, c, is, ic);
+        }
 
-        igTextWrapped(
-            "%s",
-            message->text
-        );
+        if (t == GC_TAB_CHAT && !on && unread > 0) {
+            char nb[8];
+            snprintf(
+                nb, sizeof(nb), "%lu",
+                unread > 99 ? 99UL : unread
+            );
+
+            float bw = fmaxf(gc_text_w(nb) + u * 0.5f, u * 1.1f);
+            ImVec2 bc = gc_v2(bmn.x + btn - bw * 0.35f, bmn.y + bw * 0.1f);
+
+            ImDrawList_AddRectFilled(
+                dl,
+                gc_v2(bc.x - bw * 0.5f, bc.y - u * 0.55f),
+                gc_v2(bc.x + bw * 0.5f, bc.y + u * 0.55f),
+                IM_COL32(255, 74, 94, 255),
+                u * 0.55f, 0
+            );
+
+            gc_text_center(
+                dl,
+                gc_v2(bc.x - bw * 0.5f, bc.y - u * 0.55f),
+                gc_v2(bw, u * 1.1f),
+                IM_COL32(255, 255, 255, 255),
+                nb
+            );
+        }
     }
 
-    if (
-        global_chat_message_count !=
-            last_seen_message_count &&
-        (
-            was_at_bottom ||
-            last_seen_message_count == 0
-        )
-    ) {
-        /*
-         * Only auto-scroll if the player was already at (or
-         * near) the bottom -- if they scrolled up to read
-         * older messages, a new one arriving shouldn't yank
-         * them back down.
-         */
-        igSetScrollHereY(1.0f);
+    if (gc_tab == GC_TAB_CHAT) {
+        gc_seen_messages = gc_total_messages;
     }
 
-    last_seen_message_count =
-        global_chat_message_count;
+    /* ---------- main area geometry ---------- */
+    float mx = wp.x + rail_w;
+    float mw = ws.x - rail_w;
+    float pad = u * 0.95f;
 
-    /* Cached here, while still inside the child, since scroll
-     * state/window-identity queries always refer to whichever
-     * window is currently active -- the actual scrollbar is drawn
-     * after igEndChild() (see below), so it can be positioned at
-     * the outer window's edge instead of being clipped to the
-     * child's own inset bounds. */
-    float scroll_max = igGetScrollMaxY();
-    float scroll_y_cached = igGetScrollY();
-    ImGuiWindow* msg_window = igGetCurrentWindow();
+    float head_h = gc_clampf(ws.y * 0.095f, u * 2.7f, u * 3.8f);
+    float foot_h = gc_clampf(ws.y * 0.058f, u * 1.9f, u * 2.7f);
+    float foot_y = wp.y + ws.y - foot_h - u * 0.85f;
 
-    igEndChild();
+    /* ---------- header ---------- */
+    igPushFont(NULL, igGetStyle()->FontSizeBase * 0.85f * 1.12f);
 
-    /* Save/restore the cursor around the scrollbar drawing below --
-     * positioning it via SetCursorScreenPos would otherwise disrupt
-     * the normal layout flow for the input box that follows. */
-    ImVec2 cursor_before_scrollbar;
-    igGetCursorScreenPos(&cursor_before_scrollbar);
+    ImDrawList_AddText_Vec2(
+        dl,
+        gc_v2(mx + pad, wp.y + head_h * 0.1f),
+        IM_COL32(241, 236, 255, 255),
+        "{ J S R } TEAM CHAT",
+        NULL
+    );
+
+    igPopFont();
 
     {
-        /* Flush against the *outer* window's right edge -- this is
-         * the space the old oversized native scrollbar occupied,
-         * now reclaimed for our own slim one. */
-        float track_x =
-            outer_pos.x +
-            outer_size.x -
-            SCROLLBAR_WIDTH -
-            SCROLLBAR_MARGIN;
+        char status[64];
 
-        float track_y = msg_area_screen_pos.y;
-        float track_h = message_area_height;
-
-        float thumb_h = track_h * SCROLLBAR_THUMB_RATIO;
-
-        float scroll_ratio =
-            scroll_max > 0.0f ?
-                (scroll_y_cached / scroll_max) :
-                0.0f;
-
-        float thumb_y =
-            track_y +
-            scroll_ratio *
-            (track_h - thumb_h);
-
-        ImDrawList* dl = igGetWindowDrawList();
-
-        /*
-         * The outer window clips its own drawing to its content
-         * rect, which stops short of the true window edge by
-         * WindowPadding -- pushing an unclipped override here
-         * guarantees the scrollbar actually renders flush against
-         * the edge instead of silently being cut off there.
-         */
-        ImDrawList_PushClipRect(
-            dl,
-            (ImVec2){
-                outer_pos.x,
-                outer_pos.y
-            },
-            (ImVec2){
-                outer_pos.x + outer_size.x,
-                outer_pos.y + outer_size.y
-            },
-            false
-        );
-
-        ImDrawList_AddRectFilled(
-            dl,
-            (ImVec2){track_x, track_y},
-            (ImVec2){
-                track_x + SCROLLBAR_WIDTH,
-                track_y + track_h
-            },
-            IM_COL32(176, 148, 245, 30),
-            SCROLLBAR_WIDTH * 0.5f,
-            0
-        );
-
-        ImDrawList_AddRectFilled(
-            dl,
-            (ImVec2){track_x, thumb_y},
-            (ImVec2){
-                track_x + SCROLLBAR_WIDTH,
-                thumb_y + thumb_h
-            },
-            IM_COL32(191, 165, 245, 170),
-            SCROLLBAR_WIDTH * 0.5f,
-            0
-        );
-
-        ImDrawList_PopClipRect(dl);
-
-        /*
-         * Clamp the widened hit region to the window's own right
-         * edge. Without this, SCROLLBAR_HIT_PADDING pushes part of
-         * the touch target past the actual window bounds -- and on
-         * Android, input outside the window's captured rect (set
-         * via android_ui_capture_rect above) never reaches ImGui at
-         * all, so any drag starting in that sliver silently did
-         * nothing.
-         */
-        float hit_left = track_x - SCROLLBAR_HIT_PADDING;
-        float hit_right =
-            track_x + SCROLLBAR_WIDTH + SCROLLBAR_HIT_PADDING;
-        float window_right = outer_pos.x + outer_size.x;
-        if (hit_right > window_right) hit_right = window_right;
-
-        igSetCursorScreenPos(
-            (ImVec2){
-                hit_left,
-                track_y
-            }
-        );
-
-        igInvisibleButton(
-            "##global_chat_scrollbar_drag",
-            (ImVec2){
-                hit_right - hit_left,
-                track_h
-            },
-            ImGuiButtonFlags_None
-        );
-
-        if (igIsItemActivated() && scroll_max > 0.0f) {
-            /* Fires once, the instant a click/tap begins. A plain
-             * click with no drag previously did nothing at all
-             * (the old logic only responded to movement while
-             * held) -- this jumps straight to roughly where the
-             * click landed, so a single tap now visibly scrolls
-             * even without dragging. */
-            ImVec2 mouse_pos;
-            igGetMousePos(&mouse_pos);
-
-            float usable_track = track_h - thumb_h;
-
-            if (usable_track > 0.0f) {
-                float click_ratio =
-                    (mouse_pos.y - track_y - thumb_h * 0.5f) /
-                    usable_track;
-
-                if (click_ratio < 0.0f) click_ratio = 0.0f;
-                if (click_ratio > 1.0f) click_ratio = 1.0f;
-
-                float jump_scroll = click_ratio * scroll_max;
-
-                igSetScrollY_WindowPtr(
-                    msg_window,
-                    jump_scroll
-                );
-
-                /* So the drag-delta logic below (which can also
-                 * run this same frame) continues from here, not
-                 * from the stale pre-click position. */
-                scroll_y_cached = jump_scroll;
-            }
-
-            /* Anchor the drag to where the press started, in both
-             * finger/cursor position and resulting scroll offset.
-             * Every later frame derives the new scroll directly
-             * from how far the touch/mouse has moved since this
-             * point (see below), instead of accumulating a
-             * per-frame delta -- accumulation silently stalls if
-             * even one frame's motion event is missed or coalesced
-             * (as touch-move events often are), which is what made
-             * dragging do nothing on some devices. Absolute
-             * tracking can't drift or drop like that. */
-            drag_anchor_mouse_y = mouse_pos.y;
-            drag_anchor_scroll = scroll_y_cached;
+        if (is_connected) {
+            snprintf(
+                status, sizeof(status),
+                "Connected  |  %d online", online_count
+            );
+        } else {
+            snprintf(status, sizeof(status), "Not connected");
         }
 
-        if (igIsItemActive() && scroll_max > 0.0f) {
-            ImVec2 mouse_pos;
-            igGetMousePos(&mouse_pos);
+        ImU32 scol =
+            is_connected ?
+                IM_COL32(125, 255, 176, 255) :
+                IM_COL32(242, 77, 77, 255);
 
-            float usable_track =
-                track_h - thumb_h;
+        float sy = wp.y + head_h * 0.1f + u * 1.35f;
 
-            if (usable_track > 0.0f) {
-                float delta_ratio =
-                    (mouse_pos.y - drag_anchor_mouse_y) /
-                    usable_track;
+        ImDrawList_AddCircleFilled(
+            dl,
+            gc_v2(mx + pad + u * 0.3f, sy + u * 0.5f),
+            u * 0.26f,
+            scol,
+            12
+        );
 
-                float new_scroll =
-                    drag_anchor_scroll +
-                    delta_ratio * scroll_max;
-
-                if (new_scroll < 0.0f) {
-                    new_scroll = 0.0f;
-                }
-
-                if (new_scroll > scroll_max) {
-                    new_scroll = scroll_max;
-                }
-
-                /* Redirect to the child's scroll state by window
-                 * pointer, since we're no longer inside it. */
-                igSetScrollY_WindowPtr(
-                    msg_window,
-                    new_scroll
-                );
-            }
-        }
-    }
-
-    igSetCursorScreenPos(cursor_before_scrollbar);
-
-    igPushItemWidth(
-        live_size.x - 100.0f
-    );
-
-    bool submitted =
-        igInputTextWithHint(
-            "##global_chat_input",
-            "Type your message...",
-            global_chat_input,
-            sizeof(global_chat_input),
-            ImGuiInputTextFlags_EnterReturnsTrue,
-            NULL,
+        ImDrawList_AddText_Vec2(
+            dl,
+            gc_v2(mx + pad + u * 0.95f, sy),
+            scol,
+            status,
             NULL
         );
+    }
 
-    igPopItemWidth();
+    /* minimize + close (both collapse back to the Open card) */
+    {
+        float hb = head_h * 0.62f;
+        float by = wp.y + (head_h - hb) * 0.5f;
+        float x_close = pmax.x - pad * 0.5f - hb;
+        float x_min = x_close - hb - u * 0.1f;
 
-    igSameLine(
-        0.0f,
-        6.0f
+        if (
+            gc_button(
+                "##gc_min",
+                gc_v2(x_min, by),
+                gc_v2(hb, hb),
+                IM_COL32(255, 255, 255, 0),
+                IM_COL32(255, 255, 255, 30),
+                hb * 0.3f, 0
+            )
+        ) {
+            gc_close_requested = true;
+        }
+
+        gc_icon_minus(
+            dl, gc_v2(x_min + hb * 0.5f, by + hb * 0.5f),
+            hb * 0.45f, IM_COL32(203, 182, 255, 255)
+        );
+
+        if (
+            gc_button(
+                "##gc_close",
+                gc_v2(x_close, by),
+                gc_v2(hb, hb),
+                IM_COL32(255, 255, 255, 0),
+                IM_COL32(255, 255, 255, 30),
+                hb * 0.3f, 0
+            )
+        ) {
+            gc_close_requested = true;
+        }
+
+        gc_icon_x(
+            dl, gc_v2(x_close + hb * 0.5f, by + hb * 0.5f),
+            hb * 0.42f, IM_COL32(203, 182, 255, 255)
+        );
+    }
+
+    ImDrawList_AddLine(
+        dl,
+        gc_v2(mx, wp.y + head_h),
+        gc_v2(pmax.x - 1.0f, wp.y + head_h),
+        IM_COL32(190, 160, 255, 52),
+        1.0f
     );
 
-    bool send_clicked =
-        igButton(
-            "SEND",
-            (ImVec2){
-                70.0f,
-                0.0f
-            }
-        );
+    /* ---------- footer: RESIZE / OPACITY / SOS ---------- */
+    {
+        float gap = u * 0.55f;
+        float bw = (mw - pad * 2.0f - gap * 2.0f) / 3.0f;
+        float bx = mx + pad;
 
-    if (
-        submitted ||
-        send_clicked
-    ) {
+        /* RESIZE (becomes DONE while resizing, which saves) */
         if (
-            global_chat_input[0] !=
-            '\0'
+            gc_button(
+                "##gc_f_resize",
+                gc_v2(bx, foot_y),
+                gc_v2(bw, foot_h),
+                adjusting_size ?
+                    IM_COL32(40, 160, 90, 255) :
+                    IM_COL32(255, 255, 255, 18),
+                adjusting_size ?
+                    IM_COL32(55, 190, 110, 255) :
+                    IM_COL32(255, 255, 255, 40),
+                u * 0.6f, 0
+            )
         ) {
-            const char* nickname =
-                env->usr
-                    ->usrs
-                    .nickname;
+            gc_toggle_adjust(env, GLOBAL_CHAT_ADJUST_SIZE);
+        }
 
-            if (
-                nickname == NULL ||
-                nickname[0] ==
-                '\0'
-            ) {
-                nickname =
-                    "Player";
+        gc_text_center(
+            dl, gc_v2(bx, foot_y), gc_v2(bw, foot_h),
+            IM_COL32(241, 236, 255, 255),
+            adjusting_size ? "DONE" : "RESIZE"
+        );
+
+        /* OPACITY (cycles the panel's see-through level) */
+        float ox = bx + bw + gap;
+
+        if (
+            gc_button(
+                "##gc_f_opacity",
+                gc_v2(ox, foot_y),
+                gc_v2(bw, foot_h),
+                IM_COL32(255, 255, 255, 18),
+                IM_COL32(255, 255, 255, 40),
+                u * 0.6f, 0
+            )
+        ) {
+            static const float steps[4] = {0.15f, 0.40f, 0.65f, 0.82f};
+            int next = 0;
+
+            for (int k = 0; k < 4; k++) {
+                if (gc_panel_alpha < steps[k] - 0.01f) {
+                    next = k;
+                    break;
+                }
+
+                next = (k + 1) % 4;
             }
 
-            /* Show it immediately for the sender. */
-            global_chat_add_message(
-                nickname,
-                NULL,
-                global_chat_input
+            gc_panel_alpha = steps[next];
+        }
+
+        gc_text_center(
+            dl, gc_v2(ox, foot_y), gc_v2(bw, foot_h),
+            IM_COL32(241, 236, 255, 255), "OPACITY"
+        );
+
+        /* SOS toggle */
+        float sx = ox + bw + gap;
+        bool sos_on = global_chat_is_sos_active();
+
+        if (
+            gc_button(
+                "##gc_f_sos",
+                gc_v2(sx, foot_y),
+                gc_v2(bw, foot_h),
+                sos_on ?
+                    IM_COL32(255, 70, 55, 255) :
+                    IM_COL32(224, 56, 44, 255),
+                IM_COL32(245, 90, 76, 255),
+                u * 0.6f, 0
+            )
+        ) {
+            gc_toggle_sos();
+        }
+
+        char sos_label[24];
+
+        if (sos_on) {
+            snprintf(
+                sos_label, sizeof(sos_label), "SOS %llds",
+                (long long)(global_chat_sos_remaining_ms() / 1000)
             );
+        } else {
+            snprintf(sos_label, sizeof(sos_label), "SOS");
+        }
 
-            /* Relay it to everyone else. */
-            if (global_chat_net != NULL) {
-                jsr_network_send_message(
-                    global_chat_net,
-                    global_chat_input
-                );
-            }
+        gc_text_center(
+            dl, gc_v2(sx, foot_y), gc_v2(bw, foot_h),
+            IM_COL32(255, 255, 255, 255), sos_label
+        );
+    }
 
-            memset(
+    /* ---------- tab content ---------- */
+    float content_top = wp.y + head_h + u * 0.35f;
+    float content_bot = foot_y - u * 0.55f;
+    float area_x = mx + pad * 0.6f;
+    float area_w = mw - pad * 1.2f;
+
+    if (needs_key) {
+        gc_draw_key_screen(
+            env, usrs, rejected,
+            gc_v2(mx, content_top),
+            gc_v2(mw, content_bot - content_top),
+            u
+        );
+    } else if (gc_tab == GC_TAB_CHAT) {
+        float in_h = gc_clampf(ws.y * 0.07f, u * 2.3f, u * 3.1f);
+        float in_y = content_bot - in_h;
+        float chip_h = u * 1.95f;
+        float chip_y = in_y - u * 0.45f - chip_h;
+        float msg_bot = chip_y - u * 0.3f;
+
+        gc_draw_messages(
+            env,
+            gc_v2(area_x, content_top),
+            gc_v2(area_w, msg_bot - content_top),
+            u,
+            !adjusting_pos
+        );
+
+        gc_draw_emoji_row(
+            usrs,
+            gc_v2(mx + pad, chip_y),
+            gc_v2(mw - pad * 2.0f, chip_h),
+            u,
+            !adjusting_pos
+        );
+
+        /* Message input + send */
+        float gap = u * 0.55f;
+        float in_w = mw - pad * 2.0f - in_h - gap;
+
+        igSetCursorScreenPos(gc_v2(mx + pad, in_y));
+
+        igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, u * 0.7f);
+        igPushStyleVar_Vec2(
+            ImGuiStyleVar_FramePadding,
+            gc_v2(u * 0.9f, (in_h - u) * 0.5f)
+        );
+        igPushStyleColor_Vec4(
+            ImGuiCol_FrameBg, (ImVec4){1.0f, 1.0f, 1.0f, 0.10f}
+        );
+        igPushStyleColor_Vec4(
+            ImGuiCol_FrameBgHovered, (ImVec4){1.0f, 1.0f, 1.0f, 0.15f}
+        );
+        igPushStyleColor_Vec4(
+            ImGuiCol_FrameBgActive, (ImVec4){1.0f, 1.0f, 1.0f, 0.18f}
+        );
+
+        igPushItemWidth(in_w);
+
+        bool submitted =
+            igInputTextWithHint(
+                "##global_chat_input",
+                "Type your message...",
                 global_chat_input,
-                0,
-                sizeof(
-                    global_chat_input
-                )
+                sizeof(global_chat_input),
+                ImGuiInputTextFlags_EnterReturnsTrue,
+                NULL,
+                NULL
             );
-        }
-    }
 
-    /* Profile emoji picker + SOS toggle, ported from Vlither-android.
-     * Emoji is a small saved preference; SOS is a session-only signal
-     * that rides along on the same location broadcast that already
-     * powers the minimap markers, so it reaches every Public Chat
-     * teammate regardless of distance without any extra networking
-     * here. */
-    igSpacing();
+        igPopItemWidth();
+        igPopStyleColor(3);
+        igPopStyleVar(2);
 
-    igText("Emoji:");
+        ImVec2 smn = gc_v2(mx + mw - pad - in_h, in_y);
 
-    for (int e = 0; e < PROFILE_EMOJI_COUNT; e++) {
-        igSameLine(0.0f, 4.0f);
-
-        char btn_label[16];
-        snprintf(
-            btn_label,
-            sizeof(btn_label),
-            "%s##pe%d",
-            profile_emoji_at(e)[0] != '\0' ? profile_emoji_at(e) : "none",
-            e
-        );
-
-        bool selected = usrs->profile_emoji_id == e;
-
-        if (selected) {
-            igPushStyleColor_Vec4(
-                ImGuiCol_Button,
-                (ImVec4){0.25f, 0.55f, 0.95f, 0.9f}
+        bool send_clicked =
+            gc_button(
+                "##gc_send",
+                smn,
+                gc_v2(in_h, in_h),
+                IM_COL32(124, 74, 232, 255),
+                IM_COL32(150, 100, 250, 255),
+                u * 0.7f, 0
             );
-        }
 
-        if (igButton(btn_label, (ImVec2){28.0f, 0.0f})) {
-            usrs->profile_emoji_id = e;
-            save_user_settings(usrs);
-        }
-
-        if (selected) {
-            igPopStyleColor(1);
-        }
-    }
-
-    bool sos_active = global_chat_is_sos_active();
-
-    if (sos_active) {
-        igPushStyleColor_Vec4(
-            ImGuiCol_Button,
-            (ImVec4){0.85f, 0.2f, 0.15f, 1.0f}
+        gc_icon_send(
+            dl,
+            gc_v2(smn.x + in_h * 0.5f, smn.y + in_h * 0.5f),
+            in_h * 0.38f,
+            IM_COL32(255, 255, 255, 255)
         );
 
-        char sos_label[32];
-        snprintf(
-            sos_label,
-            sizeof(sos_label),
-            "SOS active (%llds)##sos",
-            (long long)(global_chat_sos_remaining_ms() / 1000)
+        if (submitted || send_clicked) {
+            gc_submit_message(env);
+        }
+    } else if (gc_tab == GC_TAB_PLAYERS) {
+        igSetCursorScreenPos(gc_v2(area_x, content_top));
+
+        igBeginChild_Str(
+            "##gc_players",
+            gc_v2(area_w, content_bot - content_top),
+            0,
+            ImGuiWindowFlags_NoBackground
         );
 
-        if (igButton(sos_label, (ImVec2){-1.0f, 0.0f})) {
-            global_chat_set_sos(0);
+        char hdr[48];
+        snprintf(hdr, sizeof(hdr), "Online players (%d)", online_count);
+        igTextColored((ImVec4){0.71f, 0.61f, 0.96f, 1.0f}, "%s", hdr);
+        igDummy(gc_v2(1.0f, u * 0.2f));
+
+        ImVec2 av;
+        igGetContentRegionAvail(&av);
+
+        gc_draw_players_list(u, av.x, usrs->nickname);
+
+        igEndChild();
+    } else if (gc_tab == GC_TAB_SOS) {
+        igSetCursorScreenPos(gc_v2(area_x, content_top));
+
+        igBeginChild_Str(
+            "##gc_sos",
+            gc_v2(area_w, content_bot - content_top),
+            0,
+            ImGuiWindowFlags_NoBackground
+        );
+
+        bool sos_on = global_chat_is_sos_active();
+
+        ImVec2 av;
+        igGetContentRegionAvail(&av);
+
+        if (sos_on) {
+            igTextColored(
+                (ImVec4){1.0f, 0.45f, 0.38f, 1.0f},
+                "Your SOS is active - %llds left",
+                (long long)(global_chat_sos_remaining_ms() / 1000)
+            );
+        } else {
+            igTextDisabled("Your SOS is off.");
         }
 
-        igPopStyleColor(1);
+        igTextWrapped(
+            "SOS lets every teammate see you need help, on any server."
+        );
+
+        igDummy(gc_v2(1.0f, u * 0.3f));
+
+        ImVec2 p;
+        igGetCursorScreenPos(&p);
+
+        float bh = u * 3.0f;
+
+        if (
+            gc_button(
+                "##gc_sos_big",
+                p,
+                gc_v2(av.x, bh),
+                sos_on ?
+                    IM_COL32(120, 40, 36, 255) :
+                    IM_COL32(224, 56, 44, 255),
+                sos_on ?
+                    IM_COL32(150, 55, 48, 255) :
+                    IM_COL32(245, 90, 76, 255),
+                u * 0.8f, 0
+            )
+        ) {
+            gc_toggle_sos();
+        }
+
+        gc_text_center(
+            igGetWindowDrawList(), p, gc_v2(av.x, bh),
+            IM_COL32(255, 255, 255, 255),
+            sos_on ? "CANCEL SOS" : "SEND SOS (5 min)"
+        );
+
+        igSetCursorScreenPos(p);
+        igDummy(gc_v2(av.x, bh + u * 0.6f));
+
+        igTextColored(
+            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
+            "Teammates asking for help"
+        );
+        igDummy(gc_v2(1.0f, u * 0.2f));
+
+        if (gc_draw_sos_cards(u, av.x, usrs->nickname) == 0) {
+            igTextDisabled("Nobody needs help right now.");
+        }
+
+        igEndChild();
     } else {
-        igPushStyleColor_Vec4(
-            ImGuiCol_Button,
-            (ImVec4){0.55f, 0.15f, 0.1f, 1.0f}
+        /* Settings */
+        igSetCursorScreenPos(gc_v2(area_x, content_top));
+
+        igBeginChild_Str(
+            "##gc_settings",
+            gc_v2(area_w, content_bot - content_top),
+            0,
+            ImGuiWindowFlags_NoBackground
         );
 
-        if (igButton("Send SOS##sos", (ImVec2){-1.0f, 0.0f})) {
-            /* Active for 5 minutes, or until manually cancelled above --
-             * whichever comes first. Re-broadcast happens automatically
-             * on the next twice-a-second location update. */
-            global_chat_set_sos(global_chat_now_ms() + 5LL * 60LL * 1000LL);
+        ImVec2 av;
+        igGetContentRegionAvail(&av);
+
+        float bh = u * 2.5f;
+        float gap = u * 0.5f;
+        float bw = (av.x - gap) * 0.5f;
+
+        igTextColored(
+            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
+            "Window"
+        );
+        igDummy(gc_v2(1.0f, u * 0.15f));
+
+        ImVec2 p;
+        igGetCursorScreenPos(&p);
+
+        if (
+            gc_button(
+                "##gc_s_move",
+                p,
+                gc_v2(bw, bh),
+                adjusting_pos ?
+                    IM_COL32(40, 160, 90, 255) :
+                    IM_COL32(255, 255, 255, 20),
+                adjusting_pos ?
+                    IM_COL32(55, 190, 110, 255) :
+                    IM_COL32(255, 255, 255, 42),
+                u * 0.6f, 0
+            )
+        ) {
+            gc_toggle_adjust(env, GLOBAL_CHAT_ADJUST_POSITION);
         }
 
+        gc_text_center(
+            igGetWindowDrawList(), p, gc_v2(bw, bh),
+            IM_COL32(241, 236, 255, 255),
+            adjusting_pos ? "DONE MOVING" : "MOVE"
+        );
+
+        ImVec2 p2 = gc_v2(p.x + bw + gap, p.y);
+
+        if (
+            gc_button(
+                "##gc_s_size",
+                p2,
+                gc_v2(bw, bh),
+                adjusting_size ?
+                    IM_COL32(40, 160, 90, 255) :
+                    IM_COL32(255, 255, 255, 20),
+                adjusting_size ?
+                    IM_COL32(55, 190, 110, 255) :
+                    IM_COL32(255, 255, 255, 42),
+                u * 0.6f, 0
+            )
+        ) {
+            gc_toggle_adjust(env, GLOBAL_CHAT_ADJUST_SIZE);
+        }
+
+        gc_text_center(
+            igGetWindowDrawList(), p2, gc_v2(bw, bh),
+            IM_COL32(241, 236, 255, 255),
+            adjusting_size ? "DONE SIZING" : "RESIZE"
+        );
+
+        igSetCursorScreenPos(p);
+        igDummy(gc_v2(av.x, bh + u * 0.5f));
+
+        if (adjusting_pos) {
+            igTextWrapped(
+                "Drag the chat anywhere, then press DONE MOVING."
+            );
+        } else if (adjusting_size) {
+            igTextWrapped(
+                "Drag the bottom-right corner, then press DONE SIZING."
+            );
+        }
+
+        igDummy(gc_v2(1.0f, u * 0.3f));
+
+        igTextColored(
+            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
+            "Panel opacity"
+        );
+
+        igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, u * 0.5f);
+        igPushStyleColor_Vec4(
+            ImGuiCol_FrameBg, (ImVec4){1.0f, 1.0f, 1.0f, 0.10f}
+        );
+        igPushItemWidth(-1.0f);
+
+        igSliderFloat(
+            "##gc_alpha",
+            &gc_panel_alpha,
+            0.10f,
+            1.0f,
+            "%.2f",
+            0
+        );
+
+        igPopItemWidth();
         igPopStyleColor(1);
+        igPopStyleVar(1);
+
+        igEndChild();
     }
 
     igPopFont();

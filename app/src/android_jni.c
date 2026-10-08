@@ -260,6 +260,52 @@ cleanup2:
     if (did_attach) (*vm)->DetachCurrentThread(vm);
 }
 
+void android_jni_play_quick_sound(int id) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return;
+    }
+
+    JavaVM*  vm  = g_android_app->activity->vm;
+    jobject  obj = g_android_app->activity->clazz;
+    JNIEnv*  env = NULL;
+    bool did_attach = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+            AJNI_LOG("play_quick_sound: AttachCurrentThread failed");
+            return;
+        }
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        AJNI_LOG("play_quick_sound: GetEnv failed status=%d", status);
+        return;
+    }
+
+    jclass cls = (*env)->FindClass(env, "com/vlither/GameActivity");
+    if (!cls) {
+        AJNI_LOG("play_quick_sound: GameActivity class not found");
+        (*env)->ExceptionClear(env);
+        goto cleanup_qs;
+    }
+
+    {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "playQuickSound", "(Landroid/app/Activity;I)V");
+        if (!mid) {
+            AJNI_LOG("play_quick_sound: method not found");
+            (*env)->ExceptionClear(env);
+            goto cleanup_qs;
+        }
+        (*env)->CallStaticVoidMethod(env, cls, mid, obj, (jint)id);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    }
+
+cleanup_qs:
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
 void android_jni_open_url(const char* url) {
     if (!g_android_app || !g_android_app->activity ||
         !g_android_app->activity->vm) {

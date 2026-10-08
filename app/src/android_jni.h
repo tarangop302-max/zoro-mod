@@ -11,6 +11,10 @@ void android_jni_request_ad(void);
 
 void android_jni_notify_game_ready(void);
 
+/* Plays a short built-in tone for a Team Chat quick message (slot id
+   0-3, each slot has its own tone). Fire-and-forget. */
+void android_jni_play_quick_sound(int id);
+
 void android_jni_open_url(const char* url);
 
 const char* android_jni_get_clipboard_text(void);

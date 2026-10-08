@@ -640,6 +640,36 @@ open class GameActivity : NativeActivity() {
                     .start()
             }
         }
+
+        /**
+         * Called from C via JNI (android_jni.c) when a Team Chat quick
+         * message is sent or received. Plays a short built-in tone (no
+         * audio asset needed); each of the 4 quick-message slots has its
+         * own tone. Signature used in android_jni.c: (Landroid/app/Activity;I)V
+         */
+        @JvmStatic
+        fun playQuickSound(activity: Activity, id: Int) {
+            try {
+                val tones = intArrayOf(
+                    android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
+                    android.media.ToneGenerator.TONE_PROP_ACK,
+                    android.media.ToneGenerator.TONE_PROP_BEEP2,
+                    android.media.ToneGenerator.TONE_CDMA_PIP
+                )
+                val durs = intArrayOf(450, 220, 260, 160)
+                val i = ((id % 4) + 4) % 4
+                val tg = android.media.ToneGenerator(
+                    android.media.AudioManager.STREAM_MUSIC, 90
+                )
+                tg.startTone(tones[i], durs[i])
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                    { tg.release() },
+                    (durs[i] + 300).toLong()
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "playQuickSound failed", e)
+            }
+        }
     }
 
 

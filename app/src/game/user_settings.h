@@ -143,11 +143,11 @@ typedef struct user_settings {
   char  ntl_team_id[96];
   char  ntl_auth_key[96];
 
-  bool  hk_show_btn[NUM_HOTKEYS];
+  bool  hk_show_btn[NUM_STORED_HOTKEYS];
 
   gameplay_mode modes[2];
 
-  hotkey hotkeys[NUM_HOTKEYS];
+  hotkey hotkeys[NUM_STORED_HOTKEYS];
 
   custom_key_btn key_btns[MAX_KEY_BTNS];
 
@@ -323,7 +323,19 @@ typedef struct user_settings {
      sizeof(user_settings) strictly larger than the previous release. */
   uint8_t food_glow_reserved[8];
   bool    food_glow[2];
+
+  /* v2.17 extension: "Open settings" hotkey (opens the Settings screen as
+     a popup during a match). Appended after food_glow so every earlier file
+     stays a compatible prefix (see v217_prefix in read_user_settings). The
+     reserved block keeps sizeof(user_settings) strictly larger than the
+     previous release. Access through usr_hotkey(usrs, HOTKEY_OPEN_SETTINGS). */
+  uint8_t food_glow_reserved2[8];
+  hotkey  hotkey_open_settings;
 } user_settings;
+
+static inline hotkey* usr_hotkey(user_settings* u, int i) {
+  return i < NUM_STORED_HOTKEYS ? &u->hotkeys[i] : &u->hotkey_open_settings;
+}
 
 void user_settings_default(user_settings* usr_settings);
 void read_user_settings(user_settings* usr_settings);

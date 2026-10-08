@@ -330,11 +330,14 @@ void input(tenv* env) {
     }
 #ifdef ANDROID    
     
-    gdata->data.wmd = env->wnd->touch.boost_down || gdata->bot.output.accel;    
+    gdata->data.wmd = (!gdata->settings_popup && env->wnd->touch.boost_down) || gdata->bot.output.accel;    
 #else    
-    gdata->data.wmd = twindow_button_down(env->wnd, GLFW_MOUSE_BUTTON_LEFT) ||    
-                      twindow_key_down(env->wnd, GLFW_KEY_SPACE) ||    
-                      twindow_key_down(env->wnd, GLFW_KEY_UP) ||    
+    /* While the settings popup is open, clicks belong to the popup and must
+       not boost; the bot still boosts on its own. */    
+    gdata->data.wmd = (!gdata->settings_popup &&    
+                       (twindow_button_down(env->wnd, GLFW_MOUSE_BUTTON_LEFT) ||    
+                        twindow_key_down(env->wnd, GLFW_KEY_SPACE) ||    
+                        twindow_key_down(env->wnd, GLFW_KEY_UP))) ||    
                       gdata->bot.output.accel;    
 #endif    
     
@@ -392,7 +395,8 @@ void input(tenv* env) {
   usrs->hotkeys[HOTKEY_QUIT].active = false;    
     
   for (int i = 0; i < NUM_HOTKEYS; i++) {    
-    hotkey* hk = usrs->hotkeys + i;    
+    if (i == HOTKEY_OPEN_SETTINGS) continue; /* see input_settings_hotkey() */    
+    hotkey* hk = usr_hotkey(usrs, i);    
     bool real_down    = twindow_key_down(env->wnd, hk->key);    
     bool real_pressed = tkeyboard_key_pressed(env->kb, hk->key);    
     bool fake_down    = (hk->key >= 0 && hk->key < 512) &&    
@@ -422,4 +426,39 @@ void input(tenv* env) {
     
   gameplay_mode* mode = usrs->modes + usrs->hotkeys[HOTKEY_ASSIST].active;    
   if (mode->show_crosshair) igSetMouseCursor(ImGuiMouseCursor_None);    
+}
+
+void input_settings_hotkey(tenv* env) {
+  tuser_data* usr = env->usr;
+  game_data* gdata = &usr->gdata;
+  user_settings* usrs = &usr->usrs;
+  hotkey* hk = &usrs->hotkey_open_settings;
+  static bool prev_active = false;
+
+  /* Don't fire while the player is typing (e.g. in the team chat box). */
+  ImGuiIO* io = igGetIO_Nil();
+  bool typing = io && io->WantTextInput;
+
+  bool in_range = hk->key >= 0 && hk->key < 512;
+  bool real_down    = !typing && twindow_key_down(env->wnd, hk->key);
+  bool real_pressed = !typing && tkeyboard_key_pressed(env->kb, hk->key);
+  bool fake_down    = !typing && in_range && gdata->data.fake_key_down[hk->key];
+  bool fake_pressed = !typing && in_range && gdata->data.fake_key_pressed[hk->key];
+  if (in_range) gdata->data.fake_key_pressed[hk->key] = false;
+
+  if (hk->mode)
+    hk->active = real_down || fake_down;
+  else
+    hk->active ^= (real_pressed || fake_pressed);
+
+  /* Only available while bot mode is on: it can't be opened otherwise, and
+     it closes if the bot is switched off. */
+  if (!usrs->hotkeys[HOTKEY_BOT].active) hk->active = false;
+
+  if (hk->active && !prev_active) {
+    gdata->settings_popup = true;
+  } else if (!hk->active && prev_active) {
+    gdata->settings_popup = false;
+  }
+  prev_active = hk->active;
 }

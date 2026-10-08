@@ -106,7 +106,12 @@ static inline int rt_gate(double now_ms, double last_ms, double min_ms) {
 #define HOTKEY_MENU 5
 #define HOTKEY_RESTART 6
 #define HOTKEY_QUIT 7
-#define NUM_HOTKEYS 8
+#define HOTKEY_OPEN_SETTINGS 8
+/* Hotkeys 0..7 live in the middle of user_settings (layout must not change,
+   or old user.dat files would be misread). HOTKEY_OPEN_SETTINGS is stored
+   at the end of the struct -- use usr_hotkey() to access any index. */
+#define NUM_STORED_HOTKEYS 8
+#define NUM_HOTKEYS 9
 #define MAX_KEY_BTNS 16
 
 typedef enum conn_status {

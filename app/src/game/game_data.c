@@ -51,8 +51,12 @@ void display_hotkeys(tuser_data* usr, float offset, font_size sz) {
                sz);
   show_hot_key_str(usr, "\ueaed", (vec3){0.7f, 1, 0.7f}, "Boost", 0, sz);
 
-  for (int i = 0; i < NUM_HOTKEYS - 2; i++) {
+  for (int i = 0; i < HOTKEY_RESTART; i++) {
     hotkey* hk = usrs->hotkeys + i;
+    show_hot_key(usr, hk->key, (vec3){1, 1, 0.7f}, hk->description, offset, sz);
+  }
+  {
+    hotkey* hk = &usrs->hotkey_open_settings;
     show_hot_key(usr, hk->key, (vec3){1, 1, 0.7f}, hk->description, offset, sz);
   }
 

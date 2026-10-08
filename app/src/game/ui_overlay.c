@@ -1022,7 +1022,7 @@ void ui_overlay(tenv* env) {
   if (gdata->data.follow_view) {
     float sh = (float)ctx->size[1];
     float sw = (float)ctx->size[0];
-    static const char* hk_short[NUM_HOTKEYS] = {
+    static const char* hk_short[NUM_STORED_HOTKEYS] = {
       "HUD","Names","BigF","Asst","Bot","Menu","Restart","Quit"
     };
     ImDrawList* hkdl = igGetForegroundDrawList_ViewportPtr(igGetMainViewport());
@@ -1032,7 +1032,7 @@ void ui_overlay(tenv* env) {
     float start_y = sh * 0.012f;
     int   hk_col  = 0;
 
-    for (int hi = 0; hi < NUM_HOTKEYS; hi++) {
+    for (int hi = 0; hi < NUM_STORED_HOTKEYS; hi++) {
       if (!usrs->hk_show_btn[hi]) continue;
       float bx = margin2 + (float)hk_col * (btn_w + margin2);
       float by = start_y;

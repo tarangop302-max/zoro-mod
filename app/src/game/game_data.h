@@ -130,6 +130,10 @@ typedef struct game_data {
    * the time this is set (see the 'v' handler), so the popup doesn't
    * need its own separate copy of them. */
   bool death_pending;
+
+  /* True while the Settings screen is shown as a popup over a live match
+   * (opened with the Open settings hotkey, see input_settings_hotkey()). */
+  bool settings_popup;
   double death_anim_start;
 
   /* Set by the death popup's "Kill Shots" button (death_screen.c),

@@ -18,11 +18,14 @@ void ui_settings(tenv* env) {
   igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
              usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
 
-  usr->r->global.bg_opacity = 0;
-  usr->r->global.bd_opacity = 0;
-  usr->r->global.minimap_opacity = 0;
+  if (!gdata->settings_popup) {
+    usr->r->global.bg_opacity = 0;
+    usr->r->global.bd_opacity = 0;
+    usr->r->global.minimap_opacity = 0;
+  }
 
-  crystal_draw_background(env);
+  /* Popup over a live match: 10% background so the game stays visible. */
+  crystal_draw_background_alpha(env, gdata->settings_popup ? 0.10f : 1.0f);
   crystal_push_theme();
 
   float frame_height = igGetFrameHeight();
@@ -297,14 +300,14 @@ void ui_settings(tenv* env) {
       igTableSetColumnIndex(0);
       igIndent(style->WindowPadding.x);
       for (int i = 0; i < NUM_HOTKEYS; i++) {
-        hotkey* hk = usrs->hotkeys + i;
+        hotkey* hk = usr_hotkey(usrs, i);
         igAlignTextToFramePadding();
         igText(hk->description);
       }
       igTableSetColumnIndex(1);
 
       for (int i = 0; i < NUM_HOTKEYS; i++) {
-        hotkey* hk = usrs->hotkeys + i;
+        hotkey* hk = usr_hotkey(usrs, i);
         igPushID_Int(i);
         igSetNextItemWidth(frame_height * 2);
         char preview_char[2] = {(char)hk->key, 0};
@@ -313,8 +316,8 @@ void ui_settings(tenv* env) {
             char selectable_char[2] = {c, 0};
             bool is_in_use = false;
             for (int d = 0; d < NUM_HOTKEYS; d++) {
-              if (c == usrs->hotkeys[d].key &&
-                  hk->key != usrs->hotkeys[d].key) {
+              if (c == usr_hotkey(usrs, d)->key &&
+                  hk->key != usr_hotkey(usrs, d)->key) {
                 is_in_use = true;
               }
             }
@@ -329,8 +332,8 @@ void ui_settings(tenv* env) {
             char selectable_char[2] = {c, 0};
             bool is_in_use = false;
             for (int d = 0; d < NUM_HOTKEYS; d++) {
-              if (c == usrs->hotkeys[d].key &&
-                  hk->key != usrs->hotkeys[d].key) {
+              if (c == usr_hotkey(usrs, d)->key &&
+                  hk->key != usr_hotkey(usrs, d)->key) {
                 is_in_use = true;
               }
             }
@@ -403,7 +406,14 @@ void ui_settings(tenv* env) {
                         (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
   if (igButton("OK", (ImVec2){btn_w, btn_h})) {
     save_user_settings(usrs);
-    gdata->curr_screen = TITLE_SCREEN;
+    if (gdata->settings_popup) {
+      /* Opened mid-match via the Open settings hotkey: just close the popup
+         and return to the game instead of dropping to the lobby. */
+      gdata->settings_popup = false;
+      usr_hotkey(usrs, HOTKEY_OPEN_SETTINGS)->active = false;
+    } else {
+      gdata->curr_screen = TITLE_SCREEN;
+    }
   }
   crystal_sheen();
   igPopStyleColor(3);

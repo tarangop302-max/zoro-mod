@@ -78,7 +78,7 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->zslider_horizontal  = false;
   usr_settings->zslider_hidden      = false;
 
-  for (int i = 0; i < NUM_HOTKEYS; i++)
+  for (int i = 0; i < NUM_STORED_HOTKEYS; i++)
     usr_settings->hk_show_btn[i] = false;
   usr_settings->ctrl_swap_sides    = false;
 
@@ -146,6 +146,8 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->hotkeys[HOTKEY_RESTART] =
       (hotkey){GLFW_KEY_R, false, 1, "Restart"};
   usr_settings->hotkeys[HOTKEY_QUIT] = (hotkey){GLFW_KEY_Q, false, 1, "Quit"};
+  usr_settings->hotkey_open_settings =
+      (hotkey){GLFW_KEY_O, false, 0, "Open settings"};
 
   for (int i = 0; i < MAX_KEY_BTNS; i++) {
     usr_settings->key_btns[i].active   = false;
@@ -305,9 +307,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v214_prefix = offsetof(user_settings, show_net_graph);
   size_t v215_prefix = offsetof(user_settings, snakey_rain_settings_reserved);
   size_t v216_prefix = offsetof(user_settings, food_glow_reserved);
+  size_t v217_prefix = offsetof(user_settings, food_glow_reserved2);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v217_prefix)
+    /* A file saved before the Open settings hotkey existed ends at
+       v217_prefix, possibly followed only by compiler tail padding. Keep
+       every saved value; the new hotkey keeps its default (O, toggle). */
+    bytes_to_read = v217_prefix;
   else if ((size_t)file_size >= v216_prefix)
     /* A file saved before Food glow existed ends at v216_prefix, possibly
        followed only by compiler tail padding. Keep every saved value; Food
@@ -535,6 +543,16 @@ void read_user_settings(user_settings* usr_settings) {
     strcpy(loaded.snakey_rain_bot_skin,
            "uuuuuuuauuuuuuaauuuuuaaauuuuaaaauuuaaaaauuaaaaaauaaaaaaa"
          "uuaaaaaauuuaaaaauuuuaaaauuuuuaaauuuuuuaa");
+
+  {
+    hotkey* os = &loaded.hotkey_open_settings;
+    bool ok = (os->key >= 48 && os->key < 58) || (os->key >= 65 && os->key < 91);
+    if (!ok || os->key == GLFW_KEY_M || os->key == GLFW_KEY_N)
+      os->key = GLFW_KEY_O;
+    if (os->mode < 0 || os->mode > 1) os->mode = 0;
+    os->active = false;
+    strcpy(os->description, "Open settings");
+  }
 
   *usr_settings = loaded;
 }

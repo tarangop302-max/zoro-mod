@@ -16,6 +16,7 @@
 #include "oef.h"
 #include "redraw.h"
 #include "ui_overlay.h"
+#include "../ui/settings.h"
 
 void game_loop(tenv* env) {
   tuser_data* usr = env->usr;
@@ -65,6 +66,10 @@ void game_loop(tenv* env) {
       // without this gate a tap on the popup's Lobby/Restart buttons was
       // also being read as a movement command underneath them, and the
       // buttons never visibly responded to clicks.
+      // The Open settings popup is bot-mode only, so input() keeps running
+      // while it is up (the bot keeps steering; input() ignores clicks for
+      // boost while the popup is open). It also stays open if you die.
+      input_settings_hotkey(env);
       if (!gdata->death_pending) {
         input(env);
       }
@@ -73,6 +78,7 @@ void game_loop(tenv* env) {
       oef(env);
       redraw(env);
       ui_overlay(env);
+      if (gdata->settings_popup) ui_settings(env);
       /* Detects new kills, shows the "+1 Kill" toast and queues the kill
          screenshot (screenshot_request). Was never being called, so no
          kill was ever captured and the death popup / gallery had nothing
@@ -134,6 +140,8 @@ void game_loop(tenv* env) {
 
       break;
     case DISCONNECTED:
+      gdata->settings_popup = false;
+      usrs->hotkey_open_settings.active = false;
       usr->r->global.bg_opacity = 0;
       usr->r->global.bd_opacity = 0;
       usr->r->global.minimap_opacity = 0;

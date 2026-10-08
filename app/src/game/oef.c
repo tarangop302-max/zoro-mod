@@ -104,11 +104,6 @@ void oef(tenv* env) {
     snake* o = gdata->data.snakes + i;
     float mang = gdata->data.mamu * gdata->data.vfr * o->scang * o->spang;
     float csp = o->sp * gdata->data.vfr / 4.0f;
-    /* Head-sprite smoothing from real elapsed time (see EHANG_RATE_* in
-       constants.h) instead of p12[vfrb], which was quantised to whole ticks. */
-    bool is_me = o->id >= 0 && o->id == gdata->data.snake_id;
-    float eh_rate = is_me ? EHANG_RATE_SELF : EHANG_RATE_OTHERS;
-    float eh_gain = 1.0f - powf(1.0f - eh_rate, gdata->data.vfr);
     if (csp > o->msl) csp = o->msl;
     if (o->sep != o->wsep) {
       if (o->sep < o->wsep) {
@@ -189,7 +184,7 @@ void oef(tenv* env) {
       float tang = fmodf(o->wehang - o->ehang, PI2);
       if (tang < 0) tang += PI2;
       if (tang > PI) tang -= PI2;
-      o->ehang += tang * eh_gain;
+      o->ehang += tang * gdata->data.p12[gdata->data.vfrb];
       if (o->ehang < 0 || o->ehang >= PI2) o->ehang = fmodf(o->ehang, PI2);
       if (o->ehang < 0) o->ehang += PI2;
       float vang = fmodf(o->wehang - o->ehang, PI2);
@@ -203,7 +198,7 @@ void oef(tenv* env) {
       float tang = fmodf(o->wehang - o->ehang, PI2);
       if (tang < 0) tang += PI2;
       if (tang > PI) tang -= PI2;
-      o->ehang += tang * eh_gain;
+      o->ehang += tang * gdata->data.p12[gdata->data.vfrb];
       if (o->ehang < 0 || o->ehang >= PI2) o->ehang = fmodf(o->ehang, PI2);
       if (o->ehang < 0) o->ehang += PI2;
       float vang = fmodf(o->wehang - o->ehang, PI2);

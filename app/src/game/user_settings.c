@@ -388,6 +388,9 @@ void read_user_settings(user_settings* usr_settings) {
     /* Food shader has 8 types (Solid, Rings + 6 shapes); reject garbage. */
     if (loaded.modes[i].food_type < 0 || loaded.modes[i].food_type > 7)
       loaded.modes[i].food_type = (i == 1) ? 1 : 0;
+    if (loaded.modes[i].render_mode < 0 ||
+        loaded.modes[i].render_mode >= NUM_RENDER_MODES)
+      loaded.modes[i].render_mode = (i == 1) ? RENDER_MODE_SOLID : RENDER_MODE_TEXTURE;
     loaded.food_glow[i] = loaded.food_glow[i] ? true : false;
     /* Assist mode's Flat render mode allows a 0% floor (see settings.c);
        every other mode/render-mode combination keeps the 15% floor. */

@@ -302,7 +302,10 @@ void ui_settings(tenv* env) {
                       ImGuiSliderFlags_AlwaysClamp);
         igSetNextItemWidth(-1);
         igCombo_Str_arr("##render mode", &mode->render_mode,
-                        (const char*[]){"Texture", "Solid", "Flat"}, 3, -1);
+                        (const char*[]){"Texture", "Solid", "Flat",
+                                        "Rounded plain", "Squared plain",
+                                        "Vlither textured", "Striped plain"},
+                        NUM_RENDER_MODES, -1);
 
         igCheckbox("##transparent skin", &mode->transparent_skin);
         igBeginDisabled(!mode->transparent_skin);

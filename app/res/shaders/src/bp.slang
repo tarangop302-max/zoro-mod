@@ -57,6 +57,17 @@ vs_output vs_main(vs_input input) {
 }
 
 float4 fs_main(vs_output input) {
+  if (input.shape.y > 1.5) {
+    // Rect shape (shape.y == 2): square / rectangle with hard corners, sized
+    // by input.dimensions (same quad layout as the capsule path below).
+    float2 p = (input.uv - 0.5) * (input.dimensions + EDGE_SOFTNESS);
+    float2 q = abs(p) - input.dimensions * 0.5;
+    float distance_to_edge = max(q.x, q.y);
+    float aa = max(length(float2(ddx(distance_to_edge), ddy(distance_to_edge))), 0.75);
+    float alpha = 1.0 - smoothstep(-aa, aa, distance_to_edge);
+    return float4(input.color.rgb, input.color.a * alpha);
+  }
+
   if (input.shape.y > 0.5) {
     float2 p = (input.uv - 0.5) * (input.dimensions + EDGE_SOFTNESS);
     float radius = input.shape.x * 0.5;

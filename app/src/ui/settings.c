@@ -3,6 +3,7 @@
 #include "hud_layout_editor.h"
 
 #include "../user.h"
+#include "../android_glfw_shim.h"
 #include "crystal_theme.h"
 
 void ui_settings_init(tenv* env) {}
@@ -14,9 +15,15 @@ void ui_settings(tenv* env) {
   ImGuiStyle* style = igGetStyle();
   ImGuiIO* io = igGetIO_Nil();
   game_data* gdata = &usr->gdata;
+  /* Popup mode: opened mid-match with the Open settings hotkey. It is drawn
+     as a compact, touchable window (tabs instead of 4 columns, small font,
+     small buttons) that sits inside the area reserved for it on screen. */
+  const bool popup = gdata->settings_popup;
+  static int popup_tab = 0;
 
-  igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
-             usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
+  int base_font = popup ? FONT_SIZE_SMALL : usrs->ui_font_size;
+  igPushFont(usr->imgui_data.regular_font[base_font],
+             usr->imgui_data.regular_font[base_font]->LegacySize);
 
   if (!gdata->settings_popup) {
     usr->r->global.bg_opacity = 0;
@@ -24,24 +31,78 @@ void ui_settings(tenv* env) {
     usr->r->global.minimap_opacity = 0;
   }
 
-  /* Popup over a live match: 10% background so the game stays visible. */
-  crystal_draw_background_alpha(env, gdata->settings_popup ? 0.10f : 1.0f);
+  if (popup) {
+    /* Popup rect: centered box, ~36% x 65% of the screen. */
+    float pw = ctx->size[0] * 0.363f;
+    float ph = ctx->size[1] * 0.650f;
+    igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 14.0f);
+    igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){10, 8});
+    igPushStyleVar_Vec2(ImGuiStyleVar_FramePadding, (ImVec2){6, 3});
+    igPushStyleVar_Vec2(ImGuiStyleVar_ItemSpacing, (ImVec2){6, 4});
+    /* 10% background so the live game stays visible behind it. */
+    igPushStyleColor_Vec4(ImGuiCol_WindowBg,
+                          (ImVec4){0.086f, 0.063f, 0.145f, 0.10f});
+    igPushStyleColor_Vec4(ImGuiCol_Border,
+                          (ImVec4){0.690f, 0.580f, 0.960f, 0.55f});
+    igSetNextWindowPos((ImVec2){ctx->size[0] * 0.4925f, ctx->size[1] * 0.523f},
+                       ImGuiCond_Always, (ImVec2){0.5f, 0.5f});
+    igSetNextWindowSize((ImVec2){pw, ph}, ImGuiCond_Always);
+    igBegin("##settings_popup", NULL,
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoScrollWithMouse);
+#ifdef ANDROID
+    /* Without a capture rect, touches here are treated as gameplay touches
+       and never reach ImGui (same reason as the death screen). */
+    {
+      ImVec2 wp, wsz;
+      igGetWindowPos(&wp);
+      igGetWindowSize(&wsz);
+      android_ui_capture_rect(wp.x, wp.y, wp.x + wsz.x, wp.y + wsz.y);
+    }
+#endif
+  } else {
+    crystal_draw_background_alpha(env, 1.0f);
+  }
   crystal_push_theme();
 
   float frame_height = igGetFrameHeight();
   float child_window_height =
       ctx->size[1] - style->WindowPadding.y * 4 - frame_height;
 #ifdef ANDROID
-  const int panel_columns = 2;
+  int panel_columns = 2;
   child_window_height = (child_window_height - style->ItemSpacing.y) * 0.5f;
 #else
-  const int panel_columns = 4;
+  int panel_columns = 4;
 #endif
+  float popup_btn_h = frame_height * 1.2f;
+  if (popup) {
+    panel_columns = 1;
+    /* Tab row: General / Normal / Assist / Hotkeys */
+    const char* tab_names[4] = {"General", "Normal", "Assist", "Hotkeys"};
+    ImVec2 av;
+    igGetContentRegionAvail(&av);
+    float tw = (av.x - style->ItemSpacing.x * 3) / 4.0f;
+    for (int t = 0; t < 4; t++) {
+      if (t) igSameLine(0, -1);
+      bool sel = (t == popup_tab);
+      if (sel)
+        igPushStyleColor_Vec4(ImGuiCol_Button,
+                              (ImVec4){0.510f, 0.294f, 0.910f, 0.85f});
+      if (igButton(tab_names[t], (ImVec2){tw, 0})) popup_tab = t;
+      if (sel) igPopStyleColor(1);
+    }
+    igGetContentRegionAvail(&av);
+    child_window_height =
+        av.y - popup_btn_h - style->ItemSpacing.y * 2 - style->WindowPadding.y;
+  }
 
   if (igBeginTable("settings_table", panel_columns, ImGuiTableFlags_None, (ImVec2){}, 0)) {
     igTableNextRow(ImGuiTableRowFlags_None, 0);
     igTableSetColumnIndex(0);
 
+    if (!popup || popup_tab == 0) {
     igBeginChild_Str("general_settings_child_holder",
                      (ImVec2){-1, child_window_height}, ImGuiChildFlags_None,
                      ImGuiWindowFlags_None);
@@ -132,9 +193,11 @@ void ui_settings(tenv* env) {
                     ImGuiSliderFlags_AlwaysClamp);
       igSetNextItemWidth(-1);
       igColorEdit3("##border color", usrs->bd_color, ImGuiColorEditFlags_None);
+      igBeginDisabled(popup); /* leaves the match, so not from the popup */
       if (igButton("Open editor##hud_layout", (ImVec2){-1, 0})) {
         ui_hud_layout_editor_enter(env);
       }
+      igEndDisabled();
       igCheckbox("##instant restart", &usrs->instant_restart);
       igCheckbox("##restart rc", &usrs->restart_rc);
       igCheckbox("##quit mc", &usrs->quit_mc);
@@ -157,12 +220,20 @@ void ui_settings(tenv* env) {
     igTextWrapped("FPS limit is a maximum, not a forced refresh rate. Actual FPS cannot exceed your phone's active display refresh rate. Android Auto mode may keep the screen at 60 Hz; select 90/120/144 Hz in the phone's Display settings to use a matching Vlither limit.");
     igTextDisabled("VSync can also cap rendering to the current display mode.");
     igEndChild();
+    }
 
-    igTableSetColumnIndex(1);
+    if (!popup || popup_tab == 1 || popup_tab == 2) {
+    if (popup) {
+      igTableNextRow(ImGuiTableRowFlags_None, 0);
+      igTableSetColumnIndex(0);
+    } else {
+      igTableSetColumnIndex(1);
+    }
     igBeginChild_Str("mode_settings_child_holder",
                      (ImVec2){-1, child_window_height}, ImGuiChildFlags_None,
                      ImGuiWindowFlags_None);
     for (int i = 0; i < 2; i++) {
+      if (popup && i != popup_tab - 1) continue;
       igPushID_Int(i + 1);
       gameplay_mode* mode = usrs->modes + i;
       igSeparatorText(i == 0 ? "Normal mode" : "Assist mode");
@@ -285,13 +356,20 @@ void ui_settings(tenv* env) {
       igPopID();
     }
     igEndChild();
+    }
 
+    if (!popup || popup_tab == 3) {
+    if (popup) {
+      igTableNextRow(ImGuiTableRowFlags_None, 0);
+      igTableSetColumnIndex(0);
+    } else {
 #ifdef ANDROID
     igTableNextRow(ImGuiTableRowFlags_None, 0);
     igTableSetColumnIndex(0);
 #else
     igTableSetColumnIndex(2);
 #endif
+    }
     igBeginChild_Str("hotkey_child_window", (ImVec2){-1, child_window_height},
                      ImGuiChildFlags_None, ImGuiWindowFlags_None);
     igSeparatorText("Hotkeys");
@@ -367,7 +445,9 @@ void ui_settings(tenv* env) {
       igEndTable();
     }
     igEndChild();
+    }
 
+    if (!popup) {
 #ifdef ANDROID
     igTableSetColumnIndex(1);
 #else
@@ -377,6 +457,7 @@ void ui_settings(tenv* env) {
                      ImGuiChildFlags_None, ImGuiWindowFlags_None);
     igSeparatorText("Hotkeys");
     igEndChild();
+    }
 
     igEndTable();
   }
@@ -384,15 +465,28 @@ void ui_settings(tenv* env) {
   float btn_w = ctx->size[0] * 0.25f - style->ItemSpacing.x * 2;
   float btn_h = frame_height * 1.8f;
   float col2_x = ctx->size[0] * 0.5f + style->WindowPadding.x;
+  float reset_y = ctx->size[1] - style->WindowPadding.y - btn_h * 2 - style->ItemSpacing.y;
+  float ok_x = col2_x;
+  float ok_y = ctx->size[1] - style->WindowPadding.y - btn_h;
+  if (popup) {
+    /* Reset and OK side by side along the bottom edge of the popup. */
+    ImVec2 ws;
+    igGetWindowSize(&ws);
+    btn_h = popup_btn_h;
+    btn_w = (ws.x - style->WindowPadding.x * 2 - style->ItemSpacing.x) * 0.5f;
+    col2_x = style->WindowPadding.x;
+    reset_y = ok_y = ws.y - style->WindowPadding.y - btn_h;
+    ok_x = col2_x + btn_w + style->ItemSpacing.x;
+  }
   igSetCursorPosX(col2_x);
-  igSetCursorPosY(ctx->size[1] - style->WindowPadding.y - btn_h * 2 - style->ItemSpacing.y);
+  igSetCursorPosY(reset_y);
   if (igButton("Reset", (ImVec2){btn_w, btn_h})) {
     user_settings_default(usrs);
     env->config.vsync = usrs->vsync;
     twindow_request_refresh(env->wnd);
   }
-  igSetCursorPosX(col2_x);
-  igSetCursorPosY(ctx->size[1] - style->WindowPadding.y - btn_h);
+  igSetCursorPosX(ok_x);
+  igSetCursorPosY(ok_y);
   {
     ImVec2 ok_pos;
     igGetCursorScreenPos(&ok_pos);
@@ -419,6 +513,12 @@ void ui_settings(tenv* env) {
   igPopStyleColor(3);
 
   crystal_pop_theme();
+
+  if (popup) {
+    igEnd();
+    igPopStyleColor(2);
+    igPopStyleVar(4);
+  }
 
   igPopFont();
 }

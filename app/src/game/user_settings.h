@@ -11,6 +11,18 @@
 #define MAX_NTL_TEAM_NAME 47
 
 #define MAX_SAVED_SKINS 30
+
+/* gameplay_mode.render_mode values (Settings > Render mode). The first three
+   are the original modes; the rest are the NTL-style skin textures. Values
+   are stored in the settings file, so only ever append new ones. */
+#define RENDER_MODE_TEXTURE 0
+#define RENDER_MODE_SOLID 1
+#define RENDER_MODE_FLAT 2
+#define RENDER_MODE_ROUNDED_PLAIN 3
+#define RENDER_MODE_SQUARED_PLAIN 4
+#define RENDER_MODE_VLITHER_TEXTURED 5
+#define RENDER_MODE_STRIPED_PLAIN 6
+#define NUM_RENDER_MODES 7
 #define MAX_SAVED_SKIN_NAME 23
 
 typedef struct hotkey {

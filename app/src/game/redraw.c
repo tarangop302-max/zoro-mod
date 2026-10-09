@@ -1,3 +1,4 @@
+
 #include "redraw.h"
 
 #include "../user.h"
@@ -39,6 +40,96 @@ int arp(snake* o, int q, float xx, float yy) {
     int gptz_len = tdarray_length(o->gptz);
     return gptz_len - 1;
   }
+}
+
+/* Per-point colours for the transparent-body ribbon (indexed like pbx). */
+static vec4s body_cols[32767];
+
+/* Draws a snake body as ONE continuous ribbon instead of a chain of
+ * overlapping circles/capsules/squares. Every sprite in a chain overlaps its
+ * neighbours, so when the body is semi-transparent each overlap gets blended
+ * again and shows up as visible "segments". The ribbon's segments share their
+ * end vertices (with mitered offsets), so every pixel is covered once and the
+ * body looks like a single translucent tube -- the same as NTL, which strokes
+ * the whole body as a single canvas path. Colour per segment comes from
+ * body_cols[j] (segment between points j-1 and j), so skin patterns survive.
+ * Round end caps are half discs, so they don't overlap the ribbon either. */
+static void push_body_ribbon(bp_renderer* bpr, game_data* gdata, int bp,
+                             float mww2, float mhh2, float half_w) {
+  if (bp < 2 || half_w <= 0.0f) return;
+  const float gsc = gdata->data.gsc;
+#define RIB_SX(k) (((gdata->data.pbx[(k)] - gdata->data.view_xx) * gsc) + mww2)
+#define RIB_SY(k) (((gdata->data.pby[(k)] - gdata->data.view_yy) * gsc) + mhh2)
+  for (int j = 1; j < bp; j++) {
+    if (gdata->data.pbu[j] < 1 || gdata->data.pbu[j - 1] < 1) continue;
+
+    float ax = RIB_SX(j - 1), ay = RIB_SY(j - 1);
+    float bx = RIB_SX(j), by = RIB_SY(j);
+    float dx = bx - ax, dy = by - ay;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1e-3f) continue;
+    dx /= len;
+    dy /= len;
+
+    /* Tangent at A: average with the previous segment; at B: with the next. */
+    float tax = dx, tay = dy, tbx = dx, tby = dy;
+    if (j >= 2 && gdata->data.pbu[j - 2] >= 1) {
+      float px_ = ax - RIB_SX(j - 2), py_ = ay - RIB_SY(j - 2);
+      float pl = sqrtf(px_ * px_ + py_ * py_);
+      if (pl > 1e-3f) {
+        tax = dx + px_ / pl;
+        tay = dy + py_ / pl;
+      }
+    }
+    if (j + 1 < bp && gdata->data.pbu[j + 1] >= 1) {
+      float nx_ = RIB_SX(j + 1) - bx, ny_ = RIB_SY(j + 1) - by;
+      float nl = sqrtf(nx_ * nx_ + ny_ * ny_);
+      if (nl > 1e-3f) {
+        tbx = dx + nx_ / nl;
+        tby = dy + ny_ / nl;
+      }
+    }
+
+    float offs[2][2];
+    float tans[2][2] = {{tax, tay}, {tbx, tby}};
+    for (int e = 0; e < 2; e++) {
+      float tl = sqrtf(tans[e][0] * tans[e][0] + tans[e][1] * tans[e][1]);
+      float tx_ = dx, ty_ = dy;
+      if (tl > 1e-3f) {
+        tx_ = tans[e][0] / tl;
+        ty_ = tans[e][1] / tl;
+      }
+      float nx_ = -ty_, ny_ = tx_;
+      float c = nx_ * (-dy) + ny_ * dx; /* cos between miter and segment normal */
+      float miter = c > 0.5f ? 1.0f / c : 2.0f;
+      offs[e][0] = nx_ * half_w * miter;
+      offs[e][1] = ny_ * half_w * miter;
+    }
+
+    bp_renderer_push(
+        bpr, &(bp_instance){{ax, ay, bx, by},
+                            {offs[0][0], offs[0][1], offs[1][0], offs[1][1]},
+                            body_cols[j],
+                            {half_w, 4.0f}});
+
+    /* Round end caps (half discs) at the two real ends of the body. */
+    if (j == 1 && gdata->data.pbu[0] >= 1) {
+      bp_renderer_push(
+          bpr, &(bp_instance){{ax - half_w, ay - half_w, half_w * 2,
+                               atan2f(-dy, -dx)},
+                              gdata->cg_uvs[BLANK_UV], body_cols[0],
+                              {0, 5.0f}});
+    }
+    if (j == bp - 1) {
+      bp_renderer_push(
+          bpr, &(bp_instance){{bx - half_w, by - half_w, half_w * 2,
+                               atan2f(dy, dx)},
+                              gdata->cg_uvs[BLANK_UV], body_cols[j],
+                              {0, 5.0f}});
+    }
+  }
+#undef RIB_SX
+#undef RIB_SY
 }
 
 void redraw(tenv* env) {
@@ -696,6 +787,8 @@ void redraw(tenv* env) {
         bool assist_force_white = mode_index == 1 &&
                                    o->id != gdata->data.snake_id &&
                                    usrs->white_skin_enemies[1];
+        bool flatten_snake = assist_force_white || skin_alpha < 1.0f;
+        const float ribbon_half_w = gdata->data.gsc * lsz;
 
         if (mode->render_mode == RENDER_MODE_TEXTURE ||
             mode->render_mode == RENDER_MODE_VLITHER_TEXTURED) {
@@ -769,7 +862,7 @@ void redraw(tenv* env) {
                  * consecutive points meets its neighbour edge-to-edge
                  * with no overlap, so there's nothing left to
                  * double-blend once it's semi-transparent. */
-                bool flatten = assist_force_white || skin_alpha < 1.0f;
+                bool flatten = flatten_snake;
                 vec3s* cg_col = gdata->cg_colors + cg_id;
                 vec4s fill_color =
                     assist_force_white
@@ -779,31 +872,9 @@ void redraw(tenv* env) {
                                   a * skin_alpha}
                         : (vec4s){1, 1, 1, a * skin_alpha};
 
-                if (flatten && j >= 1) {
-                  float pfix = ((gdata->data.pbx[(int)j - 1] -
-                                 gdata->data.view_xx) *
-                                gdata->data.gsc) +
-                               mww2;
-                  float pfiy = ((gdata->data.pby[(int)j - 1] -
-                                 gdata->data.view_yy) *
-                                gdata->data.gsc) +
-                               mhh2;
-                  float midx = (fix + pfix) * 0.5f;
-                  float midy = (fiy + pfiy) * 0.5f;
-                  float ddx = fix - pfix;
-                  float ddy = fiy - pfiy;
-                  float seg_len = sqrtf(ddx * ddx + ddy * ddy);
-                  float thickness = gdata->data.gsc * 2 * lsz;
-                  float quad_w = seg_len + thickness;
-
-                  bp_renderer_push(
-                      usr->r->bpr,
-                      &(bp_instance){{midx - quad_w * 0.5f,
-                                      midy - thickness * 0.5f, quad_w,
-                                      gdata->data.pba[(int)j]},
-                                     gdata->cg_uvs[BLANK_UV], fill_color,
-                                     {thickness, 1.0f}});
-                } else if (!flatten) {
+                if (flatten) {
+                  body_cols[(int)j] = fill_color;
+                } else {
                   bp_renderer_push(
                       usr->r->bpr,
                       &(bp_instance){{fix - (gdata->data.gsc * lsz),
@@ -859,7 +930,7 @@ void redraw(tenv* env) {
                  * above -- also drops the worm_effect shimmer (se),
                  * since that varies point-to-point and was equally
                  * visible as "segments" once semi-transparent. */
-                bool flatten = assist_force_white || skin_alpha < 1.0f;
+                bool flatten = flatten_snake;
                 vec3s* cg_col = gdata->cg_colors + cg_id;
                 vec4s fill_color =
                     assist_force_white
@@ -869,31 +940,9 @@ void redraw(tenv* env) {
                                   a * skin_alpha}
                         : (vec4s){se, se, se, a * skin_alpha};
 
-                if (flatten && j >= 1) {
-                  float pfix = ((gdata->data.pbx[(int)j - 1] -
-                                 gdata->data.view_xx) *
-                                gdata->data.gsc) +
-                               mww2;
-                  float pfiy = ((gdata->data.pby[(int)j - 1] -
-                                 gdata->data.view_yy) *
-                                gdata->data.gsc) +
-                               mhh2;
-                  float midx = (fix + pfix) * 0.5f;
-                  float midy = (fiy + pfiy) * 0.5f;
-                  float ddx = fix - pfix;
-                  float ddy = fiy - pfiy;
-                  float seg_len = sqrtf(ddx * ddx + ddy * ddy);
-                  float thickness = gdata->data.gsc * 2 * lsz;
-                  float quad_w = seg_len + thickness;
-
-                  bp_renderer_push(
-                      usr->r->bpr,
-                      &(bp_instance){{midx - quad_w * 0.5f,
-                                      midy - thickness * 0.5f, quad_w,
-                                      gdata->data.pba[(int)j]},
-                                     gdata->cg_uvs[BLANK_UV], fill_color,
-                                     {thickness, 1.0f}});
-                } else if (!flatten) {
+                if (flatten) {
+                  body_cols[(int)j] = fill_color;
+                } else {
                   bp_renderer_push(
                       usr->r->bpr,
                       &(bp_instance){{fix - (gdata->data.gsc * lsz),
@@ -904,8 +953,11 @@ void redraw(tenv* env) {
                 }
               }
           }
+          if (flatten_snake)
+            push_body_ribbon(usr->r->bpr, gdata, bp, mww2, mhh2, ribbon_half_w);
         } else if (mode->render_mode == 1) {
           float skinless_a = skin_alpha;
+          bool ribbon_snake = skinless_a < 1.0f;
           if (render_shadows) {
 
             int start = bp >= 4 ? bp - 4 : 0;
@@ -968,7 +1020,12 @@ void redraw(tenv* env) {
                 int cg_id = o->cusk_data[(int)j % o->cusk_len];
                 vec3s* cg_col = gdata->cg_colors + cg_id;
 
-                bp_renderer_push(
+                if (ribbon_snake) {
+                  body_cols[(int)j] = assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a};
+                } else {
+                  bp_renderer_push(
                     usr->r->bpr,
                     &(bp_instance){
                         {fix - (gdata->data.gsc * lsz),
@@ -978,6 +1035,7 @@ void redraw(tenv* env) {
                         assist_force_white
                             ? (vec4s){1, 1, 1, a * skinless_a}
                             : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                }
               }
           } else {
             for (j = bp - 1; j >= 0; j--)
@@ -1019,7 +1077,12 @@ void redraw(tenv* env) {
                         ->default_skins[o->cv][1 + ((int)j % default_skin_len)];
                 vec3s* cg_col = gdata->cg_colors + cg_id;
 
-                bp_renderer_push(
+                if (ribbon_snake) {
+                  body_cols[(int)j] = assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a};
+                } else {
+                  bp_renderer_push(
                     usr->r->bpr,
                     &(bp_instance){
                         {fix - (gdata->data.gsc * lsz),
@@ -1029,10 +1092,14 @@ void redraw(tenv* env) {
                         assist_force_white
                             ? (vec4s){1, 1, 1, a * skinless_a}
                             : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                }
               }
           }
+          if (ribbon_snake)
+            push_body_ribbon(usr->r->bpr, gdata, bp, mww2, mhh2, ribbon_half_w);
         } else if (mode->render_mode == 2) {
           float skinless_a = skin_alpha;
+          bool ribbon_snake = skinless_a < 1.0f;
           if (render_shadows) {
 
             int start = bp >= 4 ? bp - 4 : 0;
@@ -1080,6 +1147,11 @@ void redraw(tenv* env) {
                     ? (vec4s){1, 1, 1, a * skinless_a}
                     : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a};
 
+            if (ribbon_snake) {
+              for (j = 0; j < bp; j++) body_cols[(int)j] = fill_color;
+              push_body_ribbon(usr->r->bpr, gdata, bp, mww2, mhh2,
+                               ribbon_half_w);
+            } else
             for (j = bp - 1; j >= 1; j--)
               if (gdata->data.pbu[(int)j] >= 1 &&
                   gdata->data.pbu[(int)j - 1] >= 1) {
@@ -1145,7 +1217,12 @@ void redraw(tenv* env) {
                 int cg_id = o->cusk_data[0];
                 vec3s* cg_col = gdata->cg_colors + cg_id;
 
-                bp_renderer_push(
+                if (ribbon_snake) {
+                  body_cols[(int)j] = assist_force_white
+                            ? (vec4s){1, 1, 1, a * a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * a * skinless_a};
+                } else {
+                  bp_renderer_push(
                     usr->r->bpr,
                     &(bp_instance){
                         {fix - (gdata->data.gsc * lsz),
@@ -1155,6 +1232,7 @@ void redraw(tenv* env) {
                         assist_force_white
                             ? (vec4s){1, 1, 1, a * a * skinless_a}
                             : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * a * skinless_a}});
+                }
               }
           } else {
             for (j = bp - 1; j >= 0; j--)
@@ -1194,7 +1272,12 @@ void redraw(tenv* env) {
                 int cg_id = gdata->default_skins[o->cv][1];
                 vec3s* cg_col = gdata->cg_colors + cg_id;
 
-                bp_renderer_push(
+                if (ribbon_snake) {
+                  body_cols[(int)j] = assist_force_white
+                            ? (vec4s){1, 1, 1, a * skinless_a}
+                            : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a};
+                } else {
+                  bp_renderer_push(
                     usr->r->bpr,
                     &(bp_instance){
                         {fix - (gdata->data.gsc * lsz),
@@ -1204,8 +1287,11 @@ void redraw(tenv* env) {
                         assist_force_white
                             ? (vec4s){1, 1, 1, a * skinless_a}
                             : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
+                }
               }
           }
+          if (ribbon_snake && mode_index != 1)
+            push_body_ribbon(usr->r->bpr, gdata, bp, mww2, mhh2, ribbon_half_w);
         } else if (mode->render_mode == RENDER_MODE_ROUNDED_PLAIN ||
                    mode->render_mode == RENDER_MODE_SQUARED_PLAIN ||
                    mode->render_mode == RENDER_MODE_STRIPED_PLAIN) {
@@ -1240,6 +1326,13 @@ void redraw(tenv* env) {
                     ? (vec4s){1, 1, 1, a * skin_alpha}
                     : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skin_alpha};
 
+            /* Transparent: the per-point circles/squares overlap and would
+             * double-blend, so collect colours and draw one ribbon below. */
+            if (flatten_snake) {
+              body_cols[(int)j] = fill_color;
+              continue;
+            }
+
             if (plain_rm != RENDER_MODE_ROUNDED_PLAIN && j >= 2) {
               float ang =
                   plain_rm == RENDER_MODE_SQUARED_PLAIN ? 0.0f
@@ -1258,6 +1351,8 @@ void redraw(tenv* env) {
                                  gdata->cg_uvs[BLANK_UV], fill_color});
             }
           }
+          if (flatten_snake)
+            push_body_ribbon(usr->r->bpr, gdata, bp, mww2, mhh2, ribbon_half_w);
         }
 
         if (mode->center_line && o->id == gdata->data.snake_id && bp >= 2) {

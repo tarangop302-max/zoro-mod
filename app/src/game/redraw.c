@@ -58,7 +58,10 @@ void redraw(tenv* env) {
 
   int mode_index = usrs->hotkeys[HOTKEY_ASSIST].active ? 1 : 0;
   gameplay_mode* mode = usrs->modes + mode_index;
-  bool render_shadows = mode->show_shadows && !usrs->performance_mode;
+  /* Vlither textured is the lightweight texture mode, so it skips the
+     per-segment shadow pass entirely. */
+  bool render_shadows = mode->show_shadows && !usrs->performance_mode &&
+                        mode->render_mode != RENDER_MODE_VLITHER_TEXTURED;
 
   if (!gdata->data.dead) {
     if (gdata->data.fvtg > 0) {
@@ -357,6 +360,11 @@ void redraw(tenv* env) {
         float nkr = 0;
         float msl = o->msl;
         float mct = 6 / (mode->qsm * o->sep / 6.0f);
+        /* Vlither textured spaces body segments 7:6 wider than the other
+         * modes (same ratio NTL's "NTL textured" uses), so fewer
+         * segments are drawn per snake. */
+        if (mode->render_mode == RENDER_MODE_VLITHER_TEXTURED)
+          mct *= 6.0f / 7.0f;
 
         float omct = mct;
         float rmct = 1 / mct;
@@ -689,7 +697,8 @@ void redraw(tenv* env) {
                                    o->id != gdata->data.snake_id &&
                                    usrs->white_skin_enemies[1];
 
-        if (mode->render_mode == 0) {
+        if (mode->render_mode == RENDER_MODE_TEXTURE ||
+            mode->render_mode == RENDER_MODE_VLITHER_TEXTURED) {
           float shadow_strength = 0.25f;
 
           if (render_shadows) {
@@ -840,7 +849,11 @@ void redraw(tenv* env) {
                 int cg_id =
                     gdata
                         ->default_skins[o->cv][1 + ((int)j % default_skin_len)];
-                float se = gdata->worm_effect[(int)j % WORM_EFFECT_LEN];
+                /* Vlither textured drops the per-segment shimmer for a
+                 * cleaner, lighter look. */
+                float se = mode->render_mode == RENDER_MODE_VLITHER_TEXTURED
+                               ? 1.0f
+                               : gdata->worm_effect[(int)j % WORM_EFFECT_LEN];
 
                 /* Same capsule-per-gap fallback as the cusk branch
                  * above -- also drops the worm_effect shimmer (se),
@@ -1192,6 +1205,58 @@ void redraw(tenv* env) {
                             ? (vec4s){1, 1, 1, a * skinless_a}
                             : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a}});
               }
+          }
+        } else if (mode->render_mode == RENDER_MODE_ROUNDED_PLAIN ||
+                   mode->render_mode == RENDER_MODE_SQUARED_PLAIN ||
+                   mode->render_mode == RENDER_MODE_STRIPED_PLAIN) {
+          /* NTL's "plain" skin textures: every body point is one flat
+           * color-group fill, no gradient and no shadow pass.
+           *   Rounded plain: a circle per point.
+           *   Squared plain: an axis-aligned (screen space) square per point.
+           *   Striped plain: a square per point rotated to the body heading,
+           *                  so the squares form angled stripes.
+           * As in NTL, the two points nearest the head stay round in the
+           * squared/striped modes. Squares use bp.slang's rect shape
+           * (shape.y == 2). */
+          const int plain_rm = mode->render_mode;
+          const float plain_half = gdata->data.gsc * lsz;
+          const float plain_side = plain_half * 2;
+
+          for (j = bp - 1; j >= 0; j--) {
+            if (gdata->data.pbu[(int)j] < 1) continue;
+            px = gdata->data.pbx[(int)j];
+            py = gdata->data.pby[(int)j];
+            float fix = ((px - gdata->data.view_xx) * gdata->data.gsc) + mww2;
+            float fiy = ((py - gdata->data.view_yy) * gdata->data.gsc) + mhh2;
+
+            int cg_id =
+                o->cusk
+                    ? o->cusk_data[(int)j % o->cusk_len]
+                    : gdata->default_skins
+                          [o->cv][1 + ((int)j % gdata->default_skins[o->cv][0])];
+            vec3s* cg_col = gdata->cg_colors + cg_id;
+            vec4s fill_color =
+                assist_force_white
+                    ? (vec4s){1, 1, 1, a * skin_alpha}
+                    : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skin_alpha};
+
+            if (plain_rm != RENDER_MODE_ROUNDED_PLAIN && j >= 2) {
+              float ang =
+                  plain_rm == RENDER_MODE_SQUARED_PLAIN ? 0.0f
+                                                        : gdata->data.pba[(int)j];
+              bp_renderer_push(
+                  usr->r->bpr,
+                  &(bp_instance){{fix - plain_half, fiy - plain_half,
+                                  plain_side, ang},
+                                 gdata->cg_uvs[BLANK_UV], fill_color,
+                                 {plain_side, 2.0f}});
+            } else {
+              bp_renderer_push(
+                  usr->r->bpr,
+                  &(bp_instance){{fix - plain_half, fiy - plain_half,
+                                  plain_side, gdata->data.pba[(int)j]},
+                                 gdata->cg_uvs[BLANK_UV], fill_color});
+            }
           }
         }
 

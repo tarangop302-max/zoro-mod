@@ -259,8 +259,12 @@ void oef(tenv* env) {
         }
       }
     }
-    float wx = cosf(o->eang) * 2.3f;
-    float wy = sinf(o->eang) * 2.3f;
+    float eye_ang = o->eang;
+    /* Eyes back: show my own pupils where everyone else sees them. */
+    if (i == snakes_len - 1 && gdata->data.eb_eye_on)
+      eye_ang = gdata->data.eb_eye_ang;
+    float wx = cosf(eye_ang) * 2.3f;
+    float wy = sinf(eye_ang) * 2.3f;
     if (o->rex < wx) {
       o->rex += gdata->data.vfr / 6.0f;
       if (o->rex >= wx) o->rex = wx;

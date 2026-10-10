@@ -364,6 +364,7 @@ void input(tenv* env) {
       gdata->data.lsang = -1;    
     }    
     eb_was_on = eb_on;    
+    gdata->data.eb_eye_on = eb_on;    
     
     bool want_e = false;    
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;    
@@ -388,6 +389,7 @@ void input(tenv* env) {
       if (ang < 0) ang += PI2;    
       int sang = (int)floorf((250 + 1) * ang / PI2);    
       if (eb_on) sang = eyes_back_tick(gdata, me, d2 > 256, ang, now_ms);    
+      if (eb_on) gdata->data.eb_eye_ang = (float)sang * PI2 / 251.0f;    
       if (sang != gdata->data.lsang) {    
         gdata->data.lsang = sang;    
         mg_ws_send(connection, (uint8_t[]){sang & 255}, 1, WEBSOCKET_OP_BINARY);    

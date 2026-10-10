@@ -223,6 +223,8 @@ typedef struct game_data {
     int protocol_version;
     int lfesid;
     int lsang;
+    bool  eb_eye_on;   /* Eyes back: own pupils show the sent (backward) angle */
+    float eb_eye_ang;
     int vfrb;
     int frames;
     int fps;

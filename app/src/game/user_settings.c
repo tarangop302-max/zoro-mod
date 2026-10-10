@@ -148,6 +148,8 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->hotkeys[HOTKEY_QUIT] = (hotkey){GLFW_KEY_Q, false, 1, "Quit"};
   usr_settings->hotkey_open_settings =
       (hotkey){GLFW_KEY_O, false, 0, "Open settings"};
+  usr_settings->hotkey_eyes_back =
+      (hotkey){GLFW_KEY_U, false, 0, "Eyes back"};
 
   for (int i = 0; i < MAX_KEY_BTNS; i++) {
     usr_settings->key_btns[i].active   = false;
@@ -308,9 +310,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v215_prefix = offsetof(user_settings, snakey_rain_settings_reserved);
   size_t v216_prefix = offsetof(user_settings, food_glow_reserved);
   size_t v217_prefix = offsetof(user_settings, food_glow_reserved2);
+  size_t v218_prefix = offsetof(user_settings, eyes_back_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v218_prefix)
+    /* A file saved before the Eyes back hotkey existed ends at v218_prefix
+       (it already contains the Open settings hotkey), possibly followed only
+       by compiler tail padding. Keep every saved value; the new hotkey keeps
+       its default (U, toggle). */
+    bytes_to_read = v218_prefix;
   else if ((size_t)file_size >= v217_prefix)
     /* A file saved before the Open settings hotkey existed ends at
        v217_prefix, possibly followed only by compiler tail padding. Keep
@@ -555,6 +564,27 @@ void read_user_settings(user_settings* usr_settings) {
     if (os->mode < 0 || os->mode > 1) os->mode = 0;
     os->active = false;
     strcpy(os->description, "Open settings");
+  }
+
+  {
+    /* Eyes back: same key rules as the other hotkeys (0-9 / A-Z, never M/N,
+       which zoom). If the saved/default key is already taken by another
+       hotkey (e.g. an older file where the player had mapped U), fall back to
+       the first free letter so two hotkeys never share a key. */
+    hotkey* eb = &loaded.hotkey_eyes_back;
+    bool ok = (eb->key >= 48 && eb->key < 58) || (eb->key >= 65 && eb->key < 91);
+    if (!ok || eb->key == GLFW_KEY_M || eb->key == GLFW_KEY_N)
+      eb->key = GLFW_KEY_U;
+    for (int tries = 0; tries < 36; ++tries) {
+      bool taken = false;
+      for (int d = 0; d < HOTKEY_EYES_BACK; ++d)
+        if (usr_hotkey(&loaded, d)->key == eb->key) taken = true;
+      if (!taken && eb->key != GLFW_KEY_M && eb->key != GLFW_KEY_N) break;
+      eb->key = (eb->key >= 65 && eb->key < 90) ? eb->key + 1 : 65;
+    }
+    if (eb->mode < 0 || eb->mode > 1) eb->mode = 0;
+    eb->active = false;
+    strcpy(eb->description, "Eyes back");
   }
 
   *usr_settings = loaded;

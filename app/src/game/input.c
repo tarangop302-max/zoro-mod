@@ -3,6 +3,7 @@
 #include "../android_glfw_shim.h"    
 #endif    
 #include "input.h"    
+#include "eyes_back.h"    
     
 #include "../user.h"    
     
@@ -351,8 +352,23 @@ void input(tenv* env) {
                  WEBSOCKET_OP_BINARY);    
     }    
     
+    /* Eyes back: send "behind the head" instead of the mouse angle (see    
+       eyes_back.c). Not while the bot is driving or the snake is dead. */    
+    static bool eb_was_on = false;    
+    bool eb_on = usrs->hotkey_eyes_back.active &&    
+                 !usrs->hotkeys[HOTKEY_BOT].active && !me->dead;    
+    if (eb_was_on && !eb_on) {    
+      /* Switched off: the server is still chasing the last "behind" angle,    
+         so force the real steering angle out on the very next frame. */    
+      gdata->data.lsxm = -2147483647;    
+      gdata->data.lsang = -1;    
+    }    
+    eb_was_on = eb_on;    
+    
     bool want_e = false;    
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;    
+    /* Keep alternating even while the mouse is perfectly still. */    
+    if (eb_on) want_e = true;    
     me->eang = atan2f(ym, xm);    
     float ang;    
     if (want_e &&    
@@ -371,10 +387,14 @@ void input(tenv* env) {
       ang = fmodf(ang, PI2);    
       if (ang < 0) ang += PI2;    
       int sang = (int)floorf((250 + 1) * ang / PI2);    
+      if (eb_on) sang = eyes_back_tick(gdata, me, d2 > 256, ang, now_ms);    
       if (sang != gdata->data.lsang) {    
         gdata->data.lsang = sang;    
         mg_ws_send(connection, (uint8_t[]){sang & 255}, 1, WEBSOCKET_OP_BINARY);    
-        steer_predict(gdata, me, sang, now_ms);    
+        /* No local turn prediction while Eyes back is on: the sent angle    
+           alternates behind the head, and the head must follow the real    
+           (echoed) server heading instead. */    
+        if (!eb_on) steer_predict(gdata, me, sang, now_ms);    
       }    
     }    
   }    
@@ -397,6 +417,14 @@ void input(tenv* env) {
   for (int i = 0; i < NUM_HOTKEYS; i++) {    
     if (i == HOTKEY_OPEN_SETTINGS) continue; /* see input_settings_hotkey() */    
     hotkey* hk = usr_hotkey(usrs, i);    
+    if (i == HOTKEY_EYES_BACK) {    
+      /* Typing in the team chat must not toggle Eyes back. */    
+      ImGuiIO* eb_io = igGetIO_Nil();    
+      if (eb_io && eb_io->WantTextInput) {    
+        if (hk->mode) hk->active = false;    
+        continue;    
+      }    
+    }    
     bool real_down    = twindow_key_down(env->wnd, hk->key);    
     bool real_pressed = tkeyboard_key_pressed(env->kb, hk->key);    
     bool fake_down    = (hk->key >= 0 && hk->key < 512) &&    

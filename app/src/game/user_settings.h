@@ -343,10 +343,20 @@ typedef struct user_settings {
      previous release. Access through usr_hotkey(usrs, HOTKEY_OPEN_SETTINGS). */
   uint8_t food_glow_reserved2[8];
   hotkey  hotkey_open_settings;
+
+  /* v2.18 extension: "Eyes back" hotkey (ported from NTL VANCED). Appended
+     after hotkey_open_settings so every earlier file stays a compatible
+     prefix (see v218_prefix in read_user_settings). The reserved block keeps
+     sizeof(user_settings) strictly larger than the previous release. Access
+     through usr_hotkey(usrs, HOTKEY_EYES_BACK). */
+  uint8_t eyes_back_reserved[8];
+  hotkey  hotkey_eyes_back;
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {
-  return i < NUM_STORED_HOTKEYS ? &u->hotkeys[i] : &u->hotkey_open_settings;
+  if (i < NUM_STORED_HOTKEYS) return &u->hotkeys[i];
+  if (i == HOTKEY_OPEN_SETTINGS) return &u->hotkey_open_settings;
+  return &u->hotkey_eyes_back;
 }
 
 void user_settings_default(user_settings* usr_settings);

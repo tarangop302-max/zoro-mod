@@ -6,6 +6,7 @@
 #define DLOG(fmt,...) do{}while(0)
 #endif
 
+#include "eyes_back.h"
 #include "../user.h"
 #include "../network/server.h"
 
@@ -57,6 +58,10 @@ void display_hotkeys(tuser_data* usr, float offset, font_size sz) {
   }
   {
     hotkey* hk = &usrs->hotkey_open_settings;
+    show_hot_key(usr, hk->key, (vec3){1, 1, 0.7f}, hk->description, offset, sz);
+  }
+  {
+    hotkey* hk = &usrs->hotkey_eyes_back;
     show_hot_key(usr, hk->key, (vec3){1, 1, 0.7f}, hk->description, offset, sz);
   }
 
@@ -545,6 +550,7 @@ void game_data_reset(tenv* env) {
   user_settings* usrs = &env->usr->usrs;
   game_data* gdata = &usr->gdata;
 
+  eyes_back_reset();
   gdata->data.wfpr = false;
   gdata->data.lagging = false;
   gdata->data.lag_mult = 1;

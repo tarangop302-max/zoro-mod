@@ -8,6 +8,7 @@
 #include "callback.h"
 
 #include "../game/food.h"
+#include "../game/eyes_back.h"
 #include "../game/snake.h"
 #include "../game/snakey_rain.h"
 #include "../user.h"
@@ -577,6 +578,9 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
          round trip ago, so it must not overwrite our heading/turn state.
          If the server's heading is far off what we predicted (it disagreed,
          or we were teleported) trust the server and drop the prediction. */
+      /* Eyes back needs the exact moment the server reports our heading. */
+      if (is_my_snake && ang != -1)
+        eyes_back_on_server_ang(gdata, ang, glfwGetTime() * 1000.0);
       bool keep_local_steer = false;
 #if STEER_PREDICT
       if (is_my_snake) {

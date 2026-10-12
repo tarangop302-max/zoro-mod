@@ -1005,6 +1005,27 @@ void global_chat_draw(tenv* env) {
             &env->usr->usrs :
             NULL;
 
+    /*
+     * Menus and settings screens: the little collapsed card would sit
+     * on top of their buttons and swallow the taps (it is drawn last,
+     * and on Android it also registers a touch-capture rect). Skip it
+     * entirely there. It stays on the title screen and in matches, and
+     * an expanded chat or an active position/size adjustment is never
+     * hidden. Skipping the draw also drops the capture rect, which is
+     * rebuilt every frame.
+     */
+    if (
+        env != NULL && env->usr != NULL &&
+        !global_chat_open &&
+        global_chat_adjust == GLOBAL_CHAT_ADJUST_NONE
+    ) {
+        screen gc_scr = env->usr->gdata.curr_screen;
+
+        if (gc_scr != TITLE_SCREEN && gc_scr != PLAYING) {
+            return;
+        }
+    }
+
     ImVec2 expanded_size;
     ImVec2 fixed_pos;
 
@@ -1030,18 +1051,22 @@ void global_chat_draw(tenv* env) {
     if (expanded_size.x < chat_min_w) expanded_size.x = chat_min_w;
     if (expanded_size.y < chat_min_h) expanded_size.y = chat_min_h;
 
-    /* Keep it fully on-screen for whatever size ended up in effect. */
+    /* Keep it fully on-screen for whatever size ended up in effect. The
+     * small collapsed card is clamped by its own size so it can be
+     * dragged right up to any edge. */
+    ImVec2 clamp_sz = global_chat_open ? expanded_size : collapsed_size;
+
     if (fixed_pos.x < viewport->WorkPos.x) {
         fixed_pos.x = viewport->WorkPos.x;
     }
-    if (fixed_pos.x > viewport->WorkPos.x + viewport->WorkSize.x - expanded_size.x) {
-        fixed_pos.x = viewport->WorkPos.x + viewport->WorkSize.x - expanded_size.x;
+    if (fixed_pos.x > viewport->WorkPos.x + viewport->WorkSize.x - clamp_sz.x) {
+        fixed_pos.x = viewport->WorkPos.x + viewport->WorkSize.x - clamp_sz.x;
     }
     if (fixed_pos.y < viewport->WorkPos.y) {
         fixed_pos.y = viewport->WorkPos.y;
     }
-    if (fixed_pos.y > viewport->WorkPos.y + viewport->WorkSize.y - expanded_size.y) {
-        fixed_pos.y = viewport->WorkPos.y + viewport->WorkSize.y - expanded_size.y;
+    if (fixed_pos.y > viewport->WorkPos.y + viewport->WorkSize.y - clamp_sz.y) {
+        fixed_pos.y = viewport->WorkPos.y + viewport->WorkSize.y - clamp_sz.y;
     }
 
     /*
@@ -1154,6 +1179,60 @@ void global_chat_draw(tenv* env) {
             );
 
             float head_h = 44.0f;
+
+            /* Drag handle: the whole card. The Open button is submitted
+             * after it, so it still wins taps on its own area. Position
+             * is applied next frame (it is forced from the saved values
+             * above) and saved when the finger / mouse is released. */
+            igSetCursorScreenPos(p);
+            igInvisibleButton("##gc_drag", sz, ImGuiButtonFlags_None);
+
+            static bool gc_dragging = false;
+
+            if (
+                usrs != NULL &&
+                igIsItemActive() &&
+                igIsMouseDragging(ImGuiMouseButton_Left, 4.0f) &&
+                viewport->WorkSize.x > 0.0f &&
+                viewport->WorkSize.y > 0.0f
+            ) {
+                ImGuiIO* gc_io = igGetIO_Nil();
+                float nx = p.x + gc_io->MouseDelta.x;
+                float ny = p.y + gc_io->MouseDelta.y;
+                float max_x = viewport->WorkPos.x + viewport->WorkSize.x - sz.x;
+                float max_y = viewport->WorkPos.y + viewport->WorkSize.y - sz.y;
+
+                if (nx < viewport->WorkPos.x) nx = viewport->WorkPos.x;
+                if (ny < viewport->WorkPos.y) ny = viewport->WorkPos.y;
+                if (nx > max_x) nx = max_x;
+                if (ny > max_y) ny = max_y;
+
+                if (!usrs->public_chat_pos_custom) {
+                    /* First move: seed the expanded size the same way
+                     * the Adjust Position screen does, so opening the
+                     * chat afterwards keeps its default size. */
+                    float dw = fminf(480.0f, viewport->WorkSize.x - 36.0f);
+                    float dh = fminf(420.0f, viewport->WorkSize.y - 36.0f);
+
+                    usrs->public_chat_rel_w = dw / viewport->WorkSize.x;
+                    usrs->public_chat_rel_h = dh / viewport->WorkSize.y;
+                    usrs->public_chat_pos_custom = true;
+                }
+
+                usrs->public_chat_rel_x =
+                    (nx - viewport->WorkPos.x) / viewport->WorkSize.x;
+                usrs->public_chat_rel_y =
+                    (ny - viewport->WorkPos.y) / viewport->WorkSize.y;
+                gc_dragging = true;
+            }
+
+            if (gc_dragging && !igIsItemActive()) {
+                gc_dragging = false;
+
+                if (usrs != NULL) {
+                    save_user_settings(usrs);
+                }
+            }
 
             gc_text_center(
                 dl, p, gc_v2(sz.x, head_h),

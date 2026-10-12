@@ -1,341 +1,731 @@
 #ifdef ANDROID
 
-#include <time.h>
+#include "twindow.h"
+#include "../core/tenv.h"
+
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include "cimgui/cimgui.h"
-#include "imgui_setup.h"
 #include "android_jni.h"
-#include "user.h"
-#include "game/profile_emoji.h"
 
-#include <android/asset_manager.h>
-#include <android/keycodes.h>
-#include <android/input.h>
+#include <android/log.h>
 #include <android_native_app_glue.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdint.h>
+
+#define LOG_TAG "vlither"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+float g_zslider_left    = 0;
+float g_zslider_top     = 0;
+float g_zslider_right   = 0;
+float g_zslider_bottom  = 0;
+float g_zslider_half_h  = 1;
+bool  g_zslider_horizontal = false;
+float g_zoom_sensitivity = 1.0f;
+
+bool  g_overlay_drawn_this_frame = false;
+bool  g_overlay_was_active    = false;
+
+float g_boost_cx = -9999, g_boost_cy = -9999, g_boost_r = 0;
+float g_joy_cx   = -9999, g_joy_cy   = -9999, g_joy_r   = 0;
+bool  g_is_trackpad_mode = true;
+bool  g_panel_open       = false;
+
+typedef struct { float l, t, r, b; } android_ui_rect;
+#define ANDROID_UI_CAPTURE_MAX 64
+static android_ui_rect g_ui_capture_rects[ANDROID_UI_CAPTURE_MAX];
+static int g_ui_capture_count = 0;
+/* Previous frame's rects. Input is also drained mid-frame (twindow_pump_input
+   from input()), i.e. AFTER begin_frame() cleared the current list but BEFORE
+   popups such as the settings window have re-registered their rectangle. A tap
+   landing in that gap used to be treated as a gameplay touch, so UI buttons
+   only reacted when you spammed them. Hit-testing against last frame's rects
+   too closes the gap. */
+static android_ui_rect g_ui_prev_rects[ANDROID_UI_CAPTURE_MAX];
+static int g_ui_prev_count = 0;
+static uint32_t g_ui_owned_pointer_mask = 0;
+
+void android_ui_capture_begin_frame(void) {
+    memcpy(g_ui_prev_rects, g_ui_capture_rects,
+           sizeof(android_ui_rect) * (size_t)g_ui_capture_count);
+    g_ui_prev_count = g_ui_capture_count;
+    g_ui_capture_count = 0;
+}
+
+void android_ui_capture_rect(float left, float top, float right, float bottom) {
+    if (g_ui_capture_count >= ANDROID_UI_CAPTURE_MAX) return;
+    if (right < left) { float v = left; left = right; right = v; }
+    if (bottom < top) { float v = top; top = bottom; bottom = v; }
+    g_ui_capture_rects[g_ui_capture_count++] =
+        (android_ui_rect){left, top, right, bottom};
+}
+
+bool android_ui_capture_contains(float x, float y) {
+    for (int i = g_ui_capture_count - 1; i >= 0; --i) {
+        android_ui_rect r = g_ui_capture_rects[i];
+        if (x >= r.l && x <= r.r && y >= r.t && y <= r.b) return true;
+    }
+    for (int i = g_ui_prev_count - 1; i >= 0; --i) {
+        android_ui_rect r = g_ui_prev_rects[i];
+        if (x >= r.l && x <= r.r && y >= r.t && y <= r.b) return true;
+    }
+    return false;
+}
+
+static void set_ui_pointer_owned(int pid, bool owned) {
+    if (pid < 0 || pid >= 32) return;
+    uint32_t bit = (uint32_t)1u << (uint32_t)pid;
+    if (owned) g_ui_owned_pointer_mask |= bit;
+    else g_ui_owned_pointer_mask &= ~bit;
+}
+
+static bool is_ui_pointer_owned(int pid) {
+    if (pid < 0 || pid >= 32) return false;
+    return (g_ui_owned_pointer_mask & ((uint32_t)1u << (uint32_t)pid)) != 0;
+}
+
 extern struct android_app* g_android_app;
 
-static float g_android_imgui_scale = 1.0f;
-
-static const char* android_imgui_get_clipboard(ImGuiContext* ctx) {
-    (void)ctx;
-    return android_jni_get_clipboard_text();
+static void _android_set_keyboard(bool show) {
+    android_jni_set_text_input_active(show);
 }
 
-static void android_imgui_set_clipboard(ImGuiContext* ctx, const char* text) {
-    (void)ctx;
-    android_jni_set_clipboard_text(text ? text : "");
+static bool g_keyboard_shown = false;
+
+static void _android_set_immersive_fullscreen(void) {
+    ANativeActivity_setWindowFlags(
+        g_android_app->activity,
+        0x00000400 ,
+        0);
+
+    JNIEnv* env = NULL;
+    JavaVM* vm  = g_android_app->activity->vm;
+    if (!vm) return;
+    (*vm)->AttachCurrentThread(vm, &env, NULL);
+    if (!env) return;
+
+    jobject activity = g_android_app->activity->clazz;
+    if (!activity) { (*vm)->DetachCurrentThread(vm); return; }
+    jclass act_class = (*env)->GetObjectClass(env, activity);
+    if (!act_class) { (*env)->ExceptionClear(env); (*vm)->DetachCurrentThread(vm); return; }
+
+    jmethodID getWindow = (*env)->GetMethodID(env, act_class,
+        "getWindow", "()Landroid/view/Window;");
+    if (!getWindow || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env); (*vm)->DetachCurrentThread(vm); return; }
+    jobject window = (*env)->CallObjectMethod(env, activity, getWindow);
+    if (!window || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env); (*vm)->DetachCurrentThread(vm); return; }
+
+    jclass win_class = (*env)->GetObjectClass(env, window);
+    if (!win_class) { (*env)->ExceptionClear(env); (*vm)->DetachCurrentThread(vm); return; }
+    jmethodID getDecorView = (*env)->GetMethodID(env, win_class,
+        "getDecorView", "()Landroid/view/View;");
+    if (!getDecorView || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env); (*vm)->DetachCurrentThread(vm); return; }
+    jobject decor_view = (*env)->CallObjectMethod(env, window, getDecorView);
+    if (!decor_view || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env); (*vm)->DetachCurrentThread(vm); return; }
+
+    jclass view_class = (*env)->GetObjectClass(env, decor_view);
+    if (!view_class) { (*env)->ExceptionClear(env); (*vm)->DetachCurrentThread(vm); return; }
+    jmethodID setUiVis = (*env)->GetMethodID(env, view_class,
+        "setSystemUiVisibility", "(I)V");
+    if (!setUiVis || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env); (*vm)->DetachCurrentThread(vm); return; }
+
+    jint flags = 0x100 | 0x200 | 0x400 | 0x002 | 0x004 | 0x1000;
+    (*env)->CallVoidMethod(env, decor_view, setUiVis, flags);
+    (*env)->ExceptionClear(env);
+
+    (*vm)->DetachCurrentThread(vm);
 }
 
-static double monotonic_seconds(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+static void set_window_size(twindow* wnd, ANativeWindow* win) {
+    int w = ANativeWindow_getWidth(win);
+    int h = ANativeWindow_getHeight(win);
+    LOGI("Raw window dims: %dx%d", w, h);
+
+    wnd->size[0] = (w >= h) ? w : h;
+    wnd->size[1] = (w >= h) ? h : w;
+    LOGI("Using window size: %dx%d", wnd->size[0], wnd->size[1]);
 }
 
+typedef struct {
+    twindow*  window;
+    bool      initialized;
+    bool      surface_ready;
+} android_window_state;
 
-static ImGuiKey android_ime_key_to_imgui(int keycode) {
+static android_window_state g_state = {0};
+
+static void handle_app_cmd(struct android_app* app, int32_t cmd) {
+    twindow* wnd = (twindow*)app->userData;
+    if (!wnd) return;
+
+    switch (cmd) {
+        case APP_CMD_INIT_WINDOW:
+            if (app->window) {
+                /* If a tcontext already exists, this ISN'T the very first
+                 * window (that one is consumed by the poll loop in
+                 * twindow_create(), before tcontext_create() ever runs).
+                 * It means we just resumed from the background and Android
+                 * has handed us a brand-new ANativeWindow -> the Vulkan
+                 * surface tied to the old one is dead and must be rebuilt,
+                 * not just resized. */
+                bool resuming = (wnd->env && wnd->env->ctx != NULL);
+
+                wnd->native_window = app->window;
+                set_window_size(wnd, app->window);
+                g_state.surface_ready = true;
+
+                if (resuming) {
+                    tcontext_recreate_surface(wnd->env->ctx, wnd,
+                                              wnd->env->config.vsync);
+                    if (wnd->_resize_func) wnd->_resize_func(wnd->env);
+                }
+
+                _android_set_immersive_fullscreen();
+            }
+            break;
+
+        case APP_CMD_TERM_WINDOW:
+            g_state.surface_ready = false;
+            wnd->native_window    = NULL;
+            /* Stop the render loop from touching Vulkan against a surface
+             * whose window is already gone; it'll come back true inside
+             * tcontext_recreate_surface() once APP_CMD_INIT_WINDOW fires. */
+            if (wnd->env && wnd->env->ctx)
+                wnd->env->ctx->swapchain_ok = false;
+            break;
+
+        case APP_CMD_WINDOW_RESIZED:
+        case APP_CMD_CONFIG_CHANGED:
+            if (app->window) {
+                int old_w = wnd->size[0];
+                int old_h = wnd->size[1];
+                set_window_size(wnd, app->window);
+                if (wnd->size[0] != old_w || wnd->size[1] != old_h) {
+                    if (wnd->env && wnd->env->ctx) {
+                        tcontext_resize(wnd->env->ctx, wnd->size,
+                                        wnd->env->config.vsync);
+                        wnd->_resize_func(wnd->env);
+                    }
+                }
+            }
+            break;
+
+        case APP_CMD_GAINED_FOCUS:
+            wnd->focused = true;
+
+            _android_set_immersive_fullscreen();
+            break;
+
+        case APP_CMD_LOST_FOCUS:
+            wnd->focused = false;
+            break;
+
+        case APP_CMD_DESTROY:
+            if (wnd->env)
+                wnd->env->config.running = false;
+            break;
+    }
+}
+
+/* Feed UI touches to ImGui as queued mouse events instead of overwriting
+   io.MousePos/MouseDown once per frame. A quick tap (down+up inside one frame)
+   used to be invisible to ImGui; the event queue spreads press and release
+   over consecutive frames so every tap registers. */
+static void imgui_touch_event(float x, float y, int button /* -1 none, 0 up, 1 down */) {
+    if (!igGetCurrentContext()) return;
+    ImGuiIO* io = igGetIO_Nil();
+    if (!io) return;
+    ImGuiIO_AddMousePosEvent(io, x, y);
+    if (button >= 0) ImGuiIO_AddMouseButtonEvent(io, 0, button == 1);
+}
+
+static void begin_ui_touch(twindow* wnd, float x, float y, int pid) {
+    if (wnd->ui_touch.down) return;
+    imgui_touch_event(x, y, 1);
+    wnd->ui_touch.x = x;
+    wnd->ui_touch.y = y;
+    wnd->ui_touch.down = true;
+    wnd->ui_touch.just_down = true;
+    wnd->ui_touch.just_up = false;
+    wnd->ui_touch.move_ptr_id = pid;
+}
+
+static void end_ui_touch(twindow* wnd, int pid) {
+    if (pid != wnd->ui_touch.move_ptr_id) return;
+    imgui_touch_event(wnd->ui_touch.x, wnd->ui_touch.y, 0);
+    /* Keep just_down latched until the render pass. A quick Android tap can
+       deliver ACTION_DOWN and ACTION_UP in one input poll; clearing just_down
+       here made small/top on-screen buttons miss the gesture completely. */
+    wnd->ui_touch.down = false;
+    wnd->ui_touch.just_up = true;
+    wnd->ui_touch.move_ptr_id = -1;
+}
+
+static ImGuiKey android_key_to_imgui(int32_t keycode) {
     switch (keycode) {
-        case AKEYCODE_TAB:         return ImGuiKey_Tab;
-        case AKEYCODE_DPAD_LEFT:   return ImGuiKey_LeftArrow;
-        case AKEYCODE_DPAD_RIGHT:  return ImGuiKey_RightArrow;
-        case AKEYCODE_DPAD_UP:     return ImGuiKey_UpArrow;
-        case AKEYCODE_DPAD_DOWN:   return ImGuiKey_DownArrow;
-        case AKEYCODE_MOVE_HOME:   return ImGuiKey_Home;
-        case AKEYCODE_MOVE_END:    return ImGuiKey_End;
-        case AKEYCODE_FORWARD_DEL: return ImGuiKey_Delete;
-        case AKEYCODE_DEL:         return ImGuiKey_Backspace;
-        case AKEYCODE_ENTER:       return ImGuiKey_Enter;
-        case AKEYCODE_ESCAPE:      return ImGuiKey_Escape;
-        case AKEYCODE_CTRL_LEFT:   return ImGuiKey_LeftCtrl;
-        case AKEYCODE_CTRL_RIGHT:  return ImGuiKey_RightCtrl;
-        case AKEYCODE_SHIFT_LEFT:  return ImGuiKey_LeftShift;
-        case AKEYCODE_SHIFT_RIGHT: return ImGuiKey_RightShift;
-        case AKEYCODE_ALT_LEFT:    return ImGuiKey_LeftAlt;
-        case AKEYCODE_ALT_RIGHT:   return ImGuiKey_RightAlt;
-        case AKEYCODE_A:           return ImGuiKey_A;
-        case AKEYCODE_C:           return ImGuiKey_C;
-        case AKEYCODE_V:           return ImGuiKey_V;
-        case AKEYCODE_X:           return ImGuiKey_X;
-        case AKEYCODE_Y:           return ImGuiKey_Y;
-        case AKEYCODE_Z:           return ImGuiKey_Z;
-        default:                   return ImGuiKey_None;
+        case AKEYCODE_TAB:        return ImGuiKey_Tab;
+        case AKEYCODE_DPAD_LEFT:  return ImGuiKey_LeftArrow;
+        case AKEYCODE_DPAD_RIGHT: return ImGuiKey_RightArrow;
+        case AKEYCODE_DPAD_UP:    return ImGuiKey_UpArrow;
+        case AKEYCODE_DPAD_DOWN:  return ImGuiKey_DownArrow;
+        case AKEYCODE_MOVE_HOME:  return ImGuiKey_Home;
+        case AKEYCODE_MOVE_END:   return ImGuiKey_End;
+        case AKEYCODE_FORWARD_DEL:return ImGuiKey_Delete;
+        case AKEYCODE_DEL:        return ImGuiKey_Backspace;
+        case AKEYCODE_SPACE:      return ImGuiKey_Space;
+        case AKEYCODE_ENTER:      return ImGuiKey_Enter;
+        case AKEYCODE_ESCAPE:     return ImGuiKey_Escape;
+        case AKEYCODE_CTRL_LEFT:  return ImGuiKey_LeftCtrl;
+        case AKEYCODE_CTRL_RIGHT: return ImGuiKey_RightCtrl;
+        case AKEYCODE_SHIFT_LEFT: return ImGuiKey_LeftShift;
+        case AKEYCODE_SHIFT_RIGHT:return ImGuiKey_RightShift;
+        case AKEYCODE_ALT_LEFT:   return ImGuiKey_LeftAlt;
+        case AKEYCODE_ALT_RIGHT:  return ImGuiKey_RightAlt;
+        case AKEYCODE_A:          return ImGuiKey_A;
+        case AKEYCODE_C:          return ImGuiKey_C;
+        case AKEYCODE_V:          return ImGuiKey_V;
+        case AKEYCODE_X:          return ImGuiKey_X;
+        case AKEYCODE_Y:          return ImGuiKey_Y;
+        case AKEYCODE_Z:          return ImGuiKey_Z;
+        default:                  return ImGuiKey_None;
     }
 }
 
-static void android_drain_ime_events(ImGuiIO* io) {
-    android_ime_event event;
-    while (android_jni_poll_ime_event(&event)) {
-        if (event.type == ANDROID_IME_EVENT_TEXT) {
-            if (event.text && event.text[0] != '\0')
-                ImGuiIO_AddInputCharactersUTF8(io, event.text);
-        } else if (event.type == ANDROID_IME_EVENT_COMPOSITION) {
-            for (int i = 0; i < event.replace_codepoints; ++i) {
-                ImGuiIO_AddKeyEvent(io, ImGuiKey_Backspace, true);
-                ImGuiIO_AddKeyEvent(io, ImGuiKey_Backspace, false);
-            }
-            if (event.text && event.text[0] != '\0')
-                ImGuiIO_AddInputCharactersUTF8(io, event.text);
-        } else if (event.type == ANDROID_IME_EVENT_KEY) {
-            const bool down = event.action == AKEY_EVENT_ACTION_DOWN ||
-                              event.action == AKEY_EVENT_ACTION_MULTIPLE;
-            const bool ctrl = (event.meta_state & AMETA_CTRL_ON) != 0 ||
-                ((event.keycode == AKEYCODE_CTRL_LEFT ||
-                  event.keycode == AKEYCODE_CTRL_RIGHT) && down);
-            const bool shift = (event.meta_state & AMETA_SHIFT_ON) != 0 ||
-                ((event.keycode == AKEYCODE_SHIFT_LEFT ||
-                  event.keycode == AKEYCODE_SHIFT_RIGHT) && down);
-            const bool alt = (event.meta_state & AMETA_ALT_ON) != 0 ||
-                ((event.keycode == AKEYCODE_ALT_LEFT ||
-                  event.keycode == AKEYCODE_ALT_RIGHT) && down);
+#ifndef AKEYCODE_CUT
+#define AKEYCODE_CUT 277
+#endif
+#ifndef AKEYCODE_COPY
+#define AKEYCODE_COPY 278
+#endif
+#ifndef AKEYCODE_PASTE
+#define AKEYCODE_PASTE 279
+#endif
 
-            ImGuiIO_AddKeyEvent(io, ImGuiMod_Ctrl, ctrl);
-            ImGuiIO_AddKeyEvent(io, ImGuiMod_Shift, shift);
-            ImGuiIO_AddKeyEvent(io, ImGuiMod_Alt, alt);
+static int32_t handle_input(struct android_app* app, AInputEvent* event) {
+    twindow* wnd = (twindow*)app->userData;
+    if (!wnd) return 0;
 
-            ImGuiKey key = android_ime_key_to_imgui(event.keycode);
-            if (key != ImGuiKey_None)
-                ImGuiIO_AddKeyEvent(io, key, down);
-        }
-        android_jni_release_ime_event(&event);
-    }
-}
+    if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_KEY) {
+        int32_t action  = AKeyEvent_getAction(event);
+        int32_t keycode = AKeyEvent_getKeyCode(event);
+        int32_t meta    = AKeyEvent_getMetaState(event);
+        ImGuiIO* io     = igGetIO_Nil();
+        if (!io) return 1;
 
-void imgui_init(tenv* env) {
-    tuser_data*   usr  = env->usr;
-    user_settings* usrs = &usr->usrs;
+        bool is_down = action == AKEY_EVENT_ACTION_DOWN ||
+                       action == AKEY_EVENT_ACTION_MULTIPLE;
+        bool is_up   = action == AKEY_EVENT_ACTION_UP;
+        bool ctrl    = (meta & AMETA_CTRL_ON) != 0 ||
+                       ((keycode == AKEYCODE_CTRL_LEFT ||
+                         keycode == AKEYCODE_CTRL_RIGHT) && is_down);
+        bool shift   = (meta & AMETA_SHIFT_ON) != 0 ||
+                       ((keycode == AKEYCODE_SHIFT_LEFT ||
+                         keycode == AKEYCODE_SHIFT_RIGHT) && is_down);
+        bool alt     = (meta & AMETA_ALT_ON) != 0 ||
+                       ((keycode == AKEYCODE_ALT_LEFT ||
+                         keycode == AKEYCODE_ALT_RIGHT) && is_down);
 
-    igCreateContext(NULL);
-    igImplVulkan_Init(&(ImGui_ImplVulkan_InitInfo){
-        .ApiVersion       = VK_API_VERSION_1_0,
-        .Instance         = env->ctx->instance,
-        .PhysicalDevice   = env->ctx->ph_device,
-        .Device           = env->ctx->device,
-        .QueueFamily      = env->ctx->queue_family,
-        .Queue            = env->ctx->queue,
-        .DescriptorPool   = env->ctx->descriptor_pool,
-        .MinImageCount    = env->ctx->min_image_count,
-        .ImageCount       = env->ctx->fif,
-        .PipelineInfoMain = {
-            .RenderPass  = env->ctx->renderpass,
-            .Subpass     = 0,
-            .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
-        },
-        .UseDynamicRendering = false,
-    });
+        ImGuiIO_AddKeyEvent(io, ImGuiMod_Ctrl,  ctrl);
+        ImGuiIO_AddKeyEvent(io, ImGuiMod_Shift, shift);
+        ImGuiIO_AddKeyEvent(io, ImGuiMod_Alt,   alt);
 
-    ImGuiIO* io = igGetIO_Nil();
-    io->DisplaySize = (ImVec2){(float)env->ctx->size[0],
-                               (float)env->ctx->size[1]};
-
-    AAssetManager* am = g_android_app->activity->assetManager;
-
-    /* Resolution-aware UI density. Use the shorter edge so ultrawide phones
-       do not receive oversized controls, while low-resolution devices still
-       get a compact layout that fits without clipping. */
-    float short_edge = (float)(env->ctx->size[0] < env->ctx->size[1]
-                                   ? env->ctx->size[0] : env->ctx->size[1]);
-    float ui_scale = short_edge / 720.0f;
-    if (ui_scale < 0.75f) ui_scale = 0.75f;
-    if (ui_scale > 1.30f) ui_scale = 1.30f;
-    g_android_imgui_scale = ui_scale;
-
-    static const ImWchar icon_ranges[] = {0xe900, 0xeaea, 0};
-
-    for (int i = 0; i < NUM_FONT_SIZES; i++) {
-        float size = (20.0f + i * 4.0f) * ui_scale;
-
-        ImFontConfig icons_cfg = {
-            .FontDataOwnedByAtlas = true,
-            .OversampleH          = 0,
-            .OversampleV          = 0,
-            .GlyphMaxAdvanceX     = FLT_MAX,
-            .RasterizerDensity    = 1,
-            .RasterizerMultiply   = 1,
-            .EllipsisChar         = 0,
-            .MergeMode            = true,
-            .GlyphOffset          = (ImVec2){0, (2.0f + i) * ui_scale},
-            .GlyphMinAdvanceX     = (26.0f + i * 6.0f) * ui_scale,
-        };
-
-#define LOAD_FONT(path, sz, cfg, ranges) do { \
-    AAsset* _a = AAssetManager_open(am, path, AASSET_MODE_BUFFER); \
-    if (_a) { \
-        off_t _len = AAsset_getLength(_a); \
-        void* _buf = malloc(_len); \
-        AAsset_read(_a, _buf, _len); \
-        AAsset_close(_a); \
-        ImFontAtlas_AddFontFromMemoryTTF(io->Fonts, _buf, (int)_len, sz, cfg, ranges); \
-    } \
-} while(0)
-
-#define LOAD_FONT_RET(out, path, sz, cfg, ranges) do { \
-    AAsset* _a = AAssetManager_open(am, path, AASSET_MODE_BUFFER); \
-    (out) = NULL; \
-    if (_a) { \
-        off_t _len = AAsset_getLength(_a); \
-        void* _buf = malloc(_len); \
-        AAsset_read(_a, _buf, _len); \
-        AAsset_close(_a); \
-        (out) = ImFontAtlas_AddFontFromMemoryTTF(io->Fonts, _buf, (int)_len, sz, cfg, ranges); \
-    } \
-} while(0)
-
-        LOAD_FONT_RET(usr->imgui_data.mono_font[i],
-            "fonts/mono_regular.ttf", size, NULL, PROFILE_EMOJI_GLYPH_RANGES);
-        LOAD_FONT("fonts/iconfont.ttf", size, &icons_cfg, icon_ranges);
-
-        LOAD_FONT_RET(usr->imgui_data.regular_font[i],
-            "fonts/regular_regular.ttf", size, NULL, PROFILE_EMOJI_GLYPH_RANGES);
-        LOAD_FONT("fonts/iconfont.ttf", size, &icons_cfg, icon_ranges);
-
-        LOAD_FONT_RET(usr->imgui_data.mono_font_bold[i],
-            "fonts/mono_bold.ttf", size, NULL, PROFILE_EMOJI_GLYPH_RANGES);
-        LOAD_FONT("fonts/iconfont.ttf", size, &icons_cfg, icon_ranges);
-
-        LOAD_FONT_RET(usr->imgui_data.regular_font_bold[i],
-            "fonts/regular_bold.ttf", size, NULL, PROFILE_EMOJI_GLYPH_RANGES);
-        LOAD_FONT("fonts/iconfont.ttf", size, &icons_cfg, icon_ranges);
-
-#undef LOAD_FONT
-#undef LOAD_FONT_RET
-    }
-
-    io->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io->IniFilename  = NULL;
-
-    /* Use Android's real system clipboard instead of Dear ImGui's private
-       fallback clipboard. This enables copy/paste in every InputText widget. */
-    ImGuiPlatformIO* platform_io = igGetPlatformIO_Nil();
-    platform_io->Platform_GetClipboardTextFn = android_imgui_get_clipboard;
-    platform_io->Platform_SetClipboardTextFn = android_imgui_set_clipboard;
-
-    ImGuiStyle* style = igGetStyle();
-    style->DockingNodeHasCloseButton        = false;
-    style->WindowMenuButtonPosition         = ImGuiDir_None;
-    style->TabCloseButtonMinWidthUnselected = -1;
-    style->WindowBorderSize = style->FrameBorderSize =
-    style->ChildBorderSize  = style->PopupBorderSize =
-    style->TabBorderSize    = 1;
-    style->FramePadding     = (ImVec2){8.0f * ui_scale, 8.0f * ui_scale};
-    style->ItemSpacing      = (ImVec2){4.0f * ui_scale, 4.0f * ui_scale};
-    style->ItemInnerSpacing = (ImVec2){4.0f * ui_scale, 4.0f * ui_scale};
-    style->WindowPadding    = (ImVec2){4.0f * ui_scale, 4.0f * ui_scale};
-    style->GrabMinSize      = 18.0f * ui_scale;
-    style->FrameRounding = style->TabRounding = style->ChildRounding =
-    style->GrabRounding  = style->PopupRounding =
-    style->ScrollbarRounding = style->WindowRounding =
-    style->TreeLinesRounding = 3.0f * ui_scale;
-    style->ScrollbarSize    = 18.0f * ui_scale;
-    style->DockingSeparatorSize = 1;
-    style->ScrollbarPadding = 1.0f * ui_scale;
-    style->CellPadding.x    = 2.0f * ui_scale;
-
-    igStyleColorsDark(style);
-    style->Colors[ImGuiCol_Text]       = (ImVec4){0.89f, 0.89f, 0.89f, 1.00f};
-    style->Colors[ImGuiCol_WindowBg]   =
-    style->Colors[ImGuiCol_PopupBg]    = (ImVec4){0.20f, 0.20f, 0.20f, 1.00f};
-    style->Colors[ImGuiCol_Border]     = (ImVec4){0.00f, 0.00f, 0.00f, 1.00f};
-    style->Colors[ImGuiCol_FrameBg]    = (ImVec4){0.16f, 0.16f, 0.16f, 1.00f};
-    style->Colors[ImGuiCol_TitleBgActive] = (ImVec4){0.12f, 0.12f, 0.12f, 1.00f};
-    style->Colors[ImGuiCol_Button]     = (ImVec4){0.25f, 0.25f, 0.25f, 1.00f};
-    style->Colors[ImGuiCol_ButtonHovered] = (ImVec4){0.31f, 0.31f, 0.31f, 1.00f};
-    style->Colors[ImGuiCol_Header]     = (ImVec4){0.25f, 0.25f, 0.25f, 1.00f};
-    style->Colors[ImGuiCol_Tab]        = (ImVec4){0.25f, 0.25f, 0.25f, 1.00f};
-    style->Colors[ImGuiCol_TabSelected] = (ImVec4){0.31f, 0.31f, 0.31f, 1.00f};
-    style->Colors[ImGuiCol_ModalWindowDimBg] = (ImVec4){0, 0, 0, 0.7f};
-    style->Colors[ImGuiCol_FrameBgHovered]   = (ImVec4){0.23f, 0.23f, 0.23f, 1.00f};
-    style->Colors[ImGuiCol_FrameBgActive]    = (ImVec4){0.12f, 0.12f, 0.12f, 1.00f};
-    style->Colors[ImGuiCol_SliderGrab]       = (ImVec4){0.31f, 0.31f, 0.31f, 1.00f};
-    style->Colors[ImGuiCol_ButtonActive]     = (ImVec4){0.14f, 0.14f, 0.14f, 1.00f};
-}
-
-bool g_imgui_wants_keyboard = false;
-
-void imgui_prerender(void) {
-    igImplVulkan_NewFrame();
-
-    ImGuiIO* io = igGetIO_Nil();
-    android_drain_ime_events(io);
-
-    static struct timespec _last_time = {0, 0};
-    struct timespec _now;
-    clock_gettime(CLOCK_MONOTONIC, &_now);
-    if (_last_time.tv_sec == 0 && _last_time.tv_nsec == 0) {
-        io->DeltaTime = 1.0f / 60.0f;
-    } else {
-        double dt = (_now.tv_sec  - _last_time.tv_sec)
-                  + (_now.tv_nsec - _last_time.tv_nsec) * 1e-9;
-        io->DeltaTime = (dt > 0.0) ? (float)dt : 1.0f / 60.0f;
-    }
-    _last_time = _now;
-
-    if (g_android_app->userData) {
-        twindow* wnd = (twindow*)g_android_app->userData;
-        io->MousePos     = (ImVec2){wnd->ui_touch.x, wnd->ui_touch.y};
-        io->MouseDown[0] = wnd->ui_touch.down;
-        if (wnd->size[0] > 0 && wnd->size[1] > 0)
-            io->DisplaySize = (ImVec2){(float)wnd->size[0], (float)wnd->size[1]};
-
-        extern bool g_panel_open;
-        static float s_scroll_last_y   = 0.0f;
-        static bool  s_scroll_was_down = false;
-        if (g_panel_open) {
-            bool down_now = io->MouseDown[0];
-            if (down_now && s_scroll_was_down) {
-                float dy = io->MousePos.y - s_scroll_last_y;
-
-                if (dy < -2.0f || dy > 2.0f)
-                    io->MouseWheel += dy / 30.0f;
-            }
-            s_scroll_was_down = down_now;
-            s_scroll_last_y   = down_now ? io->MousePos.y : 0.0f;
-        } else {
-            s_scroll_was_down = false;
+        if (keycode == AKEYCODE_PASTE && is_down) {
+            const char* clipboard = android_jni_get_clipboard_text();
+            if (clipboard && clipboard[0] != '\0')
+                ImGuiIO_AddInputCharactersUTF8(io, clipboard);
+            return 1;
         }
 
-        /* Text, keyboard clipboard suggestions, composition and edit keys
-           arrive through the native Android InputConnection. A stationary
-           long press remains available as a direct paste fallback. */
-        static bool s_paste_tracking = false;
-        static bool s_paste_fired = false;
-        static ImVec2 s_paste_start = {0.0f, 0.0f};
-        static double s_paste_start_time = 0.0;
+        /* Android exposes dedicated copy/cut keys on some hardware keyboards.
+           Translate them to the shortcuts Dear ImGui already understands. */
+        if ((keycode == AKEYCODE_COPY || keycode == AKEYCODE_CUT) && is_down) {
+            ImGuiIO_AddKeyEvent(io, ImGuiMod_Ctrl, true);
+            ImGuiKey command = keycode == AKEYCODE_COPY ? ImGuiKey_C : ImGuiKey_X;
+            ImGuiIO_AddKeyEvent(io, command, true);
+            ImGuiIO_AddKeyEvent(io, command, false);
+            ImGuiIO_AddKeyEvent(io, ImGuiMod_Ctrl, false);
+            return 1;
+        }
 
-        if (!io->MouseDown[0] || !io->WantTextInput) {
-            s_paste_tracking = false;
-            s_paste_fired = false;
-        } else if (!s_paste_tracking) {
-            s_paste_tracking = true;
-            s_paste_fired = false;
-            s_paste_start = io->MousePos;
-            s_paste_start_time = monotonic_seconds();
-        } else {
-            float dx = io->MousePos.x - s_paste_start.x;
-            float dy = io->MousePos.y - s_paste_start.y;
-            float cancel_distance = 18.0f * g_android_imgui_scale;
-            if (dx * dx + dy * dy > cancel_distance * cancel_distance) {
-                s_paste_tracking = false;
-                s_paste_fired = false;
-            } else if (!s_paste_fired &&
-                       monotonic_seconds() - s_paste_start_time >= 0.55) {
-                android_jni_enqueue_clipboard_paste();
-                s_paste_fired = true;
+        ImGuiKey imgui_key = android_key_to_imgui(keycode);
+        if (imgui_key != ImGuiKey_None) {
+            if (action == AKEY_EVENT_ACTION_MULTIPLE) {
+                ImGuiIO_AddKeyEvent(io, imgui_key, true);
+                ImGuiIO_AddKeyEvent(io, imgui_key, false);
+            } else {
+                ImGuiIO_AddKeyEvent(io, imgui_key, is_down && !is_up);
             }
         }
 
-        g_imgui_wants_keyboard = io->WantTextInput;
+        if (is_down && !ctrl && keycode != AKEYCODE_DEL) {
+            JNIEnv* jenv = NULL;
+            JavaVM* vm = g_android_app->activity->vm;
+            bool did_attach = false;
+            int status = (*vm)->GetEnv(vm, (void**)&jenv, JNI_VERSION_1_6);
+            if (status == JNI_EDETACHED) {
+                if ((*vm)->AttachCurrentThread(vm, &jenv, NULL) == JNI_OK)
+                    did_attach = true;
+            }
+
+            if (jenv) {
+                jclass kc = (*jenv)->FindClass(jenv, "android/view/KeyEvent");
+                if (kc) {
+                    jmethodID ctor = (*jenv)->GetMethodID(jenv, kc, "<init>", "(II)V");
+                    jmethodID get_unicode = (*jenv)->GetMethodID(
+                        jenv, kc, "getUnicodeChar", "(I)I");
+                    if (ctor && get_unicode) {
+                        jobject ke = (*jenv)->NewObject(jenv, kc, ctor, action, keycode);
+                        if (ke) {
+                            int unicode = (*jenv)->CallIntMethod(
+                                jenv, ke, get_unicode, meta);
+                            if (unicode > 0)
+                                ImGuiIO_AddInputCharacter(io, (unsigned int)unicode);
+                            (*jenv)->DeleteLocalRef(jenv, ke);
+                        }
+                    }
+                    (*jenv)->DeleteLocalRef(jenv, kc);
+                }
+                if ((*jenv)->ExceptionCheck(jenv)) (*jenv)->ExceptionClear(jenv);
+            }
+            if (did_attach) (*vm)->DetachCurrentThread(vm);
+        }
+        return 1;
     }
 
-    igNewFrame();
+    if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+        int32_t action        = AMotionEvent_getAction(event);
+        int32_t action_masked = action & AMOTION_EVENT_ACTION_MASK;
+
+        int32_t ptr_idx = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                          AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+
+        switch (action_masked) {
+
+            case AMOTION_EVENT_ACTION_DOWN: {
+                float x   = AMotionEvent_getX(event, 0);
+                float y   = AMotionEvent_getY(event, 0);
+                int   pid = (int)AMotionEvent_getPointerId(event, 0);
+
+                if (g_panel_open || android_ui_capture_contains(x, y)) {
+                    set_ui_pointer_owned(pid, true);
+                    begin_ui_touch(wnd, x, y, pid);
+                    break;
+                }
+
+                bool in_zslider = !g_panel_open && g_overlay_was_active &&
+                                  (g_zslider_right > g_zslider_left) &&
+                                  x >= g_zslider_left && x <= g_zslider_right &&
+                                  y >= g_zslider_top  && y <= g_zslider_bottom;
+
+                float dbx = x - g_boost_cx, dby = y - g_boost_cy;
+                bool in_boost_circle = g_boost_r > 0 &&
+                    (dbx*dbx + dby*dby) <= (g_boost_r * g_boost_r);
+
+                float djx = x - g_joy_cx, djy = y - g_joy_cy;
+                bool in_joy_ring = g_joy_r > 0 &&
+                                   (djx*djx + djy*djy) <= (g_joy_r * g_joy_r);
+                bool can_move = !g_panel_open &&
+                                (g_is_trackpad_mode || in_joy_ring);
+
+                if (in_zslider && wnd->touch.zslider_ptr_id == -1) {
+                    wnd->touch.zslider_ptr_id = pid;
+                    wnd->touch.zslider_y      = g_zslider_horizontal ? x : y;
+                    wnd->touch.zslider_offset = 0.0f;
+                } else if (in_boost_circle && !wnd->touch.boost_down) {
+                    wnd->touch.boost_x         = x;
+                    wnd->touch.boost_y         = y;
+                    wnd->touch.boost_down      = true;
+                    wnd->touch.boost_just_down = true;
+                    wnd->touch.boost_ptr_id    = pid;
+                } else if (can_move && !wnd->touch.down) {
+                    wnd->touch.x           = x;
+                    wnd->touch.y           = y;
+                    wnd->touch.down        = true;
+                    wnd->touch.just_down   = true;
+                    wnd->touch.move_ptr_id = pid;
+                }
+                break;
+            }
+
+            case AMOTION_EVENT_ACTION_POINTER_DOWN: {
+
+                int32_t cnt2 = (int32_t)AMotionEvent_getPointerCount(event);
+                if (ptr_idx < 0 || ptr_idx >= cnt2) break;
+                int pid = (int)AMotionEvent_getPointerId(event, ptr_idx);
+                float x = AMotionEvent_getX(event, ptr_idx);
+                float y = AMotionEvent_getY(event, ptr_idx);
+
+                if (g_panel_open || android_ui_capture_contains(x, y)) {
+                    set_ui_pointer_owned(pid, true);
+                    begin_ui_touch(wnd, x, y, pid);
+                    break;
+                }
+
+                bool in_zslider2 = !g_panel_open && g_overlay_was_active &&
+                                   (g_zslider_right > g_zslider_left) &&
+                                   x >= g_zslider_left && x <= g_zslider_right &&
+                                   y >= g_zslider_top  && y <= g_zslider_bottom;
+                if (in_zslider2 && wnd->touch.zslider_ptr_id == -1) {
+                    wnd->touch.zslider_ptr_id = pid;
+                    wnd->touch.zslider_y      = g_zslider_horizontal ? x : y;
+                    wnd->touch.zslider_offset = 0.0f;
+                } else {
+                    float dbx2 = x - g_boost_cx, dby2 = y - g_boost_cy;
+                    bool boost_hit = g_boost_r > 0 &&
+                                     (dbx2*dbx2 + dby2*dby2) <=
+                                         (g_boost_r * g_boost_r);
+                    if (boost_hit && !wnd->touch.boost_down) {
+                        wnd->touch.boost_x         = x;
+                        wnd->touch.boost_y         = y;
+                        wnd->touch.boost_down      = true;
+                        wnd->touch.boost_just_down = true;
+                        wnd->touch.boost_ptr_id    = pid;
+                    } else if (!wnd->touch.down) {
+                        float djx2 = x - g_joy_cx, djy2 = y - g_joy_cy;
+                        bool joy_ok = g_is_trackpad_mode ||
+                                      (g_joy_r > 0 && (djx2*djx2+djy2*djy2) <= g_joy_r*g_joy_r);
+                        if (joy_ok) {
+                            wnd->touch.x           = x;
+                            wnd->touch.y           = y;
+                            wnd->touch.down        = true;
+                            wnd->touch.just_down   = true;
+                            wnd->touch.move_ptr_id = pid;
+                        }
+                    }
+                }
+                break;
+            }
+
+            case AMOTION_EVENT_ACTION_MOVE: {
+                int32_t count = (int32_t)AMotionEvent_getPointerCount(event);
+
+                for (int32_t i = 0; i < count; i++) {
+                    int   pid = (int)AMotionEvent_getPointerId(event, i);
+                    float x   = AMotionEvent_getX(event, i);
+                    float y   = AMotionEvent_getY(event, i);
+                    if (pid == wnd->ui_touch.move_ptr_id) {
+                        wnd->ui_touch.x = x;
+                        wnd->ui_touch.y = y;
+                        imgui_touch_event(x, y, -1);
+                    }
+                    if (is_ui_pointer_owned(pid)) continue;
+                    if (wnd->touch.down && pid == wnd->touch.move_ptr_id) {
+                        wnd->touch.x = x;
+                        wnd->touch.y = y;
+                    } else if (wnd->touch.boost_down && pid == wnd->touch.boost_ptr_id) {
+                        wnd->touch.boost_x = x;
+                        wnd->touch.boost_y = y;
+                    } else if (wnd->touch.zslider_ptr_id != -1 &&
+                               pid == wnd->touch.zslider_ptr_id) {
+                        float pos = g_zslider_horizontal ? x : y;
+                        float delta = pos - wnd->touch.zslider_y;
+                        wnd->touch.zslider_y       = pos;
+                        wnd->touch.zslider_offset += delta;
+                        if (wnd->touch.zslider_offset >  g_zslider_half_h)
+                            wnd->touch.zslider_offset =  g_zslider_half_h;
+                        if (wnd->touch.zslider_offset < -g_zslider_half_h)
+                            wnd->touch.zslider_offset = -g_zslider_half_h;
+                    }
+                }
+                break;
+            }
+
+            case AMOTION_EVENT_ACTION_UP: {
+
+                int lifted_pid = (int)AMotionEvent_getPointerId(event, ptr_idx);
+                end_ui_touch(wnd, lifted_pid);
+                set_ui_pointer_owned(lifted_pid, false);
+                wnd->touch.down              = false;
+                wnd->touch.just_down         = false;
+                wnd->touch.boost_down        = false;
+                wnd->touch.boost_just_down   = false;
+                wnd->touch.move_ptr_id       = -1;
+                wnd->touch.boost_ptr_id      = -1;
+                wnd->touch.zslider_ptr_id    = -1;
+                wnd->touch.zslider_offset    = 0.0f;
+                break;
+            }
+
+            case AMOTION_EVENT_ACTION_POINTER_UP: {
+
+                int lifted_pid = (int)AMotionEvent_getPointerId(event, ptr_idx);
+                end_ui_touch(wnd, lifted_pid);
+                set_ui_pointer_owned(lifted_pid, false);
+
+                if (lifted_pid == wnd->touch.move_ptr_id) {
+                    wnd->touch.down        = false;
+                    wnd->touch.just_down   = false;
+                    wnd->touch.move_ptr_id = -1;
+                }
+                if (lifted_pid == wnd->touch.boost_ptr_id) {
+                    wnd->touch.boost_down      = false;
+                    wnd->touch.boost_just_down = false;
+                    wnd->touch.boost_ptr_id    = -1;
+                }
+                if (lifted_pid == wnd->touch.zslider_ptr_id) {
+                    wnd->touch.zslider_ptr_id = -1;
+                    wnd->touch.zslider_offset = 0.0f;
+                }
+
+                break;
+            }
+
+            case AMOTION_EVENT_ACTION_CANCEL:
+                g_ui_owned_pointer_mask      = 0;
+                if (wnd->ui_touch.down) imgui_touch_event(wnd->ui_touch.x, wnd->ui_touch.y, 0);
+                wnd->ui_touch.just_up        = wnd->ui_touch.down ||
+                                                  wnd->ui_touch.just_down;
+                wnd->ui_touch.down           = false;
+                wnd->ui_touch.move_ptr_id    = -1;
+                wnd->touch.down              = false;
+                wnd->touch.just_down         = false;
+                wnd->touch.boost_down        = false;
+                wnd->touch.boost_just_down   = false;
+                wnd->touch.move_ptr_id       = -1;
+                wnd->touch.boost_ptr_id      = -1;
+                wnd->touch.zslider_ptr_id    = -1;
+                wnd->touch.zslider_offset    = 0.0f;
+                break;
+        }
+        return 1;
+    }
+    return 0;
 }
 
-void imgui_render(VkCommandBuffer cmd) {
-    igImplVulkan_RenderDrawData(igGetDrawData(), cmd, NULL);
+twindow* twindow_create(tenv* env, trender_func render_func, tresize_func resize_func) {
+    twindow* wnd = calloc(1, sizeof(twindow));
+    if (!wnd) return NULL;
+
+    wnd->_render_func = render_func;
+    wnd->_resize_func = resize_func;
+    wnd->env          = env;
+    wnd->focused      = true;
+
+    /* calloc() zero-fills the struct, but 0 is also a perfectly normal,
+       commonly-assigned Android pointer id (usually the very first finger
+       of a gesture). If these are left at 0 instead of a real "unset"
+       sentinel, the first-ever touch gesture can be misread as already
+       matching move/boost/zslider before any real assignment happens.
+       Force them to -1 so they can never collide with a live pointer id. */
+    wnd->touch.move_ptr_id    = -1;
+    wnd->touch.boost_ptr_id   = -1;
+    wnd->touch.zslider_ptr_id = -1;
+    wnd->ui_touch.move_ptr_id    = -1;
+    wnd->ui_touch.boost_ptr_id   = -1;
+    wnd->ui_touch.zslider_ptr_id = -1;
+
+    g_android_app->userData     = wnd;
+    g_android_app->onAppCmd     = handle_app_cmd;
+    g_android_app->onInputEvent = handle_input;
+
+    while (!g_state.surface_ready) {
+        int events;
+        struct android_poll_source* source;
+        ALooper_pollAll(0, NULL, &events, (void**)&source);
+        if (source) source->process(g_android_app, source);
+        if (g_android_app->destroyRequested) return wnd;
+    }
+
+    wnd->native_window = g_android_app->window;
+    set_window_size(wnd, g_android_app->window);
+
+    return wnd;
 }
 
-void imgui_destroy(void) {
-    igImplVulkan_Shutdown();
-    igDestroyContext(NULL);
+void twindow_poll_input(twindow* window) {
+    window->touch.just_down       = false;
+    window->touch.boost_just_down = false;
+    window->ui_touch.just_down    = false;
+    window->ui_touch.just_up      = false;
+
+    int events;
+    struct android_poll_source* source;
+    while (ALooper_pollAll(0, NULL, &events, (void**)&source) >= 0) {
+        if (source) source->process(g_android_app, source);
+        if (g_android_app->destroyRequested) {
+            if (window->env) window->env->config.running = false;
+            return;
+        }
+    }
+
+    extern bool g_imgui_wants_keyboard;
+    if (g_imgui_wants_keyboard != g_keyboard_shown) {
+        g_keyboard_shown = g_imgui_wants_keyboard;
+        _android_set_keyboard(g_imgui_wants_keyboard);
+    }
+}
+
+/*
+ * Drain pending TOUCH events only, mid-frame, without touching the per-frame
+ * just_down/just_up latches (twindow_poll_input clears those, and the game
+ * hasn't read them yet at this point in the frame).
+ *
+ * Lifecycle commands (window destroyed, surface resized, ...) are deliberately
+ * NOT processed here: we are between vkAcquireNextImageKHR and vkQueuePresentKHR
+ * and tearing the swapchain down under a frame in flight would be fatal. They
+ * are level-triggered on the looper fd, so they simply stay queued until the
+ * regular twindow_poll_input() at the top of the next frame.
+ */
+void twindow_pump_input(twindow* window) {
+    (void)window;
+    int events;
+    struct android_poll_source* source;
+    int ident;
+    while ((ident = ALooper_pollAll(0, NULL, &events, (void**)&source)) >= 0) {
+        if (ident != LOOPER_ID_INPUT) break;
+        if (source) source->process(g_android_app, source);
+    }
+}
+
+void twindow_wait_input(twindow* window) {
+    window->touch.just_down       = false;
+    window->touch.boost_just_down = false;
+    window->ui_touch.just_down    = false;
+    window->ui_touch.just_up      = false;
+
+    int events;
+    struct android_poll_source* source;
+    if (ALooper_pollAll(-1, NULL, &events, (void**)&source) >= 0) {
+        if (source) source->process(g_android_app, source);
+        if (g_android_app->destroyRequested) {
+            if (window->env) window->env->config.running = false;
+        }
+    }
+}
+
+void twindow_toggle_fullscreen(twindow* window) {
+    (void)window;
+}
+
+bool twindow_key_down(twindow* window, int key) {
+    (void)window; (void)key;
+    return false;
+}
+
+bool twindow_button_down(twindow* window, int button) {
+    (void)button;
+    return window ? window->touch.down : false;
+}
+
+bool twindow_closed(twindow* window) {
+    (void)window;
+    return g_android_app->destroyRequested != 0;
+}
+
+void twindow_request_refresh(twindow* window) {
+    if (window) window->_refresh = true;
+}
+
+void twindow_destroy(twindow* window) {
+    free(window);
 }
 
 #endif

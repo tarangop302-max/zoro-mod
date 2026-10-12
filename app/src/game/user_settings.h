@@ -25,6 +25,11 @@
 #define NUM_RENDER_MODES 7
 #define MAX_SAVED_SKIN_NAME 23
 
+/* Head dot diameter range (screen px), see user_settings.head_dot_size. */
+#define HEAD_DOT_SIZE_MIN 2.0f
+#define HEAD_DOT_SIZE_MAX 30.0f
+#define HEAD_DOT_SIZE_DEFAULT 8.0f
+
 typedef struct hotkey {
   int key;
   bool active;
@@ -351,6 +356,26 @@ typedef struct user_settings {
      through usr_hotkey(usrs, HOTKEY_EYES_BACK). */
   uint8_t eyes_back_reserved[8];
   hotkey  hotkey_eyes_back;
+
+  /* v2.19 extension: per-mode head dot ([0]=Normal, [1]=Assist), drawn on
+     top of the local player's snake head (redraw.c). Edited in the in-game
+     Settings window, under each mode's section.
+
+     head_dot_enabled: draw the dot at all (off by default).
+     head_dot_size:    dot diameter in screen pixels (fixed on-screen size,
+                       it does not scale with game zoom).
+     head_dot_colors:  per-mode dot tint. The older single head_dot_color
+                       field above is kept only for file-layout
+                       compatibility; it seeds these colors when a file
+                       saved before v2.19 is loaded.
+
+     Appended after hotkey_eyes_back so every earlier file stays a compatible
+     prefix (see v219_prefix in read_user_settings). The reserved block keeps
+     sizeof(user_settings) strictly larger than the previous release. */
+  uint8_t head_dot_reserved[8];
+  bool    head_dot_enabled[2];
+  float   head_dot_size[2];
+  vec3    head_dot_colors[2];
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {

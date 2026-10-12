@@ -220,6 +220,16 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->head_dot_color[1] = 1.0f;
   usr_settings->head_dot_color[2] = 1.0f;
 
+  memset(usr_settings->head_dot_reserved, 0,
+         sizeof(usr_settings->head_dot_reserved));
+  for (int m = 0; m < 2; ++m) {
+    usr_settings->head_dot_enabled[m] = false;
+    usr_settings->head_dot_size[m] = HEAD_DOT_SIZE_DEFAULT;
+    usr_settings->head_dot_colors[m][0] = 1.0f;
+    usr_settings->head_dot_colors[m][1] = 1.0f;
+    usr_settings->head_dot_colors[m][2] = 1.0f;
+  }
+
   usr_settings->profile_emoji_id = 0;
 
   usr_settings->show_net_graph = true;
@@ -311,9 +321,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v216_prefix = offsetof(user_settings, food_glow_reserved);
   size_t v217_prefix = offsetof(user_settings, food_glow_reserved2);
   size_t v218_prefix = offsetof(user_settings, eyes_back_reserved);
+  size_t v219_prefix = offsetof(user_settings, head_dot_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v219_prefix)
+    /* A file saved before the per-mode head dot existed ends at v219_prefix
+       (it already contains the Eyes back hotkey), possibly followed only by
+       compiler tail padding. Keep every saved value; the head dot keeps its
+       defaults (off, default size) and inherits the saved head dot colour. */
+    bytes_to_read = v219_prefix;
   else if ((size_t)file_size >= v218_prefix)
     /* A file saved before the Eyes back hotkey existed ends at v218_prefix
        (it already contains the Open settings hotkey), possibly followed only
@@ -383,6 +400,7 @@ void read_user_settings(user_settings* usr_settings) {
                         : v23_prefix;
   size_t bytes_read = fread(&loaded, 1, bytes_to_read, f);
   fclose(f);
+  const bool has_head_dot_fields = bytes_to_read >= sizeof loaded;
 
   if (bytes_read < sizeof loaded.version ||
       strncmp(loaded.version, SETTINGS_VERSION, strlen(SETTINGS_VERSION)) != 0) {
@@ -524,6 +542,26 @@ void read_user_settings(user_settings* usr_settings) {
     if (!isfinite(loaded.head_dot_color[c]) || loaded.head_dot_color[c] < 0.0f ||
         loaded.head_dot_color[c] > 1.0f)
       loaded.head_dot_color[c] = 1.0f;
+  }
+  /* Files from before v2.19 only had one shared head dot colour; carry it
+     over to both modes so an existing colour choice is not lost. */
+  if (!has_head_dot_fields) {
+    for (int m = 0; m < 2; ++m)
+      for (int c = 0; c < 3; ++c)
+        loaded.head_dot_colors[m][c] = loaded.head_dot_color[c];
+  }
+  for (int m = 0; m < 2; ++m) {
+    loaded.head_dot_enabled[m] = loaded.head_dot_enabled[m] ? true : false;
+    if (!isfinite(loaded.head_dot_size[m]) ||
+        loaded.head_dot_size[m] < HEAD_DOT_SIZE_MIN ||
+        loaded.head_dot_size[m] > HEAD_DOT_SIZE_MAX)
+      loaded.head_dot_size[m] = HEAD_DOT_SIZE_DEFAULT;
+    for (int c = 0; c < 3; ++c) {
+      if (!isfinite(loaded.head_dot_colors[m][c]) ||
+          loaded.head_dot_colors[m][c] < 0.0f ||
+          loaded.head_dot_colors[m][c] > 1.0f)
+        loaded.head_dot_colors[m][c] = 1.0f;
+    }
   }
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     if (loaded.key_btn_shape[i] > 1) loaded.key_btn_shape[i] = 0;

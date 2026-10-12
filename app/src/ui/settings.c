@@ -24,6 +24,14 @@ static void popup_touch_scroll(tenv* env, int idx) {
   static int vel_owner = -1;
   touch_state* t = &env->wnd->ui_touch;
 
+  /* ImGui marks a press on EMPTY space inside a window as "active" too (it is
+     the window's internal move id, even for NoMove windows). That is not a
+     widget, so it must not count as one. Only a real item (slider, button,
+     combo, scrollbar...) being active should stop the drag-scroll. */
+  const ImGuiID move_id = igGetID_Str("#MOVE");
+  const ImGuiID active = igGetActiveID();
+  const bool item_active = (active != 0 && active != move_id);
+
   if (!t->down) {
     blocked = false;
     if (owner == idx) {
@@ -44,7 +52,7 @@ static void popup_touch_scroll(tenv* env, int idx) {
   }
 
   if (owner == -1 && !blocked) {
-    if (igIsWindowHovered(ImGuiHoveredFlags_None) && !igIsAnyItemActive()) {
+    if (igIsWindowHovered(ImGuiHoveredFlags_None) && !item_active) {
       owner = idx;
       dragging = false;
       last_y = start_y = t->y;
@@ -55,8 +63,8 @@ static void popup_touch_scroll(tenv* env, int idx) {
   }
   if (owner != idx) return;
 
-  if (!dragging && igIsAnyItemActive()) {
-    /* A slider/button/combo grabbed this touch. */
+  if (item_active) {
+    /* A slider/button/combo/scrollbar grabbed this touch. */
     owner = -1;
     blocked = true;
     return;

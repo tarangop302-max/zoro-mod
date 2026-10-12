@@ -38,9 +38,22 @@ typedef struct { float l, t, r, b; } android_ui_rect;
 #define ANDROID_UI_CAPTURE_MAX 64
 static android_ui_rect g_ui_capture_rects[ANDROID_UI_CAPTURE_MAX];
 static int g_ui_capture_count = 0;
+/* Previous frame's rects. Input is also drained mid-frame (twindow_pump_input
+   from input()), i.e. AFTER begin_frame() cleared the current list but BEFORE
+   popups such as the settings window have re-registered their rectangle. A tap
+   landing in that gap used to be treated as a gameplay touch, so UI buttons
+   only reacted when you spammed them. Hit-testing against last frame's rects
+   too closes the gap. */
+static android_ui_rect g_ui_prev_rects[ANDROID_UI_CAPTURE_MAX];
+static int g_ui_prev_count = 0;
 static uint32_t g_ui_owned_pointer_mask = 0;
 
-void android_ui_capture_begin_frame(void) { g_ui_capture_count = 0; }
+void android_ui_capture_begin_frame(void) {
+    memcpy(g_ui_prev_rects, g_ui_capture_rects,
+           sizeof(android_ui_rect) * (size_t)g_ui_capture_count);
+    g_ui_prev_count = g_ui_capture_count;
+    g_ui_capture_count = 0;
+}
 
 void android_ui_capture_rect(float left, float top, float right, float bottom) {
     if (g_ui_capture_count >= ANDROID_UI_CAPTURE_MAX) return;
@@ -53,6 +66,10 @@ void android_ui_capture_rect(float left, float top, float right, float bottom) {
 bool android_ui_capture_contains(float x, float y) {
     for (int i = g_ui_capture_count - 1; i >= 0; --i) {
         android_ui_rect r = g_ui_capture_rects[i];
+        if (x >= r.l && x <= r.r && y >= r.t && y <= r.b) return true;
+    }
+    for (int i = g_ui_prev_count - 1; i >= 0; --i) {
+        android_ui_rect r = g_ui_prev_rects[i];
         if (x >= r.l && x <= r.r && y >= r.t && y <= r.b) return true;
     }
     return false;
@@ -218,8 +235,21 @@ static void handle_app_cmd(struct android_app* app, int32_t cmd) {
     }
 }
 
+/* Feed UI touches to ImGui as queued mouse events instead of overwriting
+   io.MousePos/MouseDown once per frame. A quick tap (down+up inside one frame)
+   used to be invisible to ImGui; the event queue spreads press and release
+   over consecutive frames so every tap registers. */
+static void imgui_touch_event(float x, float y, int button /* -1 none, 0 up, 1 down */) {
+    if (!igGetCurrentContext()) return;
+    ImGuiIO* io = igGetIO_Nil();
+    if (!io) return;
+    ImGuiIO_AddMousePosEvent(io, x, y);
+    if (button >= 0) ImGuiIO_AddMouseButtonEvent(io, 0, button == 1);
+}
+
 static void begin_ui_touch(twindow* wnd, float x, float y, int pid) {
     if (wnd->ui_touch.down) return;
+    imgui_touch_event(x, y, 1);
     wnd->ui_touch.x = x;
     wnd->ui_touch.y = y;
     wnd->ui_touch.down = true;
@@ -230,6 +260,7 @@ static void begin_ui_touch(twindow* wnd, float x, float y, int pid) {
 
 static void end_ui_touch(twindow* wnd, int pid) {
     if (pid != wnd->ui_touch.move_ptr_id) return;
+    imgui_touch_event(wnd->ui_touch.x, wnd->ui_touch.y, 0);
     /* Keep just_down latched until the render pass. A quick Android tap can
        deliver ACTION_DOWN and ACTION_UP in one input poll; clearing just_down
        here made small/top on-screen buttons miss the gesture completely. */
@@ -483,6 +514,7 @@ static int32_t handle_input(struct android_app* app, AInputEvent* event) {
                     if (pid == wnd->ui_touch.move_ptr_id) {
                         wnd->ui_touch.x = x;
                         wnd->ui_touch.y = y;
+                        imgui_touch_event(x, y, -1);
                     }
                     if (is_ui_pointer_owned(pid)) continue;
                     if (wnd->touch.down && pid == wnd->touch.move_ptr_id) {
@@ -548,6 +580,7 @@ static int32_t handle_input(struct android_app* app, AInputEvent* event) {
 
             case AMOTION_EVENT_ACTION_CANCEL:
                 g_ui_owned_pointer_mask      = 0;
+                if (wnd->ui_touch.down) imgui_touch_event(wnd->ui_touch.x, wnd->ui_touch.y, 0);
                 wnd->ui_touch.just_up        = wnd->ui_touch.down ||
                                                   wnd->ui_touch.just_down;
                 wnd->ui_touch.down           = false;

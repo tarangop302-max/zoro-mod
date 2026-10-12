@@ -272,8 +272,6 @@ void ui_controls(tenv* env) {
           igText("Grows on boost");
           igAlignTextToFramePadding();
           igText("Sync with zoom");
-          igAlignTextToFramePadding();
-          igText("Head dot colour");
 
           igTableSetColumnIndex(1);
           igSetNextItemWidth(-1);
@@ -293,9 +291,6 @@ void ui_controls(tenv* env) {
           igCheckbox("##arrow invisible", &usrs->arrow_invisible);
           igCheckbox("##arrow grows boost", &usrs->boost_arrow_anim);
           igCheckbox("##arrow sync zoom", &usrs->arrow_sync_with_zoom);
-          igSetNextItemWidth(-1);
-          igColorEdit3("##head dot colour", usrs->head_dot_color,
-                       ImGuiColorEditFlags_None);
           igIndent(-style->WindowPadding.x);
           igEndTable();
         }
@@ -347,20 +342,17 @@ void ui_controls(tenv* env) {
             igEndTable();
           }
           if (usrs->arrow_sync_with_zoom)
-            igTextDisabled("Arrow size follows game zoom. Head dot size always stays fixed.");
+            igTextDisabled("Arrow size follows game zoom.");
           else
-            igTextDisabled("Arrow and head dot keep a fixed on-screen size while zooming.");
+            igTextDisabled("Arrow keeps a fixed on-screen size while zooming.");
         }
-        if (igButton("Reset arrow and head dot", (ImVec2){-1, 0.0f})) {
+        if (igButton("Reset arrow", (ImVec2){-1, 0.0f})) {
           usrs->arrow_size        = 1.0f;
           usrs->arrow_sensitivity = 1.0f;
           usrs->boost_arrow_anim  = false;
           usrs->arrow_style       = 0;
           usrs->arrow_invisible   = false;
           usrs->arrow_sync_with_zoom = true;
-          usrs->head_dot_color[0] = 1.0f;
-          usrs->head_dot_color[1] = 1.0f;
-          usrs->head_dot_color[2] = 1.0f;
         }
         igSpacing();
         igSpacing();

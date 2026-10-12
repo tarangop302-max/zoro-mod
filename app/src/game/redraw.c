@@ -1825,6 +1825,21 @@ void redraw(tenv* env) {
                 gdata->cg_uvs[BLANK_UV],
                 {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, ea}});
 
+        /* Head dot: local player's snake only, per mode (Settings > Normal /
+         * Assist mode). Fixed on-screen diameter in px, drawn over the eyes. */
+        if (usrs->head_dot_enabled[mode_index] &&
+            o->id == gdata->data.snake_id) {
+          float hdr = usrs->head_dot_size[mode_index] * 0.5f;
+          float hdx = mww2 + (hx - gdata->data.view_xx) * gdata->data.gsc;
+          float hdy = mhh2 + (hy - gdata->data.view_yy) * gdata->data.gsc;
+          const float* hdc = usrs->head_dot_colors[mode_index];
+          bp_renderer_push(
+              usr->r->bpr,
+              &(bp_instance){{hdx - hdr, hdy - hdr, hdr * 2, 0},
+                             gdata->cg_uvs[BLANK_UV],
+                             {hdc[0], hdc[1], hdc[2], ea}});
+        }
+
         if (mode->show_accessories && o->accessory < NUM_ACCESSORIES) {
           accessory_data* acc = gdata->accessories + o->accessory;
           ex = acc->of * cosf(fang) * ed;

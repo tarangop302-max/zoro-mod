@@ -4,6 +4,7 @@
 #endif    
 #include "input.h"    
 #include "eyes_back.h"    
+#include "squeeze.h"    
     
 #include "../user.h"    
     
@@ -329,6 +330,11 @@ void input(tenv* env) {
       xm = gdata->bot.output.xm;
       ym = gdata->bot.output.ym;
     }
+    /* Squeeze: keep the head's centre line out of every enemy body (see    
+       squeeze.c). Runs on the final steering vector, so it also covers the    
+       bot-less mouse, touch joystick and trackpad modes. */    
+    if (usrs->hotkey_squeeze.active && !me->dead)    
+      squeeze_filter(gdata, me, &xm, &ym);    
 #ifdef ANDROID    
     
     gdata->data.wmd = (!gdata->settings_popup && env->wnd->touch.boost_down) || gdata->bot.output.accel;    
@@ -419,8 +425,8 @@ void input(tenv* env) {
   for (int i = 0; i < NUM_HOTKEYS; i++) {    
     if (i == HOTKEY_OPEN_SETTINGS) continue; /* see input_settings_hotkey() */    
     hotkey* hk = usr_hotkey(usrs, i);    
-    if (i == HOTKEY_EYES_BACK) {    
-      /* Typing in the team chat must not toggle Eyes back. */    
+    if (i == HOTKEY_EYES_BACK || i == HOTKEY_SQUEEZE) {    
+      /* Typing in the team chat must not toggle Eyes back / Squeeze. */    
       ImGuiIO* eb_io = igGetIO_Nil();    
       if (eb_io && eb_io->WantTextInput) {    
         if (hk->mode) hk->active = false;    

@@ -1049,13 +1049,8 @@ void ntl_draw_marker_pulse(ImDrawList *dl, ImVec2 p, float radius, int shape,
   if (shape >= NTL_SHAPE_EMOJI_BASE) {
     int idx = shape - NTL_SHAPE_EMOJI_BASE;
     if (idx < NTL_EMOJI_COUNT && g_emoji_tex) {
-      /* Emoji can't be tinted, so the player's colour becomes the disc
-         behind it -- that is how teammates tell two identical emoji apart. */
-      float h = radius * 1.45f;
-      float disc = h * 1.06f;
-      float e = h * 0.92f;
-      ImDrawList_AddCircleFilled(dl, p, disc + 1.4f, border, 20);
-      ImDrawList_AddCircleFilled(dl, p, disc, fill, 20);
+      /* Emoji are drawn on their own -- no disc or border behind them. */
+      float e = radius * 1.6f;
       ntl_draw_emoji_image(dl, (ImVec2){p.x - e, p.y - e},
                            (ImVec2){p.x + e, p.y + e}, idx,
                            IM_COL32(255, 255, 255, (int)(255.0f * alpha)));
@@ -1086,6 +1081,15 @@ static bool ntl_combo_taken(tenv *env, int shape, const float rgb[3],
     if (own[0] && (!strcmp(tm[i].nickname, own) || !strcmp(clean, own)))
       continue; /* that's me */
     if (tm[i].shape != shape) continue;
+    /* An emoji looks the same whatever colour is picked, so for emoji the
+       emoji alone has to be unique. */
+    if (shape >= NTL_SHAPE_EMOJI_BASE) {
+      if (who && who_cap) {
+        strncpy(who, clean, who_cap - 1);
+        who[who_cap - 1] = 0;
+      }
+      return true;
+    }
     if (fabsf(tm[i].color[0] - rgb[0]) < 0.025f &&
         fabsf(tm[i].color[1] - rgb[1]) < 0.025f &&
         fabsf(tm[i].color[2] - rgb[2]) < 0.025f) {

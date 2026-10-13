@@ -25,6 +25,8 @@
 #define NUM_RENDER_MODES 7
 #define MAX_SAVED_SKIN_NAME 23
 
+#define MAX_SAVED_NAMES 20
+
 /* Head dot diameter range (screen px), see user_settings.head_dot_size. */
 #define HEAD_DOT_SIZE_MIN 2.0f
 #define HEAD_DOT_SIZE_MAX 30.0f
@@ -386,6 +388,18 @@ typedef struct user_settings {
   uint8_t ntl_pulse_reserved[8];
   bool    ntl_pulse_enabled;
   float   ntl_pulse_interval;
+
+  /* v2.21 extension: previous nickname list (like NTL's nickname scroll).
+     Names are added automatically when a nickname is entered / played with
+     (user_settings_add_saved_name) and picked or removed from the list button
+     next to the nickname box on the title screen. Oldest first; when full the
+     oldest entry is dropped. Appended after ntl_pulse_interval so every
+     earlier file stays a compatible prefix (see v221_prefix in
+     read_user_settings). The reserved block keeps sizeof(user_settings)
+     strictly larger than the previous release. */
+  uint8_t saved_names_reserved[8];
+  int     saved_name_count;
+  char    saved_names[MAX_SAVED_NAMES][MAX_NICKNAME_LEN + 1];
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {
@@ -397,5 +411,10 @@ static inline hotkey* usr_hotkey(user_settings* u, int i) {
 void user_settings_default(user_settings* usr_settings);
 void read_user_settings(user_settings* usr_settings);
 void save_user_settings(user_settings* usr_settings);
+/* Remember a nickname in the previous-names list. Ignores empty names and
+   names already in the list. Returns true if the list changed. */
+bool user_settings_add_saved_name(user_settings* usr_settings, const char* name);
+/* Remove entry `index` from the previous-names list. */
+void user_settings_remove_saved_name(user_settings* usr_settings, int index);
 
 #endif

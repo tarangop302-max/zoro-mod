@@ -235,6 +235,11 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->ntl_pulse_enabled = false;
   usr_settings->ntl_pulse_interval = 1.0f;
 
+  memset(usr_settings->saved_names_reserved, 0,
+         sizeof(usr_settings->saved_names_reserved));
+  usr_settings->saved_name_count = 0;
+  memset(usr_settings->saved_names, 0, sizeof(usr_settings->saved_names));
+
   usr_settings->profile_emoji_id = 0;
 
   usr_settings->show_net_graph = true;
@@ -328,9 +333,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v218_prefix = offsetof(user_settings, eyes_back_reserved);
   size_t v219_prefix = offsetof(user_settings, head_dot_reserved);
   size_t v220_prefix = offsetof(user_settings, ntl_pulse_reserved);
+  size_t v221_prefix = offsetof(user_settings, saved_names_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v221_prefix)
+    /* A file saved before the previous-names list existed ends at
+       v221_prefix (it already contains the team dot pulse). Keep every saved
+       value; the name list starts empty. */
+    bytes_to_read = v221_prefix;
   else if ((size_t)file_size >= v220_prefix)
     /* A file saved before the team dot pulse existed ends at v220_prefix
        (it already contains the per-mode head dot). Keep every saved value;
@@ -578,6 +589,19 @@ void read_user_settings(user_settings* usr_settings) {
         loaded.head_dot_colors[m][c] = 1.0f;
     }
   }
+  /* Previous nicknames: clamp the count, force termination, drop empties. */
+  if (loaded.saved_name_count < 0 || loaded.saved_name_count > MAX_SAVED_NAMES)
+    loaded.saved_name_count = 0;
+  for (int i = 0; i < loaded.saved_name_count; ++i) {
+    loaded.saved_names[i][MAX_NICKNAME_LEN] = 0;
+    if (!loaded.saved_names[i][0]) {
+      for (int j = i + 1; j < loaded.saved_name_count; ++j)
+        memcpy(loaded.saved_names[j - 1], loaded.saved_names[j],
+               sizeof loaded.saved_names[j]);
+      --loaded.saved_name_count;
+      --i;
+    }
+  }
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     if (loaded.key_btn_shape[i] > 1) loaded.key_btn_shape[i] = 0;
   }
@@ -660,4 +684,31 @@ void save_user_settings(user_settings* usr_settings) {
 
   fwrite(usr_settings, sizeof(user_settings), 1, f);
   fclose(f);
+}
+
+bool user_settings_add_saved_name(user_settings* usr_settings, const char* name) {
+  if (!name || !name[0]) return false;
+  char buf[MAX_NICKNAME_LEN + 1];
+  strncpy(buf, name, MAX_NICKNAME_LEN);
+  buf[MAX_NICKNAME_LEN] = 0;
+  for (int i = 0; i < usr_settings->saved_name_count; ++i)
+    if (strcmp(usr_settings->saved_names[i], buf) == 0) return false;
+  if (usr_settings->saved_name_count >= MAX_SAVED_NAMES) {
+    /* Full: drop the oldest entry. */
+    for (int i = 1; i < MAX_SAVED_NAMES; ++i)
+      memcpy(usr_settings->saved_names[i - 1], usr_settings->saved_names[i],
+             sizeof usr_settings->saved_names[i]);
+    usr_settings->saved_name_count = MAX_SAVED_NAMES - 1;
+  }
+  strcpy(usr_settings->saved_names[usr_settings->saved_name_count++], buf);
+  return true;
+}
+
+void user_settings_remove_saved_name(user_settings* usr_settings, int index) {
+  if (index < 0 || index >= usr_settings->saved_name_count) return;
+  for (int i = index + 1; i < usr_settings->saved_name_count; ++i)
+    memcpy(usr_settings->saved_names[i - 1], usr_settings->saved_names[i],
+           sizeof usr_settings->saved_names[i]);
+  --usr_settings->saved_name_count;
+  usr_settings->saved_names[usr_settings->saved_name_count][0] = 0;
 }

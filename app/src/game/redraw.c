@@ -1826,10 +1826,11 @@ void redraw(tenv* env) {
                 {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, ea}});
 
         /* Head dot: local player's snake only, per mode (Settings > Normal /
-         * Assist mode). Fixed on-screen diameter in px, drawn over the eyes. */
+         * Assist mode). Sized like the snake (game units * zoom * snake
+         * scale), so it keeps the same proportion to the body when zooming. */
         if (usrs->head_dot_enabled[mode_index] &&
             o->id == gdata->data.snake_id) {
-          float hdr = usrs->head_dot_size[mode_index] * 0.5f;
+          float hdr = usrs->head_dot_size[mode_index] * 0.5f * ssc * gdata->data.gsc;
           float hdx = mww2 + (hx - gdata->data.view_xx) * gdata->data.gsc;
           float hdy = mhh2 + (hy - gdata->data.view_yy) * gdata->data.gsc;
           const float* hdc = usrs->head_dot_colors[mode_index];

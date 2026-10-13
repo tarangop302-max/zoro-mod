@@ -51,6 +51,12 @@ typedef struct renderer {
   texture* arrow_atlas_tex;
   VkDescriptorSet arrow_atlas_ds;
 
+  /* Colour emoji sprite sheet for the team minimap dots (see
+     game/ntl_emoji.h). Optional: if it fails to load, emoji dots fall back
+     to a plain circle. */
+  texture* emoji_atlas_tex;
+  VkDescriptorSet emoji_atlas_ds;
+
   VkSampler linear_sampler;
   VkSampler nearest_sampler;
 

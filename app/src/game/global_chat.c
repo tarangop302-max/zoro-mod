@@ -6,6 +6,7 @@
 #include "thermite/tchat.h"
 #include "thermite/jsr_network.h"
 #include "ntl_team.h"
+#include "ntl_emoji.h"
 
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
@@ -3206,12 +3207,14 @@ void global_chat_draw_minimap_markers(
             center.y + ry * map_radius
         };
 
-        ntl_draw_marker(
+        ntl_draw_marker_pulse(
             dl,
             p,
             u->usrs.ntl_marker_size,
             shape,
-            col
+            col,
+            u->usrs.ntl_pulse_enabled ?
+                u->usrs.ntl_pulse_interval : 0.0f
         );
 
         if (sos) {
@@ -3251,7 +3254,8 @@ void global_chat_draw_minimap_markers(
 
             ImVec2 text_pos = {
                 p.x - text_size.x * 0.5f,
-                p.y + u->usrs.ntl_marker_size + 2.0f
+                p.y + u->usrs.ntl_marker_size *
+                    (shape >= NTL_SHAPE_EMOJI_BASE ? 1.7f : 1.0f) + 2.0f
             };
 
             ImDrawList_AddText_Vec2(

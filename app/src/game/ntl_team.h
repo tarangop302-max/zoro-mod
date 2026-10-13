@@ -31,4 +31,17 @@ void ntl_draw_marker(
     ImU32 fill
 );
 
+/* Same as ntl_draw_marker, plus an optional pulse: pulse_interval is the
+ * length of one pulse in seconds (<= 0 = no pulse). Shapes >=
+ * NTL_SHAPE_EMOJI_BASE (ntl_emoji.h) draw a colour emoji on a disc of the
+ * player's colour. */
+void ntl_draw_marker_pulse(
+    ImDrawList* dl,
+    ImVec2 p,
+    float radius,
+    int shape,
+    ImU32 fill,
+    float pulse_interval
+);
+
 #endif

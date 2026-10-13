@@ -12,6 +12,8 @@
 
 #include "../user.h"
 #include "../cimgui/cimgui_impl.h"
+#include <stdint.h>
+#include "../game/ntl_emoji.h"
 
 void _create_image_data(renderer* r, tcontext* ctx, ivec2 size) {
   glm_ivec2_copy(size, r->size);
@@ -178,6 +180,18 @@ renderer* renderer_create(tenv* env) {
         r->linear_sampler, r->arrow_atlas_tex->view,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   DLOG("renderer: arrow_atlas_tex=%p", (void*)r->arrow_atlas_tex);
+
+  /* Colour emoji sprite sheet for team minimap dots (non-fatal). */
+  r->emoji_atlas_tex = create_mipmap_texture(
+      ctx, "app/res/textures/emoji_sheet.png");
+  r->emoji_atlas_ds = VK_NULL_HANDLE;
+  if (r->emoji_atlas_tex) {
+    r->emoji_atlas_ds = igImplVulkan_AddTexture(
+        r->linear_sampler, r->emoji_atlas_tex->view,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    ntl_emoji_set_texture((unsigned long long)(uintptr_t)r->emoji_atlas_ds);
+  }
+  DLOG("renderer: emoji_atlas_tex=%p", (void*)r->emoji_atlas_tex);
 
   vkCreateRenderPass(
       ctx->device,
@@ -473,6 +487,9 @@ void renderer_destroy(renderer* r, tcontext* ctx) {
   free(r->images);
   if (r->boost_button_ds) igImplVulkan_RemoveTexture(r->boost_button_ds);
   destroy_texture(ctx, r->boost_button_tex);
+  ntl_emoji_set_texture(0);
+  if (r->emoji_atlas_ds) igImplVulkan_RemoveTexture(r->emoji_atlas_ds);
+  if (r->emoji_atlas_tex) destroy_texture(ctx, r->emoji_atlas_tex);
   if (r->arrow_atlas_ds) igImplVulkan_RemoveTexture(r->arrow_atlas_ds);
   if (r->arrow_atlas_tex) destroy_texture(ctx, r->arrow_atlas_tex);
   destroy_texture(ctx, r->tex_atlas);

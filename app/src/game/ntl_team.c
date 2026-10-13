@@ -2,6 +2,7 @@
 #include "../user.h"
 #include "../external/mongoose.h"
 #include "global_chat.h"
+#include "ntl_emoji.h"
 #include "thermite/jsr_network.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,6 +71,11 @@ typedef struct {
   char last_nickname[MAX_NICKNAME_LEN + 1];
   char last_presence_server[MAX_IPV4_LEN + 1];
   bool last_presence_playing;
+  /* Team dot UI: "already taken" notice, custom emoji box. */
+  char dup_name[40];
+  double dup_until;
+  char emoji_input[24];
+  int emoji_status; /* 0 none, 1 applied, 2 not in list */
 } ntl_state;
 static ntl_state S;
 
@@ -930,9 +936,8 @@ static const char *ntl_clean_name(const char *name) {
   return name[0] ? name : "Player";
 }
 
-void ntl_draw_marker(ImDrawList *dl, ImVec2 p, float radius,
-                            int shape, ImU32 fill) {
-  ImU32 border = IM_COL32(0, 0, 0, 210);
+static void ntl_draw_shape(ImDrawList *dl, ImVec2 p, float radius,
+                           int shape, ImU32 fill, ImU32 border) {
   float border_radius = radius + 1.4f;
   if (shape == 1) {
     /* Diamond */
@@ -998,6 +1003,160 @@ void ntl_draw_marker(ImDrawList *dl, ImVec2 p, float radius,
     ImDrawList_AddCircleFilled(dl, p, radius, fill, 16);
   }
 }
+
+/* ---- colour emoji dots ------------------------------------------------ */
+
+static const unsigned int ntl_emoji_cps[NTL_EMOJI_COUNT] = {0x1F600,0x1F603,0x1F604,0x1F601,0x1F606,0x1F605,0x1F602,0x1F923,0x1F60A,0x1F607,0x1F642,0x1F643,0x1F609,0x1F60C,0x1F60D,0x1F970,0x1F618,0x1F61C,0x1F61D,0x1F911,0x1F917,0x1F914,0x1F928,0x1F610,0x1F611,0x1F636,0x1F644,0x1F60F,0x1F623,0x1F625,0x1F62E,0x1F910,0x1F62F,0x1F62A,0x1F62B,0x1F634,0x1F60E,0x1F913,0x1F9D0,0x1F615,0x1F61F,0x1F641,0x1F632,0x1F633,0x1F97A,0x1F626,0x1F627,0x1F628,0x1F630,0x1F622,0x1F62D,0x1F631,0x1F616,0x1F61E,0x1F613,0x1F629,0x1F624,0x1F621,0x1F620,0x1F92C,0x1F608,0x1F47F,0x1F480,0x2620,0x1F4A9,0x1F921,0x1F47B,0x1F47D,0x1F916,0x1F63A,0x1F638,0x1F63B,0x1F63C,0x1F640,0x1F648,0x1F649,0x1F64A,0x1F4AF,0x1F4A5,0x1F525,0x2728,0x2B50,0x1F31F,0x26A1,0x1F4A2,0x1F4A4,0x1F4A8,0x1F4A3,0x1F389,0x1F3AF,0x1F3C6,0x1F451,0x1F48E,0x1F340,0x1F337,0x1F339,0x1F33A,0x1F335,0x1F30A,0x2764,0x1F9E1,0x1F49B,0x1F49A,0x1F499,0x1F49C,0x1F5A4,0x1F90D,0x1F494,0x1F495,0x1F44D,0x1F44E,0x1F44A,0x270C,0x1F918,0x1F44C,0x1F44B,0x1F4AA,0x1F64F,0x1F440,0x1F40D,0x1F409,0x1F432,0x1F985,0x1F981,0x1F42F,0x1F43A,0x1F98A,0x1F43C,0x1F438,0x1F422,0x1F419,0x1F988,0x1F40A,0x1F577,0x1F982,0x1F47E,0x1F3AE,0x1F680,0x1F6F8,0x2600,0x1F319,0x2744,0x2601,0x1F308,0x1F34E,0x1F355,0x1F354,0x1F366,0x1F37A,0x26BD,0x1F3C0,0x1F3B5,0x1F52B,0x1F5E1,0x1F6E1,0x1F9E8,0x1F3F4,0x1F6A9,0x1F9FF};
+
+static unsigned long long g_emoji_tex = 0;
+
+void ntl_emoji_set_texture(unsigned long long texture_id) {
+  g_emoji_tex = texture_id;
+}
+
+static void ntl_draw_emoji_image(ImDrawList *dl, ImVec2 a, ImVec2 b, int idx,
+                                 ImU32 tint) {
+  if (!g_emoji_tex || idx < 0 || idx >= NTL_EMOJI_COUNT) return;
+  int col = idx % NTL_EMOJI_COLS;
+  int row = idx / NTL_EMOJI_COLS;
+  ImVec2 uv0 = {(float)col / NTL_EMOJI_COLS, (float)row / NTL_EMOJI_ROWS};
+  ImVec2 uv1 = {(float)(col + 1) / NTL_EMOJI_COLS,
+                (float)(row + 1) / NTL_EMOJI_ROWS};
+  ImTextureRef tex = {NULL, (ImTextureID)g_emoji_tex};
+  ImDrawList_AddImage(dl, tex, a, b, uv0, uv1, tint);
+}
+
+static ImU32 ntl_scale_alpha(ImU32 c, float a) {
+  unsigned int al = (c >> 24) & 0xFFu;
+  al = (unsigned int)((float)al * a + 0.5f);
+  if (al > 255u) al = 255u;
+  return (c & 0x00FFFFFFu) | (al << 24);
+}
+
+void ntl_draw_marker_pulse(ImDrawList *dl, ImVec2 p, float radius, int shape,
+                           ImU32 fill, float pulse_interval) {
+  float alpha = 1.0f;
+  if (pulse_interval > 0.05f) {
+    double t = igGetTime();
+    float phase = (float)fmod(t, (double)pulse_interval) / pulse_interval;
+    float w = 0.5f - 0.5f * cosf(phase * 2.0f * (float)M_PI);
+    radius *= 0.85f + 0.40f * w;
+    alpha = 0.55f + 0.45f * w;
+  }
+  ImU32 border = ntl_scale_alpha(IM_COL32(0, 0, 0, 210), alpha);
+  fill = ntl_scale_alpha(fill, alpha);
+
+  if (shape >= NTL_SHAPE_EMOJI_BASE) {
+    int idx = shape - NTL_SHAPE_EMOJI_BASE;
+    if (idx < NTL_EMOJI_COUNT && g_emoji_tex) {
+      /* Emoji can't be tinted, so the player's colour becomes the disc
+         behind it -- that is how teammates tell two identical emoji apart. */
+      float h = radius * 1.45f;
+      float disc = h * 1.06f;
+      float e = h * 0.92f;
+      ImDrawList_AddCircleFilled(dl, p, disc + 1.4f, border, 20);
+      ImDrawList_AddCircleFilled(dl, p, disc, fill, 20);
+      ntl_draw_emoji_image(dl, (ImVec2){p.x - e, p.y - e},
+                           (ImVec2){p.x + e, p.y + e}, idx,
+                           IM_COL32(255, 255, 255, (int)(255.0f * alpha)));
+      return;
+    }
+    shape = 0; /* unknown emoji (or sheet missing): plain circle */
+  }
+  ntl_draw_shape(dl, p, radius, shape, fill, border);
+}
+
+void ntl_draw_marker(ImDrawList *dl, ImVec2 p, float radius, int shape,
+                     ImU32 fill) {
+  ntl_draw_marker_pulse(dl, p, radius, shape, fill, 0.0f);
+}
+
+/* ---- one colour + shape/emoji per teammate ------------------------------ */
+
+/* True if another teammate on our server already uses this exact
+ * shape/emoji AND colour. A different shape OR a different colour is fine. */
+static bool ntl_combo_taken(tenv *env, int shape, const float rgb[3],
+                            char *who, size_t who_cap) {
+  if (!env || !env->usr) return false;
+  global_chat_teammate tm[16];
+  int n = global_chat_get_teammates(env, tm, 16);
+  const char *own = env->usr->usrs.nickname;
+  for (int i = 0; i < n; ++i) {
+    const char *clean = ntl_clean_name(tm[i].nickname);
+    if (own[0] && (!strcmp(tm[i].nickname, own) || !strcmp(clean, own)))
+      continue; /* that's me */
+    if (tm[i].shape != shape) continue;
+    if (fabsf(tm[i].color[0] - rgb[0]) < 0.025f &&
+        fabsf(tm[i].color[1] - rgb[1]) < 0.025f &&
+        fabsf(tm[i].color[2] - rgb[2]) < 0.025f) {
+      if (who && who_cap) {
+        strncpy(who, clean, who_cap - 1);
+        who[who_cap - 1] = 0;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+static void ntl_flag_taken(const char *who) {
+  strncpy(S.dup_name, who && who[0] ? who : "a teammate", sizeof S.dup_name - 1);
+  S.dup_name[sizeof S.dup_name - 1] = 0;
+  S.dup_until = mg_millis() / 1000.0 + 3.5;
+}
+
+/* Apply a new shape + colour unless a teammate already has that exact pair. */
+static bool ntl_try_set_marker(tenv *env, user_settings *us, int shape,
+                               const float rgb[3]) {
+  bool same = us->own_marker_shape == shape &&
+              fabsf(us->own_marker_color[0] - rgb[0]) < 0.001f &&
+              fabsf(us->own_marker_color[1] - rgb[1]) < 0.001f &&
+              fabsf(us->own_marker_color[2] - rgb[2]) < 0.001f;
+  if (same) return true;
+  char who[40] = {0};
+  if (ntl_combo_taken(env, shape, rgb, who, sizeof who)) {
+    ntl_flag_taken(who);
+    return false;
+  }
+  us->own_marker_shape = shape;
+  us->own_marker_color[0] = rgb[0];
+  us->own_marker_color[1] = rgb[1];
+  us->own_marker_color[2] = rgb[2];
+  return true;
+}
+
+/* First codepoint of a UTF-8 string, skipping variation selectors / joiners. */
+static unsigned int ntl_first_codepoint(const char *str) {
+  const unsigned char *u = (const unsigned char *)str;
+  while (*u) {
+    unsigned int cp;
+    int len;
+    if (u[0] < 0x80) { cp = u[0]; len = 1; }
+    else if ((u[0] & 0xE0) == 0xC0) { cp = u[0] & 0x1F; len = 2; }
+    else if ((u[0] & 0xF0) == 0xE0) { cp = u[0] & 0x0F; len = 3; }
+    else if ((u[0] & 0xF8) == 0xF0) { cp = u[0] & 0x07; len = 4; }
+    else { u++; continue; }
+    for (int i = 1; i < len; ++i) {
+      if ((u[i] & 0xC0) != 0x80) return 0;
+      cp = (cp << 6) | (u[i] & 0x3F);
+    }
+    if (cp == 0xFE0F || cp == 0x200D || cp == 0x20E3 || cp == ' ') {
+      u += len;
+      continue;
+    }
+    return cp;
+  }
+  return 0;
+}
+
+static int ntl_emoji_lookup(const char *str) {
+  unsigned int cp = ntl_first_codepoint(str);
+  if (!cp) return -1;
+  for (int i = 0; i < NTL_EMOJI_COUNT; ++i)
+    if (ntl_emoji_cps[i] == cp) return i;
+  return -1;
+}
+
 
 static void ntl_load_profile(user_settings *us, int index) {
   if (!us || index < 0 || index >= us->ntl_team_profile_count) return;
@@ -1067,7 +1226,9 @@ void ntl_team_draw_minimap(tenv *env, float x, float y, float size) {
     ImU32 col = igColorConvertFloat4ToU32((ImVec4){
         us->own_marker_color[0], us->own_marker_color[1],
         us->own_marker_color[2], us->own_marker_color[3]});
-    ntl_draw_marker(dl, p, us->own_marker_size, us->own_marker_shape, col);
+    ntl_draw_marker_pulse(dl, p, us->own_marker_size, us->own_marker_shape,
+                          col,
+                          us->ntl_pulse_enabled ? us->ntl_pulse_interval : 0.0f);
   }
 }
 
@@ -1202,6 +1363,78 @@ void ntl_team_panel(tenv *env) {
                 "%.1f px", ImGuiSliderFlags_AlwaysClamp);
   igSpacing();
 
+  /* Pulse: local display option -- the dots on YOUR minimap breathe so they
+   * are easier to spot. Interval = seconds per pulse. */
+  igCheckbox("Pulse dots", &us->ntl_pulse_enabled);
+  if (us->ntl_pulse_enabled) {
+    igText("Pulse interval");
+    igSameLine(0, 8);
+    igSetNextItemWidth(-1);
+    igSliderFloat("##ntl_pulse_interval", &us->ntl_pulse_interval, 0.3f, 3.0f,
+                  "%.1f s", ImGuiSliderFlags_AlwaysClamp);
+  }
+  igSpacing();
+
+  /* Live preview of the dot exactly as the minimap draws it. */
+  igSeparatorText("Preview");
+  {
+    ImVec2 pav;
+    igGetContentRegionAvail(&pav);
+    float pw = pav.x;
+    float ph = igGetFrameHeight() * 2.8f;
+    ImVec2 ppos;
+    igGetCursorScreenPos(&ppos);
+    ImDrawList *pdl = igGetWindowDrawList();
+    ImVec2 pend = {ppos.x + pw, ppos.y + ph};
+    ImDrawList_AddRectFilled(pdl, ppos, pend, IM_COL32(8, 6, 20, 230), 6.0f,
+                             ImDrawFlags_None);
+    ImDrawList_AddRect(pdl, ppos, pend, IM_COL32(120, 90, 200, 160), 6.0f,
+                       ImDrawFlags_None, 1.0f);
+    float interval = us->ntl_pulse_enabled ? us->ntl_pulse_interval : 0.0f;
+    ImU32 pcol = igColorConvertFloat4ToU32((ImVec4){
+        us->own_marker_color[0], us->own_marker_color[1],
+        us->own_marker_color[2], 1.0f});
+    float cy = ppos.y + ph * 0.55f;
+    float zoom_r = fminf(us->own_marker_size * 2.5f, ph * 0.22f);
+    ntl_draw_marker_pulse(pdl, (ImVec2){ppos.x + pw * 0.25f, cy},
+                          us->own_marker_size, us->own_marker_shape, pcol,
+                          interval);
+    ntl_draw_marker_pulse(pdl, (ImVec2){ppos.x + pw * 0.70f, cy}, zoom_r,
+                          us->own_marker_shape, pcol, interval);
+    ImDrawList_AddText_Vec2(pdl, (ImVec2){ppos.x + pw * 0.25f - 24.0f, ppos.y + 3.0f},
+                            IM_COL32(190, 190, 215, 220), "Real size", NULL);
+    ImDrawList_AddText_Vec2(pdl, (ImVec2){ppos.x + pw * 0.70f - 20.0f, ppos.y + 3.0f},
+                            IM_COL32(190, 190, 215, 220), "Zoomed", NULL);
+    if (S.dup_until > mg_millis() / 1000.0) {
+      char msg[96];
+      snprintf(msg, sizeof msg, "Already used by %s - pick another", S.dup_name);
+      ImDrawList_AddText_Vec2(pdl, (ImVec2){ppos.x + 8.0f, pend.y - igGetFrameHeight()},
+                              IM_COL32(255, 150, 60, 255), msg, NULL);
+    }
+    igDummy((ImVec2){pw, ph});
+  }
+  if (igButton("Reset dot to default", (ImVec2){-1.0f, 0.0f})) {
+    us->own_marker_size = 5.5f;
+    us->ntl_marker_size = 5.0f;
+    us->ntl_pulse_enabled = false;
+    us->ntl_pulse_interval = 1.0f;
+    S.emoji_input[0] = 0;
+    S.emoji_status = 0;
+    const float def_col[3] = {1.0f, 0.35f, 0.35f};
+    char who[40] = {0};
+    if (ntl_combo_taken(env, 0, def_col, who, sizeof who)) {
+      /* Default look already belongs to a teammate: keep the current
+         shape/colour, everything else is reset. */
+      ntl_flag_taken(who);
+    } else {
+      us->own_marker_shape = 0;
+      us->own_marker_color[0] = def_col[0];
+      us->own_marker_color[1] = def_col[1];
+      us->own_marker_color[2] = def_col[2];
+    }
+  }
+  igSpacing();
+
   /* Dot colour/shape below describe MY OWN marker. They're sent
    * to teammates over the same NTL/JSR relay that already carries
    * position updates (see jsr_network_send_location), so a
@@ -1229,11 +1462,8 @@ void ntl_team_panel(tenv *env) {
       igPushStyleColor_Vec4(ImGuiCol_Border, (ImVec4){1.0f, 1.0f, 1.0f, 1.0f});
       igPushStyleVar_Float(ImGuiStyleVar_FrameBorderSize, 2.0f);
     }
-    if (igButton("##swatch", (ImVec2){swatch, swatch})) {
-      us->own_marker_color[0] = ntl_color_presets[i][0];
-      us->own_marker_color[1] = ntl_color_presets[i][1];
-      us->own_marker_color[2] = ntl_color_presets[i][2];
-    }
+    if (igButton("##swatch", (ImVec2){swatch, swatch}))
+      ntl_try_set_marker(env, us, us->own_marker_shape, ntl_color_presets[i]);
     if (selected) {
       igPopStyleVar(1);
       igPopStyleColor(1);
@@ -1245,8 +1475,19 @@ void ntl_team_panel(tenv *env) {
   if (igButton("Custom##own_marker_custom", (ImVec2){swatch * 1.8f, swatch}))
     igOpenPopup_Str("##own_marker_custom_popup", 0);
   if (igBeginPopup("##own_marker_custom_popup", 0)) {
-    igColorPicker3("##own_marker_custom_picker", us->own_marker_color,
-                   ImGuiColorEditFlags_None);
+    float prev_col[3] = {us->own_marker_color[0], us->own_marker_color[1],
+                         us->own_marker_color[2]};
+    if (igColorPicker3("##own_marker_custom_picker", us->own_marker_color,
+                       ImGuiColorEditFlags_None)) {
+      char who[40] = {0};
+      if (ntl_combo_taken(env, us->own_marker_shape, us->own_marker_color, who,
+                          sizeof who)) {
+        us->own_marker_color[0] = prev_col[0];
+        us->own_marker_color[1] = prev_col[1];
+        us->own_marker_color[2] = prev_col[2];
+        ntl_flag_taken(who);
+      }
+    }
     igEndPopup();
   }
   igSpacing();
@@ -1262,7 +1503,7 @@ void ntl_team_panel(tenv *env) {
                             (ImVec4){0.20f, 0.62f, 0.30f, 1.0f});
     igButton("##shape_btn", (ImVec2){shape_btn, shape_btn});
     if (igIsItemClicked(ImGuiMouseButton_Left))
-      us->own_marker_shape = ntl_shape_values[i];
+      ntl_try_set_marker(env, us, ntl_shape_values[i], us->own_marker_color);
     ImVec2 rmin, rmax;
     igGetItemRectMin(&rmin);
     igGetItemRectMax(&rmax);
@@ -1276,6 +1517,69 @@ void ntl_team_panel(tenv *env) {
     igPopID();
     if (i != 4) igSameLine(0, 6);
   }
+  igSpacing();
+
+  igSeparatorText("Emoji");
+  igTextWrapped("Pick an emoji for your dot. Your colour shows as the disc behind it.");
+  {
+    float eb = shape_btn;
+    igBeginChild_Str("##ntl_emoji_grid", (ImVec2){-1.0f, eb * 3.3f},
+                     ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
+    ImVec2 eav;
+    igGetContentRegionAvail(&eav);
+    int per_row = (int)(eav.x / (eb + 6.0f));
+    if (per_row < 1) per_row = 1;
+    for (int i = 0; i < NTL_EMOJI_COUNT; ++i) {
+      int sv = NTL_SHAPE_EMOJI_BASE + i;
+      bool selected = us->own_marker_shape == sv;
+      igPushID_Int(1000 + i);
+      if (selected)
+        igPushStyleColor_Vec4(ImGuiCol_Button,
+                              (ImVec4){0.20f, 0.62f, 0.30f, 1.0f});
+      if (igButton("##emoji_btn", (ImVec2){eb, eb})) {
+        S.emoji_input[0] = 0;
+        S.emoji_status = 0;
+        ntl_try_set_marker(env, us, sv, us->own_marker_color);
+      }
+      ImVec2 rmin, rmax;
+      igGetItemRectMin(&rmin);
+      igGetItemRectMax(&rmax);
+      float inset = eb * 0.12f;
+      ntl_draw_emoji_image(igGetWindowDrawList(),
+                           (ImVec2){rmin.x + inset, rmin.y + inset},
+                           (ImVec2){rmax.x - inset, rmax.y - inset}, i,
+                           IM_COL32(255, 255, 255, 255));
+      if (selected) igPopStyleColor(1);
+      igPopID();
+      if ((i % per_row) != per_row - 1 && i != NTL_EMOJI_COUNT - 1)
+        igSameLine(0, 6);
+    }
+    igEndChild();
+  }
+  igSpacing();
+
+  /* Custom emoji box: paste or type an emoji from your keyboard. Only the
+   * emoji in the grid above are available (they are bundled as pictures). */
+  igText("Custom emoji");
+  igSameLine(0, 8);
+  igSetNextItemWidth(-1);
+  if (igInputText("##ntl_emoji_input", S.emoji_input, sizeof S.emoji_input,
+                  ImGuiInputTextFlags_None, NULL, NULL)) {
+    int idx = ntl_emoji_lookup(S.emoji_input);
+    if (idx >= 0) {
+      S.emoji_status = ntl_try_set_marker(env, us, NTL_SHAPE_EMOJI_BASE + idx,
+                                          us->own_marker_color)
+                           ? 1
+                           : 0;
+    } else {
+      S.emoji_status = S.emoji_input[0] ? 2 : 0;
+    }
+  }
+  if (S.emoji_status == 1)
+    igTextColored((ImVec4){0.35f, 0.95f, 0.45f, 1.0f}, "Emoji applied");
+  else if (S.emoji_status == 2)
+    igTextColored((ImVec4){1.0f, 0.60f, 0.25f, 1.0f},
+                  "That emoji isn't in the list above");
 
   igEndChild();
 

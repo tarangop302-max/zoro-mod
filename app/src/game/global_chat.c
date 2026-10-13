@@ -16,6 +16,8 @@
 #include <stdio.h>
 
 #include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include <math.h>
 #include <time.h>
 
@@ -439,16 +441,6 @@ static void gc_icon_x(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
         dl,
         gc_v2(c.x + s * 0.5f, c.y - s * 0.5f),
         gc_v2(c.x - s * 0.5f, c.y + s * 0.5f),
-        col,
-        2.0f
-    );
-}
-
-static void gc_icon_minus(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
-    ImDrawList_AddLine(
-        dl,
-        gc_v2(c.x - s * 0.5f, c.y),
-        gc_v2(c.x + s * 0.5f, c.y),
         col,
         2.0f
     );
@@ -1399,6 +1391,353 @@ static void gc_toggle_adjust(tenv* env, global_chat_adjust_mode mode) {
     }
 }
 
+/* =====================================================================
+ * Redesign helpers: emoji font, text clipping, player data, badges,
+ * section titles and pill buttons.
+ * ===================================================================== */
+
+/* Liberation Sans -- the only panel font that has the profile-emoji
+ * glyphs (the default panel font, JetBrains Mono, does not). Set every
+ * frame from global_chat_panel_contents(). */
+static ImFont* gc_emoji_font = NULL;
+
+/* Show "joined / left public chat" notices in the message list. */
+static bool gc_show_events = true;
+
+/* True once a finger/mouse drag scrolled a list since the last press, so
+ * the release of that drag is not mistaken for a tap on a row. */
+static bool gc_scroll_dragged = false;
+
+static void gc_emoji_push(void) {
+    if (gc_emoji_font != NULL) {
+        igPushFont(gc_emoji_font, 0.0f); /* 0 = keep current size */
+    }
+}
+
+static void gc_emoji_pop(void) {
+    if (gc_emoji_font != NULL) {
+        igPopFont();
+    }
+}
+
+static float gc_emoji_w(const char* s) {
+    gc_emoji_push();
+    float w = gc_text_w(s);
+    gc_emoji_pop();
+    return w;
+}
+
+static void gc_emoji_text(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* s) {
+    gc_emoji_push();
+    ImDrawList_AddText_Vec2(dl, pos, col, s, NULL);
+    gc_emoji_pop();
+}
+
+static void gc_emoji_center(
+    ImDrawList* dl, ImVec2 mn, ImVec2 sz, ImU32 col, const char* s
+) {
+    gc_emoji_push();
+    gc_text_center(dl, mn, sz, col, s);
+    gc_emoji_pop();
+}
+
+/* Copy `s` into out, ending with ".." if it has to be cut to fit max_w. */
+static void gc_clip_text(char* out, size_t cap, const char* s, float max_w) {
+    if (cap == 0) {
+        return;
+    }
+
+    snprintf(out, cap, "%s", s != NULL ? s : "");
+
+    if (max_w <= 0.0f) {
+        out[0] = '\0';
+        return;
+    }
+
+    if (gc_text_w(out) <= max_w) {
+        return;
+    }
+
+    size_t len = strlen(out);
+
+    while (len > 0) {
+        len--;
+
+        while (len > 0 && ((unsigned char)out[len] & 0xC0) == 0x80) {
+            len--;
+        }
+
+        if (len + 3 > cap) {
+            continue;
+        }
+
+        out[len] = '.';
+        out[len + 1] = '.';
+        out[len + 2] = '\0';
+
+        if (gc_text_w(out) <= max_w) {
+            return;
+        }
+
+        out[len] = '\0';
+    }
+
+    out[0] = '\0';
+}
+
+/* 188582 -> "188,582" */
+static void gc_fmt_num(char* out, size_t cap, long long v) {
+    char raw[32];
+    snprintf(raw, sizeof(raw), "%lld", v < 0 ? 0LL : v);
+
+    size_t n = strlen(raw);
+    size_t o = 0;
+
+    for (size_t i = 0; i < n && o + 2 < cap; i++) {
+        out[o++] = raw[i];
+
+        size_t left = n - i - 1;
+
+        if (left > 0 && left % 3 == 0 && o + 2 < cap) {
+            out[o++] = ',';
+        }
+    }
+
+    out[o] = '\0';
+}
+
+/* Avatar letter: first letter after the clan tag, so "{ J S R } G A N E S H"
+ * gives "G" instead of "{". */
+static void gc_initial(const char* name, char out[8]) {
+    const char* p = strrchr(name, '}');
+    p = p != NULL ? p + 1 : name;
+
+    while (
+        *p != '\0' &&
+        (unsigned char)*p < 0x80 &&
+        !isalnum((unsigned char)*p)
+    ) {
+        p++;
+    }
+
+    if (*p == '\0') {
+        p = name;
+
+        while (
+            *p != '\0' &&
+            (unsigned char)*p < 0x80 &&
+            !isalnum((unsigned char)*p)
+        ) {
+            p++;
+        }
+    }
+
+    if (*p == '\0') {
+        out[0] = '?';
+        out[1] = '\0';
+        return;
+    }
+
+    unsigned char c = (unsigned char)*p;
+    int n = 1;
+
+    if (c >= 0xF0) n = 4;
+    else if (c >= 0xE0) n = 3;
+    else if (c >= 0xC0) n = 2;
+
+    int i = 0;
+
+    for (; i < n && p[i] != '\0' && i < 7; i++) {
+        out[i] = p[i];
+    }
+
+    out[i] = '\0';
+
+    if (n == 1) {
+        out[0] = (char)toupper(c);
+    }
+}
+
+static ImU32 gc_ping_color(int ping) {
+    if (ping < 0) return IM_COL32(140, 133, 170, 200);
+    if (ping < 90) return IM_COL32(125, 255, 176, 255);
+    if (ping < 180) return IM_COL32(255, 204, 77, 255);
+    return IM_COL32(242, 77, 77, 255);
+}
+
+/* One entry of the shared location feed (score / ping / SOS / emoji). */
+#define GC_MAX_LOCS 64
+
+typedef struct {
+    char name[32];
+    char ip[64];
+    int score;
+    int ping;
+    bool sos;
+    int emoji;
+} gc_loc;
+
+static int gc_load_locs(gc_loc* out) {
+    if (global_chat_net == NULL) {
+        return 0;
+    }
+
+    int n = jsr_network_location_count(global_chat_net);
+    int k = 0;
+
+    for (int i = 0; i < n && k < GC_MAX_LOCS; i++) {
+        gc_loc* l = &out[k];
+
+        l->name[0] = '\0';
+        l->ip[0] = '\0';
+        l->score = 0;
+        l->ping = -1;
+        l->sos = false;
+        l->emoji = 0;
+
+        if (
+            !jsr_network_get_location(
+                global_chat_net, i,
+                l->name, sizeof(l->name),
+                l->ip, sizeof(l->ip),
+                NULL, NULL, NULL, NULL, NULL, NULL,
+                &l->score, &l->ping,
+                &l->sos, &l->emoji
+            )
+        ) {
+            continue;
+        }
+
+        if (l->name[0] == '\0') {
+            continue;
+        }
+
+        k++;
+    }
+
+    return k;
+}
+
+static const gc_loc* gc_find_loc(const gc_loc* locs, int n, const char* name) {
+    for (int i = 0; i < n; i++) {
+        if (strcmp(locs[i].name, name) == 0) {
+            return &locs[i];
+        }
+    }
+
+    return NULL;
+}
+
+/* How many OTHER teammates currently have SOS on. */
+static int gc_others_sos_count(const char* own_name) {
+    gc_loc locs[GC_MAX_LOCS];
+    int n = gc_load_locs(locs);
+    int count = 0;
+
+    for (int i = 0; i < n; i++) {
+        if (!locs[i].sos) {
+            continue;
+        }
+
+        if (own_name != NULL && strcmp(own_name, locs[i].name) == 0) {
+            continue;
+        }
+
+        count++;
+    }
+
+    return count;
+}
+
+/* Small round-cornered count badge on the top-right of a rail button. */
+static void gc_badge(
+    ImDrawList* dl, ImVec2 bmn, float btn, float u,
+    const char* txt, ImU32 col
+) {
+    float bw = fmaxf(gc_text_w(txt) + u * 0.5f, u * 1.1f);
+    ImVec2 bc = gc_v2(bmn.x + btn - bw * 0.35f, bmn.y + bw * 0.1f);
+
+    ImDrawList_AddRectFilled(
+        dl,
+        gc_v2(bc.x - bw * 0.5f, bc.y - u * 0.55f),
+        gc_v2(bc.x + bw * 0.5f, bc.y + u * 0.55f),
+        col, u * 0.55f, 0
+    );
+
+    gc_text_center(
+        dl,
+        gc_v2(bc.x - bw * 0.5f, bc.y - u * 0.55f),
+        gc_v2(bw, u * 1.1f),
+        IM_COL32(255, 255, 255, 255),
+        txt
+    );
+}
+
+/* Right-aligned pill tag ("YOU", "SOS"); moves *right_x left past it. */
+static void gc_tag(
+    ImDrawList* dl, float* right_x, float y, float h,
+    const char* label, ImU32 col, float u
+) {
+    float w = gc_text_w(label) + u * 0.9f;
+    float x = *right_x - w;
+
+    ImDrawList_AddRectFilled(
+        dl, gc_v2(x, y), gc_v2(x + w, y + h), col, h * 0.5f, 0
+    );
+
+    gc_text_center(
+        dl, gc_v2(x, y), gc_v2(w, h),
+        IM_COL32(255, 255, 255, 255), label
+    );
+
+    *right_x = x - u * 0.4f;
+}
+
+/* Section title with a faint rule running to the right edge. */
+static void gc_section(const char* title, float width, float u) {
+    ImVec2 p;
+    igGetCursorScreenPos(&p);
+
+    float lh = igGetTextLineHeight();
+    ImDrawList* dl = igGetWindowDrawList();
+
+    ImDrawList_AddText_Vec2(
+        dl, p, IM_COL32(181, 156, 245, 255), title, NULL
+    );
+
+    float tw = gc_text_w(title);
+
+    ImDrawList_AddLine(
+        dl,
+        gc_v2(p.x + tw + u * 0.6f, p.y + lh * 0.55f),
+        gc_v2(p.x + width, p.y + lh * 0.55f),
+        IM_COL32(190, 160, 255, 40),
+        1.0f
+    );
+
+    igDummy(gc_v2(width, lh + u * 0.35f));
+}
+
+/* Flat toggle/action button with a centred label. `on` = green. */
+static bool gc_pill_button(
+    const char* id, ImVec2 p, ImVec2 sz, const char* label, bool on, float u
+) {
+    bool clicked = gc_button(
+        id, p, sz,
+        on ? IM_COL32(40, 160, 90, 255) : IM_COL32(255, 255, 255, 20),
+        on ? IM_COL32(55, 190, 110, 255) : IM_COL32(255, 255, 255, 42),
+        u * 0.6f,
+        on ? 0 : IM_COL32(190, 160, 255, 50)
+    );
+
+    gc_text_center(
+        igGetWindowDrawList(), p, sz,
+        IM_COL32(241, 236, 255, 255), label
+    );
+
+    return clicked;
+}
+
 /* Red "needs help" cards for every teammate whose SOS is active, each
  * with a LOCATE button (jumps to the Players tab, highlighting them).
  * Returns how many cards were drawn. */
@@ -1407,41 +1746,21 @@ static int gc_draw_sos_cards(float u, float width, const char* own_name) {
         return 0;
     }
 
-    int count = jsr_network_location_count(global_chat_net);
+    gc_loc locs[GC_MAX_LOCS];
+    int count = gc_load_locs(locs);
     int shown = 0;
     float lh = igGetTextLineHeight();
-    float card_h = lh * 1.7f + u * 0.4f;
+    float card_h = lh * 2.5f + u * 0.2f;
+    float pulse = 0.5f + 0.5f * sinf((float)igGetTime() * 5.0f);
 
     for (int i = 0; i < count; i++) {
-        char name[32];
-        char ip[64];
-        bool sos = false;
-        int emoji_id = 0;
+        const gc_loc* l = &locs[i];
 
-        name[0] = '\0';
-        ip[0] = '\0';
-
-        if (
-            !jsr_network_get_location(
-                global_chat_net,
-                i,
-                name,
-                sizeof(name),
-                ip,
-                sizeof(ip),
-                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                &sos,
-                &emoji_id
-            )
-        ) {
+        if (!l->sos) {
             continue;
         }
 
-        if (!sos || name[0] == '\0') {
-            continue;
-        }
-
-        if (own_name != NULL && strcmp(own_name, name) == 0) {
+        if (own_name != NULL && strcmp(own_name, l->name) == 0) {
             continue;
         }
 
@@ -1452,36 +1771,54 @@ static int gc_draw_sos_cards(float u, float width, const char* own_name) {
 
         ImDrawList_AddRectFilled(
             dl, p, gc_add(p, width, card_h),
-            IM_COL32(224, 56, 44, 56), u * 0.6f, 0
+            IM_COL32(224, 56, 44, (int)(36.0f + pulse * 40.0f)),
+            u * 0.7f, 0
         );
         ImDrawList_AddRect(
             dl, p, gc_add(p, width, card_h),
-            IM_COL32(255, 90, 74, 128), u * 0.6f, 0, 1.0f
+            IM_COL32(255, 90, 74, (int)(110.0f + pulse * 90.0f)),
+            u * 0.7f, 0, 1.2f
         );
 
-        ImVec2 icon_c = gc_v2(p.x + u * 1.0f, p.y + card_h * 0.5f);
+        ImVec2 icon_c = gc_v2(p.x + u * 1.2f, p.y + card_h * 0.5f);
         gc_icon_sos(
-            dl, icon_c, lh * 0.95f,
+            dl, icon_c, lh * 1.05f,
             IM_COL32(255, 90, 74, 255),
             IM_COL32(60, 20, 20, 255)
         );
 
-        char line[80];
-        snprintf(line, sizeof(line), "%s needs help", name);
-
-        ImDrawList_AddText_Vec2(
-            dl,
-            gc_v2(p.x + u * 1.9f, p.y + (card_h - lh) * 0.5f),
-            IM_COL32(255, 214, 208, 255),
-            line,
-            NULL
+        float bw = gc_text_w("LOCATE") + u * 1.2f;
+        float bh = card_h * 0.56f;
+        ImVec2 bmn = gc_v2(
+            p.x + width - bw - u * 0.6f,
+            p.y + (card_h - bh) * 0.5f
         );
 
-        float bw = gc_text_w("LOCATE") + u * 1.2f;
-        float bh = card_h * 0.64f;
-        ImVec2 bmn = gc_v2(
-            p.x + width - bw - u * 0.5f,
-            p.y + (card_h - bh) * 0.5f
+        float tx = p.x + u * 2.3f;
+        float max_w = bmn.x - u * 0.5f - tx;
+
+        char nm[48];
+        gc_clip_text(nm, sizeof(nm), l->name, max_w);
+
+        ImDrawList_AddText_Vec2(
+            dl, gc_v2(tx, p.y + card_h * 0.5f - lh * 1.05f),
+            IM_COL32(255, 236, 232, 255), nm, NULL
+        );
+
+        char sub[48];
+
+        if (l->ping >= 0) {
+            snprintf(sub, sizeof(sub), "needs help  -  %d ms", l->ping);
+        } else {
+            snprintf(sub, sizeof(sub), "needs help");
+        }
+
+        char sub_c[48];
+        gc_clip_text(sub_c, sizeof(sub_c), sub, max_w);
+
+        ImDrawList_AddText_Vec2(
+            dl, gc_v2(tx, p.y + card_h * 0.5f + lh * 0.1f),
+            IM_COL32(255, 168, 158, 230), sub_c, NULL
         );
 
         char btn_id[24];
@@ -1492,10 +1829,10 @@ static int gc_draw_sos_cards(float u, float width, const char* own_name) {
                 btn_id, bmn, gc_v2(bw, bh),
                 IM_COL32(224, 56, 44, 255),
                 IM_COL32(245, 85, 70, 255),
-                u * 0.4f, 0
+                u * 0.45f, 0
             )
         ) {
-            strncpy(gc_locate_name, name, sizeof(gc_locate_name) - 1);
+            strncpy(gc_locate_name, l->name, sizeof(gc_locate_name) - 1);
             gc_locate_name[sizeof(gc_locate_name) - 1] = '\0';
             gc_tab = GC_TAB_PLAYERS;
         }
@@ -1506,7 +1843,7 @@ static int gc_draw_sos_cards(float u, float width, const char* own_name) {
         );
 
         igSetCursorScreenPos(p);
-        igDummy(gc_v2(width, card_h + u * 0.35f));
+        igDummy(gc_v2(width, card_h + u * 0.4f));
 
         shown++;
     }
@@ -1514,19 +1851,49 @@ static int gc_draw_sos_cards(float u, float width, const char* own_name) {
     return shown;
 }
 
-/* Roster list (Players tab). Same data the old "Online Players"
- * window used: roster + the location feed for IP / SOS / emoji. */
-static void gc_draw_players_list(float u, float width, const char* own_name) {
-    (void)own_name;
+typedef struct {
+    char name[32];
+    char owner[32];
+    char ip[64];
+    int score;
+    int ping;
+    int emoji;
+    bool sos;
+    bool you;
+    bool has_loc;
+} gc_player_row;
 
+/* You first, then anyone with SOS on, then highest score, then name. */
+static int gc_player_cmp(const void* a, const void* b) {
+    const gc_player_row* x = (const gc_player_row*)a;
+    const gc_player_row* y = (const gc_player_row*)b;
+
+    if (x->you != y->you) return x->you ? -1 : 1;
+    if (x->sos != y->sos) return x->sos ? -1 : 1;
+    if (x->score != y->score) return (y->score > x->score) - (y->score < x->score);
+
+    return strcmp(x->name, y->name);
+}
+
+/* Roster list (Players tab): avatar, owner + name + emoji, score / server,
+ * ping, YOU / SOS tags. Tap a row to highlight it. */
+static void gc_draw_players_list(float u, float width, const char* own_name) {
     int roster_count =
         global_chat_net != NULL ?
             jsr_network_roster_count(global_chat_net) :
             0;
 
-    if (roster_count == 0) {
-        igTextDisabled("No players online.");
+    if (roster_count <= 0) {
+        igTextDisabled(
+            (global_chat_net != NULL && jsr_network_is_connected(global_chat_net)) ?
+                "No players online." :
+                "Not connected to team chat."
+        );
         return;
+    }
+
+    if (roster_count > 64) {
+        roster_count = 64;
     }
 
     static const ImU32 avatar_cols[6] = {
@@ -1538,153 +1905,245 @@ static void gc_draw_players_list(float u, float width, const char* own_name) {
         IM_COL32(150, 200, 90, 255)
     };
 
-    float lh = igGetTextLineHeight();
-    float row_h = lh * 2.3f;
+    gc_loc locs[GC_MAX_LOCS];
+    int loc_n = gc_load_locs(locs);
+
+    gc_player_row rows[64];
+    int n = 0;
 
     for (int i = 0; i < roster_count; i++) {
-        char name[32];
-        char owner[32];
+        gc_player_row* r = &rows[n];
+
+        memset(r, 0, sizeof(*r));
+        r->ping = -1;
 
         if (
             !jsr_network_roster_name(
-                global_chat_net, i, name, sizeof(name)
+                global_chat_net, i, r->name, sizeof(r->name)
             )
         ) {
             continue;
         }
 
-        owner[0] = '\0';
         jsr_network_roster_owner(
-            global_chat_net, i, owner, sizeof(owner)
+            global_chat_net, i, r->owner, sizeof(r->owner)
         );
 
-        char loc_ip[64] = "";
-        bool loc_sos = false;
-        int loc_emoji_id = 0;
+        const gc_loc* l = gc_find_loc(locs, loc_n, r->name);
 
-        int loc_count =
-            jsr_network_location_count(global_chat_net);
-
-        for (int j = 0; j < loc_count; j++) {
-            char loc_name[32];
-
-            if (
-                !jsr_network_get_location(
-                    global_chat_net,
-                    j,
-                    loc_name,
-                    sizeof(loc_name),
-                    loc_ip,
-                    sizeof(loc_ip),
-                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                    &loc_sos,
-                    &loc_emoji_id
-                )
-            ) {
-                loc_ip[0] = '\0';
-                continue;
-            }
-
-            if (strcmp(loc_name, name) == 0) {
-                break;
-            }
-
-            loc_ip[0] = '\0';
-            loc_sos = false;
-            loc_emoji_id = 0;
+        if (l != NULL) {
+            r->has_loc = true;
+            r->score = l->score;
+            r->ping = l->ping;
+            r->emoji = l->emoji;
+            r->sos = l->sos;
+            snprintf(r->ip, sizeof(r->ip), "%s", l->ip);
         }
+
+        r->you =
+            own_name != NULL &&
+            own_name[0] != '\0' &&
+            strcmp(own_name, r->name) == 0;
+
+        n++;
+    }
+
+    qsort(rows, (size_t)n, sizeof(rows[0]), gc_player_cmp);
+
+    float lh = igGetTextLineHeight();
+    float row_h = lh * 2.9f;
+    float gap = u * 0.4f;
+    float pulse = 0.5f + 0.5f * sinf((float)igGetTime() * 5.0f);
+
+    for (int ri = 0; ri < n; ri++) {
+        const gc_player_row* pr = &rows[ri];
 
         ImVec2 p;
         igGetCursorScreenPos(&p);
 
+        ImVec2 pmax = gc_add(p, width, row_h);
         ImDrawList* dl = igGetWindowDrawList();
 
         bool located =
             gc_locate_name[0] != '\0' &&
-            strcmp(gc_locate_name, name) == 0;
+            strcmp(gc_locate_name, pr->name) == 0;
 
-        ImDrawList_AddRectFilled(
-            dl, p, gc_add(p, width, row_h - 4.0f),
-            located ?
-                IM_COL32(124, 74, 232, 90) :
-                IM_COL32(255, 255, 255, 12),
-            u * 0.5f, 0
+        igPushID_Str(pr->name);
+
+        bool row_clicked = igInvisibleButton(
+            "##gc_prow", gc_v2(width, row_h), ImGuiButtonFlags_None
         );
+
+        bool hovered = igIsItemHovered(0) || igIsItemActive();
+
+        ImU32 bg =
+            located ? IM_COL32(124, 74, 232, 95) :
+            pr->sos ? IM_COL32(224, 56, 44, 50) :
+            hovered ? IM_COL32(255, 255, 255, 24) :
+                      IM_COL32(255, 255, 255, 12);
+
+        ImDrawList_AddRectFilled(dl, p, pmax, bg, u * 0.7f, 0);
 
         if (located) {
             ImDrawList_AddRect(
-                dl, p, gc_add(p, width, row_h - 4.0f),
-                IM_COL32(190, 160, 255, 160), u * 0.5f, 0, 1.0f
+                dl, p, pmax, IM_COL32(190, 160, 255, 170),
+                u * 0.7f, 0, 1.2f
+            );
+        } else if (pr->sos) {
+            ImDrawList_AddRect(
+                dl, p, pmax,
+                IM_COL32(255, 90, 74, (int)(110.0f + pulse * 90.0f)),
+                u * 0.7f, 0, 1.2f
+            );
+        } else if (pr->you) {
+            ImDrawList_AddRect(
+                dl, p, pmax, IM_COL32(125, 255, 176, 80),
+                u * 0.7f, 0, 1.0f
             );
         }
 
-        /* Avatar */
+        /* Avatar with an online dot. */
         unsigned hash = 0;
-        for (const char* c = name; *c; c++) {
+
+        for (const char* c = pr->name; *c; c++) {
             hash = hash * 31u + (unsigned char)*c;
         }
 
-        ImVec2 ac = gc_v2(p.x + u * 1.1f, p.y + (row_h - 4.0f) * 0.5f);
+        float cy = p.y + row_h * 0.5f;
+        float r_av = lh * 0.95f;
+        ImVec2 ac = gc_v2(p.x + u * 0.9f + r_av, cy);
+
         ImDrawList_AddCircleFilled(
-            dl, ac, lh * 0.8f, avatar_cols[hash % 6u], 20
+            dl, ac, r_av, avatar_cols[hash % 6u], 24
         );
 
-        char initial[2] = { name[0] != '\0' ? name[0] : '?', '\0' };
+        char initial[8];
+        gc_initial(pr->name, initial);
+
         gc_text_center(
             dl,
-            gc_v2(ac.x - lh, ac.y - lh),
-            gc_v2(lh * 2.0f, lh * 2.0f),
+            gc_v2(ac.x - r_av, ac.y - r_av),
+            gc_v2(r_av * 2.0f, r_av * 2.0f),
             IM_COL32(255, 255, 255, 255),
             initial
         );
 
-        float tx = p.x + u * 2.4f;
-        float ty = p.y + (row_h - 4.0f - lh) * 0.5f;
+        ImVec2 dot = gc_v2(ac.x + r_av * 0.72f, ac.y + r_av * 0.72f);
+        ImDrawList_AddCircleFilled(
+            dl, dot, u * 0.38f, IM_COL32(28, 16, 52, 255), 12
+        );
+        ImDrawList_AddCircleFilled(
+            dl, dot, u * 0.26f, IM_COL32(125, 255, 176, 255), 12
+        );
 
-        if (owner[0] != '\0') {
-            ImDrawList_AddText_Vec2(
-                dl, gc_v2(tx, ty),
-                IM_COL32(242, 77, 77, 255), owner, NULL
-            );
-            tx += gc_text_w(owner) + u * 0.4f;
+        float tx = ac.x + r_av + u * 0.8f;
+        float right = pmax.x - u * 0.7f;
+        float ty1 = cy - lh * 1.1f;
+        float ty2 = cy + lh * 0.1f;
+
+        /* Tags on the right of line 1. */
+        float tag_h = lh * 1.2f;
+        float tag_y = ty1 - (tag_h - lh) * 0.5f;
+        float tag_x = right;
+
+        if (pr->you) {
+            gc_tag(dl, &tag_x, tag_y, tag_h, "YOU", IM_COL32(124, 74, 232, 230), u);
         }
+
+        if (pr->sos) {
+            gc_tag(dl, &tag_x, tag_y, tag_h, "SOS", IM_COL32(224, 56, 44, 255), u);
+        }
+
+        /* Line 1: owner (red) + name + emoji. */
+        float avail1 = tag_x - tx;
+        float x = tx;
+
+        if (pr->owner[0] != '\0') {
+            char ow[40];
+            gc_clip_text(ow, sizeof(ow), pr->owner, avail1 * 0.45f);
+
+            ImDrawList_AddText_Vec2(
+                dl, gc_v2(x, ty1), IM_COL32(242, 77, 77, 255), ow, NULL
+            );
+
+            x += gc_text_w(ow) + u * 0.4f;
+        }
+
+        const char* em = profile_emoji_at(pr->emoji);
+        float ew = em[0] != '\0' ? gc_emoji_w(em) + u * 0.4f : 0.0f;
+
+        char nm[48];
+        gc_clip_text(nm, sizeof(nm), pr->name, avail1 - (x - tx) - ew);
 
         ImDrawList_AddText_Vec2(
-            dl, gc_v2(tx, ty),
-            IM_COL32(180, 156, 245, 255), name, NULL
+            dl, gc_v2(x, ty1),
+            pr->you ?
+                IM_COL32(125, 255, 176, 255) :
+                IM_COL32(180, 156, 245, 255),
+            nm, NULL
         );
-        tx += gc_text_w(name) + u * 0.5f;
 
-        const char* loc_emoji = profile_emoji_at(loc_emoji_id);
+        x += gc_text_w(nm) + u * 0.4f;
 
-        if (loc_emoji[0] != '\0') {
-            ImDrawList_AddText_Vec2(
-                dl, gc_v2(tx, ty),
-                IM_COL32(255, 255, 255, 255), loc_emoji, NULL
-            );
-            tx += gc_text_w(loc_emoji) + u * 0.4f;
+        if (em[0] != '\0') {
+            gc_emoji_text(dl, gc_v2(x, ty1), IM_COL32(255, 255, 255, 255), em);
         }
 
-        if (loc_sos) {
-            ImDrawList_AddText_Vec2(
-                dl, gc_v2(tx, ty),
-                IM_COL32(255, 70, 55, 255), "SOS", NULL
+        /* Line 2: score / server on the left, ping on the right. */
+        ImU32 dim = IM_COL32(140, 133, 170, 230);
+        float ping_w = 0.0f;
+        char ping_s[16] = "";
+
+        if (pr->has_loc && pr->ping >= 0) {
+            snprintf(ping_s, sizeof(ping_s), "%d ms", pr->ping);
+            ping_w = gc_text_w(ping_s) + u * 0.8f;
+
+            ImDrawList_AddCircleFilled(
+                dl, gc_v2(right - ping_w + u * 0.25f, ty2 + lh * 0.5f),
+                u * 0.22f, gc_ping_color(pr->ping), 10
             );
-        }
-
-        if (loc_ip[0] != '\0') {
-            float iw = gc_text_w(loc_ip);
 
             ImDrawList_AddText_Vec2(
-                dl,
-                gc_v2(p.x + width - iw - u * 0.7f, ty),
-                IM_COL32(140, 133, 170, 230),
-                loc_ip,
-                NULL
+                dl, gc_v2(right - ping_w + u * 0.8f, ty2),
+                gc_ping_color(pr->ping), ping_s, NULL
             );
         }
 
-        igDummy(gc_v2(width, row_h));
+        char info[128];
+
+        if (pr->has_loc) {
+            char sc[24];
+            gc_fmt_num(sc, sizeof(sc), pr->score);
+
+            if (pr->ip[0] != '\0') {
+                snprintf(info, sizeof(info), "%s  -  %s", sc, pr->ip);
+            } else {
+                snprintf(info, sizeof(info), "%s", sc);
+            }
+        } else {
+            snprintf(info, sizeof(info), "No game info");
+        }
+
+        char info_c[128];
+        gc_clip_text(
+            info_c, sizeof(info_c), info,
+            right - ping_w - u * 0.5f - tx
+        );
+
+        ImDrawList_AddText_Vec2(dl, gc_v2(tx, ty2), dim, info_c, NULL);
+
+        /* Tap (not drag) toggles the highlight. */
+        if (row_clicked && !gc_scroll_dragged) {
+            if (located) {
+                gc_locate_name[0] = '\0';
+            } else {
+                snprintf(gc_locate_name, sizeof(gc_locate_name), "%s", pr->name);
+            }
+        }
+
+        igPopID();
+
+        igDummy(gc_v2(width, gap));
     }
 }
 
@@ -1786,6 +2245,53 @@ static void gc_message_scrollbar(
     }
 }
 
+/* Ends a scrolling child that was begun with ImGuiWindowFlags_NoScrollbar:
+ * finger/mouse drag scrolls it, and the slim custom scrollbar is drawn
+ * next to it (only when there is something to scroll). */
+static void gc_end_scroll_child(
+    ImVec2 area_pos,
+    float area_h,
+    float hit_w,
+    float child_w,
+    float u,
+    bool allow_drag_scroll,
+    bool over_items
+) {
+    if (
+        allow_drag_scroll &&
+        igIsWindowHovered(0) &&
+        (over_items || !igIsAnyItemActive()) &&
+        igIsMouseDragging(0, 6.0f)
+    ) {
+        igSetScrollY_Float(
+            igGetScrollY() - igGetIO_Nil()->MouseDelta.y
+        );
+        gc_scroll_dragged = true;
+    }
+
+    float scroll_max = igGetScrollMaxY();
+    float scroll_y = igGetScrollY();
+    ImGuiWindow* win = igGetCurrentWindow();
+
+    igEndChild();
+
+    if (scroll_max > 1.0f) {
+        gc_message_scrollbar(
+            gc_v2(area_pos.x + child_w, area_pos.y),
+            area_h,
+            hit_w,
+            area_h,
+            scroll_max,
+            scroll_y,
+            win,
+            u
+        );
+    }
+}
+
+/* Chat messages: one rounded bubble per message (name line + wrapped
+ * text), consecutive messages from the same sender in the same minute
+ * are grouped, join/leave notices are compact one-liners. */
 static void gc_draw_messages(
     tenv* env,
     ImVec2 area_pos,
@@ -1818,7 +2324,47 @@ static void gc_draw_messages(
     bool was_at_bottom =
         igGetScrollY() >= igGetScrollMaxY() - 1.0f;
 
-    float ts_w = gc_text_w("00:00") + u * 0.8f;
+    ImDrawList* dl = igGetWindowDrawList();
+
+    float w = avail.x;
+    float lh = igGetTextLineHeight();
+    float pad_x = u * 0.75f;
+    float pad_y = u * 0.42f;
+    float wrap_w = w - pad_x * 2.0f;
+
+    if (wrap_w < 20.0f) wrap_w = 20.0f;
+
+    gc_loc locs[GC_MAX_LOCS];
+    int loc_n = gc_load_locs(locs);
+
+    bool is_connected =
+        global_chat_net != NULL &&
+        jsr_network_is_connected(global_chat_net);
+
+    ImU32 dim = IM_COL32(150, 142, 185, 210);
+    ImU32 dimmer = IM_COL32(120, 112, 155, 200);
+
+    if (global_chat_message_count == 0) {
+        ImVec2 cp;
+        igGetCursorScreenPos(&cp);
+
+        float box_h = area_size.y * 0.5f;
+
+        gc_text_center(
+            dl, cp, gc_v2(w, box_h), dim,
+            is_connected ? "No messages yet" : "Connecting to team chat..."
+        );
+        gc_text_center(
+            dl, gc_add(cp, 0.0f, lh * 1.5f), gc_v2(w, box_h), dimmer,
+            "Say hi to your team"
+        );
+
+        igDummy(gc_v2(w, box_h));
+    }
+
+    char prev_hm[8] = "";
+    const char* prev_name = NULL;
+    bool prev_normal = false;
 
     for (int i = 0; i < global_chat_message_count; i++) {
         global_chat_message* m = &global_chat_messages[i];
@@ -1834,52 +2380,186 @@ static void gc_draw_messages(
 
         igPushID_Int(i);
 
-        igTextColored(
-            (ImVec4){0.55f, 0.50f, 0.72f, 1.0f},
-            "%s",
-            hm
-        );
+        bool joined = strcmp(m->text, "joined public chat") == 0;
+        bool left = strcmp(m->text, "left public chat") == 0;
 
-        igSameLine(ts_w, -1.0f);
+        if (!is_system && (joined || left)) {
+            const char* verb = joined ? "joined" : "left";
+            ImU32 dotc =
+                joined ?
+                    IM_COL32(125, 255, 176, 255) :
+                    IM_COL32(242, 77, 77, 255);
 
-        if (is_system) {
-            igPushStyleColor_Vec4(
-                ImGuiCol_Text,
-                (ImVec4){0.62f, 0.91f, 1.0f, 1.0f}
-            );
-            igTextWrapped("%s", m->text);
-            igPopStyleColor(1);
-        } else {
-            if (m->owner[0] != '\0') {
-                igTextColored(
-                    (ImVec4){0.95f, 0.3f, 0.3f, 1.0f},
-                    "%s",
-                    m->owner
-                );
-                igSameLine(0.0f, 6.0f);
+            /* "left" immediately followed by "joined" = a reconnect blip. */
+            if (left && i + 1 < global_chat_message_count) {
+                global_chat_message* nx = &global_chat_messages[i + 1];
+
+                if (
+                    strcmp(nx->text, "joined public chat") == 0 &&
+                    strcmp(nx->name, m->name) == 0
+                ) {
+                    verb = "reconnected";
+                    dotc = IM_COL32(255, 204, 77, 255);
+                    snprintf(hm, sizeof(hm), "%.5s", nx->time_str);
+                    i++;
+                }
             }
 
-            if (is_own) {
-                igTextColored(
-                    (ImVec4){0.49f, 1.0f, 0.69f, 1.0f},
-                    "%s",
-                    m->name
+            prev_normal = false;
+
+            if (gc_show_events) {
+                ImVec2 p;
+                igGetCursorScreenPos(&p);
+
+                float tw = gc_text_w(hm);
+                float tx = p.x + pad_x * 1.4f;
+
+                ImDrawList_AddCircleFilled(
+                    dl, gc_v2(p.x + pad_x * 0.7f, p.y + lh * 0.5f),
+                    u * 0.22f, dotc, 10
                 );
-            } else {
-                igTextColored(
-                    (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
-                    "%s",
-                    m->name
+
+                float max_w =
+                    w - pad_x * 1.4f - tw - pad_x -
+                    gc_text_w(verb) - u * 0.5f;
+
+                char nm[48];
+                gc_clip_text(nm, sizeof(nm), m->name, max_w);
+
+                ImDrawList_AddText_Vec2(
+                    dl, gc_v2(tx, p.y), dim, nm, NULL
                 );
+
+                tx += gc_text_w(nm) + u * 0.4f;
+
+                ImDrawList_AddText_Vec2(
+                    dl, gc_v2(tx, p.y), dimmer, verb, NULL
+                );
+
+                ImDrawList_AddText_Vec2(
+                    dl, gc_v2(p.x + w - tw - pad_x * 0.5f, p.y),
+                    dimmer, hm, NULL
+                );
+
+                igDummy(gc_v2(w, lh + u * 0.35f));
             }
 
-            igSameLine(0.0f, u * 0.5f);
-            igTextWrapped("%s", m->text);
+            igPopID();
+            continue;
         }
 
-        igPopID();
+        bool grouped =
+            !is_system &&
+            prev_normal &&
+            prev_name != NULL &&
+            strcmp(prev_name, m->name) == 0 &&
+            strcmp(prev_hm, hm) == 0;
 
-        igDummy(gc_v2(1.0f, u * 0.2f));
+        ImVec2 tsz;
+        igCalcTextSize(&tsz, m->text, NULL, false, wrap_w);
+
+        float head_h = grouped ? 0.0f : lh + u * 0.15f;
+        float bh = pad_y * 2.0f + head_h + tsz.y;
+
+        ImVec2 p;
+        igGetCursorScreenPos(&p);
+
+        ImVec2 pmax = gc_add(p, w, bh);
+
+        ImU32 bg =
+            is_system ? IM_COL32(62, 186, 255, 26) :
+            is_own ? IM_COL32(124, 74, 232, 78) :
+                     IM_COL32(255, 255, 255, 13);
+
+        ImDrawList_AddRectFilled(dl, p, pmax, bg, u * 0.65f, 0);
+
+        if (is_system) {
+            ImDrawList_AddRect(
+                dl, p, pmax, IM_COL32(120, 210, 255, 70),
+                u * 0.65f, 0, 1.0f
+            );
+        } else if (is_own) {
+            ImDrawList_AddRect(
+                dl, p, pmax, IM_COL32(190, 160, 255, 60),
+                u * 0.65f, 0, 1.0f
+            );
+        }
+
+        if (!grouped) {
+            float hx = p.x + pad_x;
+            float hy = p.y + pad_y;
+            float tw = gc_text_w(hm);
+
+            ImDrawList_AddText_Vec2(
+                dl, gc_v2(pmax.x - pad_x - tw, hy), dimmer, hm, NULL
+            );
+
+            float room = (pmax.x - pad_x - tw - u * 0.6f) - hx;
+
+            if (is_system) {
+                ImDrawList_AddText_Vec2(
+                    dl, gc_v2(hx, hy),
+                    IM_COL32(158, 232, 255, 255), "System", NULL
+                );
+            } else {
+                const gc_loc* l = gc_find_loc(locs, loc_n, m->name);
+                const char* em = l != NULL ? profile_emoji_at(l->emoji) : "";
+                float ew = em[0] != '\0' ? gc_emoji_w(em) + u * 0.4f : 0.0f;
+                float x = hx;
+
+                if (m->owner[0] != '\0') {
+                    char ow[40];
+                    gc_clip_text(ow, sizeof(ow), m->owner, room * 0.45f);
+
+                    ImDrawList_AddText_Vec2(
+                        dl, gc_v2(x, hy),
+                        IM_COL32(242, 77, 77, 255), ow, NULL
+                    );
+
+                    x += gc_text_w(ow) + u * 0.4f;
+                }
+
+                char nm[48];
+                gc_clip_text(nm, sizeof(nm), m->name, room - (x - hx) - ew);
+
+                ImDrawList_AddText_Vec2(
+                    dl, gc_v2(x, hy),
+                    is_own ?
+                        IM_COL32(125, 255, 176, 255) :
+                        IM_COL32(181, 156, 245, 255),
+                    nm, NULL
+                );
+
+                x += gc_text_w(nm) + u * 0.4f;
+
+                if (em[0] != '\0') {
+                    gc_emoji_text(
+                        dl, gc_v2(x, hy), IM_COL32(255, 255, 255, 255), em
+                    );
+                }
+            }
+        }
+
+        igSetCursorScreenPos(gc_v2(p.x + pad_x, p.y + pad_y + head_h));
+        igPushTextWrapPos(igGetCursorPosX() + wrap_w);
+        igPushStyleColor_Vec4(
+            ImGuiCol_Text,
+            is_system ?
+                (ImVec4){0.62f, 0.91f, 1.0f, 1.0f} :
+                (ImVec4){0.93f, 0.91f, 1.0f, 1.0f}
+        );
+        igTextUnformatted(m->text, NULL);
+        igPopStyleColor(1);
+        igPopTextWrapPos();
+
+        igSetCursorScreenPos(p);
+        igDummy(gc_v2(w, bh + (grouped ? u * 0.12f : u * 0.3f)));
+
+        prev_normal = !is_system;
+        prev_name = m->name;
+        snprintf(prev_hm, sizeof(prev_hm), "%s", hm);
+
+        igPopID();
     }
 
     /* Teammates asking for help show up as cards at the end. */
@@ -1896,33 +2576,48 @@ static void gc_draw_messages(
 
     last_seen_message_count = global_chat_message_count;
 
-    /* Touch/mouse drag on the list itself scrolls it. */
-    if (
-        allow_drag_scroll &&
-        igIsWindowHovered(0) &&
-        !igIsAnyItemActive() &&
-        igIsMouseDragging(0, 6.0f)
-    ) {
-        igSetScrollY_Float(
-            igGetScrollY() - igGetIO_Nil()->MouseDelta.y
+    /* "Jump to latest" button while scrolled up. */
+    if (igGetScrollMaxY() - igGetScrollY() > lh * 3.0f) {
+        ImVec2 wpos;
+        ImVec2 wsz;
+        igGetWindowPos(&wpos);
+        igGetWindowSize(&wsz);
+
+        float r = u * 1.1f;
+        ImVec2 c = gc_v2(
+            wpos.x + wsz.x - r - u * 0.4f,
+            wpos.y + wsz.y - r - u * 0.4f
         );
+
+        igSetCursorScreenPos(gc_v2(c.x - r, c.y - r));
+
+        bool jump = igInvisibleButton(
+            "##gc_jump", gc_v2(r * 2.0f, r * 2.0f), ImGuiButtonFlags_None
+        );
+
+        bool hot = igIsItemHovered(0) || igIsItemActive();
+
+        ImDrawList_AddCircleFilled(
+            dl, c, r,
+            hot ? IM_COL32(150, 100, 250, 245) : IM_COL32(124, 74, 232, 230),
+            24
+        );
+
+        ImDrawList_AddTriangleFilled(
+            dl,
+            gc_v2(c.x - r * 0.42f, c.y - r * 0.18f),
+            gc_v2(c.x + r * 0.42f, c.y - r * 0.18f),
+            gc_v2(c.x, c.y + r * 0.38f),
+            IM_COL32(255, 255, 255, 255)
+        );
+
+        if (jump) {
+            igSetScrollY_Float(igGetScrollMaxY());
+        }
     }
 
-    float scroll_max = igGetScrollMaxY();
-    float scroll_y = igGetScrollY();
-    ImGuiWindow* msg_window = igGetCurrentWindow();
-
-    igEndChild();
-
-    gc_message_scrollbar(
-        gc_v2(area_pos.x + child_w, area_pos.y),
-        area_size.y,
-        hit_w,
-        area_size.y,
-        scroll_max,
-        scroll_y,
-        msg_window,
-        u
+    gc_end_scroll_child(
+        area_pos, area_size.y, hit_w, child_w, u, allow_drag_scroll, false
     );
 }
 
@@ -2003,10 +2698,17 @@ static void gc_draw_emoji_row(
                 profile_emoji_at(e) :
                 "-";
 
-        gc_text_center(
-            dl, p, gc_v2(chip_w, chip_h),
-            IM_COL32(255, 255, 255, 255), label
-        );
+        if (profile_emoji_at(e)[0] != '\0') {
+            gc_emoji_center(
+                dl, p, gc_v2(chip_w, chip_h),
+                IM_COL32(255, 255, 255, 255), label
+            );
+        } else {
+            gc_text_center(
+                dl, p, gc_v2(chip_w, chip_h),
+                IM_COL32(255, 255, 255, 255), label
+            );
+        }
 
         if (clicked && !chips_dragged) {
             usrs->profile_emoji_id = e;
@@ -2148,9 +2850,19 @@ static void global_chat_panel_contents(
      * every return path below must PopFont() to match.) */
     igPushFont(NULL, igGetStyle()->FontSizeBase * 0.85f);
 
+    /* The panel font (JetBrains Mono) has no profile-emoji glyphs;
+     * Liberation Sans does, so emoji are drawn with that one. */
+    gc_emoji_font = env->usr->imgui_data.regular_font[usrs->ui_font_size];
+
+    if (igIsMouseClicked_Bool(0, false)) {
+        gc_scroll_dragged = false;
+    }
+
     ImDrawList* dl = igGetWindowDrawList();
 
     float u = igGetTextLineHeight();
+
+    const char* own_name = usrs->nickname;
 
     bool rejected =
         global_chat_net != NULL &&
@@ -2168,10 +2880,15 @@ static void global_chat_panel_contents(
             jsr_network_roster_count(global_chat_net) :
             0;
 
+    int others_sos = gc_others_sos_count(own_name);
+
+    float pulse = 0.5f + 0.5f * sinf((float)igGetTime() * 5.0f);
+
     bool adjusting_pos =
         global_chat_adjust == GLOBAL_CHAT_ADJUST_POSITION;
     bool adjusting_size =
         global_chat_adjust == GLOBAL_CHAT_ADJUST_SIZE;
+    bool adjusting = adjusting_pos || adjusting_size;
 
     /* ---------- panel + rail backgrounds ---------- */
     float radius = u * 1.1f;
@@ -2199,7 +2916,7 @@ static void global_chat_panel_contents(
     );
 
     /* While moving/resizing, make that obvious. */
-    if (adjusting_pos || adjusting_size) {
+    if (adjusting) {
         ImDrawList_AddRect(
             dl, wp, pmax,
             IM_COL32(93, 255, 154, 220),
@@ -2216,6 +2933,10 @@ static void global_chat_panel_contents(
     float rail_y = wp.y + u * 0.9f;
     float rail_gap = u * 0.7f;
 
+    static const char* const tab_tips[4] = {
+        "Chat", "Players", "SOS", "Settings"
+    };
+
     for (int t = 0; t < 4; t++) {
         ImVec2 bmn = gc_v2(
             rail_x,
@@ -2231,6 +2952,15 @@ static void global_chat_panel_contents(
                 gc_add(bmn, btn + 3.0f, btn + 3.0f),
                 IM_COL32(124, 74, 232, 70),
                 btn * 0.32f, 0
+            );
+
+            /* Accent bar on the panel edge marks the open tab. */
+            ImDrawList_AddRectFilled(
+                dl,
+                gc_v2(wp.x + 2.0f, bmn.y + btn * 0.2f),
+                gc_v2(wp.x + 5.0f, bmn.y + btn * 0.8f),
+                IM_COL32(200, 175, 255, 255),
+                2.0f, 0
             );
         }
 
@@ -2252,6 +2982,10 @@ static void global_chat_panel_contents(
             gc_tab = t;
         }
 
+        if (igIsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+            igSetTooltip("%s", tab_tips[t]);
+        }
+
         ImVec2 c = gc_add(bmn, btn * 0.5f, btn * 0.5f);
         float is = btn * 0.52f;
         ImU32 ic = IM_COL32(255, 255, 255, 255);
@@ -2263,7 +2997,7 @@ static void global_chat_panel_contents(
         } else if (t == GC_TAB_SOS) {
             gc_icon_sos(
                 dl, c, is,
-                global_chat_is_sos_active() ?
+                (global_chat_is_sos_active() || others_sos > 0) ?
                     IM_COL32(255, 90, 74, 255) : ic,
                 on ?
                     IM_COL32(124, 74, 232, 255) :
@@ -2273,83 +3007,45 @@ static void global_chat_panel_contents(
             gc_icon_gear(dl, c, is, ic);
         }
 
+        char nb[8];
+
         if (t == GC_TAB_CHAT && !on && unread > 0) {
-            char nb[8];
             snprintf(
                 nb, sizeof(nb), "%lu",
                 unread > 99 ? 99UL : unread
             );
 
-            float bw = fmaxf(gc_text_w(nb) + u * 0.5f, u * 1.1f);
-            ImVec2 bc = gc_v2(bmn.x + btn - bw * 0.35f, bmn.y + bw * 0.1f);
+            gc_badge(dl, bmn, btn, u, nb, IM_COL32(255, 74, 94, 255));
+        }
 
-            ImDrawList_AddRectFilled(
-                dl,
-                gc_v2(bc.x - bw * 0.5f, bc.y - u * 0.55f),
-                gc_v2(bc.x + bw * 0.5f, bc.y + u * 0.55f),
-                IM_COL32(255, 74, 94, 255),
-                u * 0.55f, 0
+        if (t == GC_TAB_PLAYERS && is_connected && online_count > 0) {
+            snprintf(
+                nb, sizeof(nb), "%d",
+                online_count > 99 ? 99 : online_count
             );
 
-            gc_text_center(
-                dl,
-                gc_v2(bc.x - bw * 0.5f, bc.y - u * 0.55f),
-                gc_v2(bw, u * 1.1f),
-                IM_COL32(255, 255, 255, 255),
-                nb
+            gc_badge(dl, bmn, btn, u, nb, IM_COL32(40, 160, 90, 255));
+        }
+
+        if (t == GC_TAB_SOS && others_sos > 0) {
+            snprintf(
+                nb, sizeof(nb), "%d",
+                others_sos > 99 ? 99 : others_sos
+            );
+
+            gc_badge(
+                dl, bmn, btn, u, nb,
+                IM_COL32(255, (int)(50.0f + pulse * 50.0f), 50, 255)
             );
         }
     }
 
     gc_qm_ensure_loaded();
 
-    /* ---- rail extras: online count badge + quick messages ---- */
+    /* ---- rail extras: quick messages ---- */
     {
         float y = rail_y + 4.0f * (btn + rail_gap);
         float rail_bottom = pmax.y - u * 0.85f;
-
-        /* Online badge: green/red dot + number of players online. */
-        float ob_h = u * 1.5f;
-
-        if (y + ob_h <= rail_bottom) {
-            char ob[12];
-            snprintf(ob, sizeof(ob), "%d", online_count);
-
-            ImVec2 omn = gc_v2(rail_x, y);
-
-            ImDrawList_AddRectFilled(
-                dl, omn, gc_add(omn, btn, ob_h),
-                IM_COL32(255, 255, 255, 16), ob_h * 0.5f, 0
-            );
-
-            float dot_r = u * 0.2f;
-            float tw = gc_text_w(ob);
-            float total = dot_r * 2.0f + u * 0.4f + tw;
-            float sx0 = omn.x + (btn - total) * 0.5f;
-
-            ImDrawList_AddCircleFilled(
-                dl,
-                gc_v2(sx0 + dot_r, omn.y + ob_h * 0.5f),
-                dot_r,
-                is_connected ?
-                    IM_COL32(125, 255, 176, 255) :
-                    IM_COL32(242, 77, 77, 255),
-                10
-            );
-
-            ImDrawList_AddText_Vec2(
-                dl,
-                gc_v2(
-                    sx0 + dot_r * 2.0f + u * 0.4f,
-                    omn.y + (ob_h - u) * 0.5f
-                ),
-                IM_COL32(241, 236, 255, 255),
-                ob,
-                NULL
-            );
-
-            y += ob_h + rail_gap;
-        }
 
         /* Quick message buttons, as many as fit the rail's height. */
         float qh = btn * 0.72f;
@@ -2417,21 +3113,35 @@ static void global_chat_panel_contents(
     float pad = u * 0.95f;
 
     float head_h = gc_clampf(ws.y * 0.095f, u * 2.7f, u * 3.8f);
-    float foot_h = gc_clampf(ws.y * 0.058f, u * 1.9f, u * 2.7f);
-    float foot_y = wp.y + ws.y - foot_h - u * 0.85f;
+    float bottom_pad = u * 0.85f;
+    float done_h = u * 2.4f;
+
+    float content_bot = pmax.y - bottom_pad;
+
+    if (adjusting) {
+        content_bot -= done_h + u * 0.5f;
+    }
 
     /* ---------- header ---------- */
+    const char* title = "{ J S R } TEAM CHAT";
+    float title_y = wp.y + head_h * 0.1f;
+    float title_w;
+
     igPushFont(NULL, igGetStyle()->FontSizeBase * 0.85f * 1.12f);
+
+    title_w = gc_text_w(title);
 
     ImDrawList_AddText_Vec2(
         dl,
-        gc_v2(mx + pad, wp.y + head_h * 0.1f),
+        gc_v2(mx + pad, title_y),
         IM_COL32(241, 236, 255, 255),
-        "{ J S R } TEAM CHAT",
+        title,
         NULL
     );
 
     igPopFont();
+
+    float status_end = mx + pad + title_w;
 
     {
         char status[64];
@@ -2439,7 +3149,7 @@ static void global_chat_panel_contents(
         if (is_connected) {
             snprintf(
                 status, sizeof(status),
-                "Connected  |  %d online", online_count
+                "Connected  -  %d online", online_count
             );
         } else {
             snprintf(status, sizeof(status), "Not connected");
@@ -2450,7 +3160,7 @@ static void global_chat_panel_contents(
                 IM_COL32(125, 255, 176, 255) :
                 IM_COL32(242, 77, 77, 255);
 
-        float sy = wp.y + head_h * 0.1f + u * 1.35f;
+        float sy = title_y + u * 1.35f;
 
         ImDrawList_AddCircleFilled(
             dl,
@@ -2467,41 +3177,67 @@ static void global_chat_panel_contents(
             status,
             NULL
         );
+
+        float se = mx + pad + u * 0.95f + gc_text_w(status);
+
+        if (se > status_end) {
+            status_end = se;
+        }
     }
 
-    /* minimize + close (both collapse back to the Open card) */
+    /* SOS pill + close (collapses back to the Open card) */
     {
         float hb = head_h * 0.62f;
         float by = wp.y + (head_h - hb) * 0.5f;
         float x_close = pmax.x - pad * 0.5f - hb;
-        float x_min = x_close - hb - u * 0.1f;
 
-        if (
-            gc_button(
-                "##gc_min",
-                gc_v2(x_min, by),
-                gc_v2(hb, hb),
-                IM_COL32(255, 255, 255, 0),
-                IM_COL32(255, 255, 255, 30),
-                hb * 0.3f, 0
-            )
-        ) {
-            gc_close_requested = true;
+        /* One-tap SOS in the header (hidden if the panel is too narrow). */
+        bool sos_on = global_chat_is_sos_active();
+        char sl[24];
+
+        if (sos_on) {
+            long long secs = global_chat_sos_remaining_ms() / 1000;
+            snprintf(
+                sl, sizeof(sl), "SOS %lld:%02lld",
+                secs / 60, secs % 60
+            );
+        } else {
+            snprintf(sl, sizeof(sl), "SOS");
         }
 
-        gc_icon_minus(
-            dl, gc_v2(x_min + hb * 0.5f, by + hb * 0.5f),
-            hb * 0.45f, IM_COL32(203, 182, 255, 255)
-        );
+        float pw = gc_text_w(sl) + u * 1.5f;
+        float px = x_close - u * 0.4f - pw;
+
+        if (px > status_end + u * 0.6f) {
+            if (
+                gc_button(
+                    "##gc_h_sos",
+                    gc_v2(px, by),
+                    gc_v2(pw, hb),
+                    sos_on ?
+                        IM_COL32(255, (int)(50.0f + pulse * 40.0f), 40, 255) :
+                        IM_COL32(224, 56, 44, 255),
+                    IM_COL32(245, 90, 76, 255),
+                    hb * 0.5f, 0
+                )
+            ) {
+                gc_toggle_sos();
+            }
+
+            gc_text_center(
+                dl, gc_v2(px, by), gc_v2(pw, hb),
+                IM_COL32(255, 255, 255, 255), sl
+            );
+        }
 
         if (
             gc_button(
                 "##gc_close",
                 gc_v2(x_close, by),
                 gc_v2(hb, hb),
-                IM_COL32(255, 255, 255, 0),
-                IM_COL32(255, 255, 255, 30),
-                hb * 0.3f, 0
+                IM_COL32(255, 255, 255, 14),
+                IM_COL32(255, 255, 255, 40),
+                hb * 0.5f, 0
             )
         ) {
             gc_close_requested = true;
@@ -2517,114 +3253,32 @@ static void global_chat_panel_contents(
         dl,
         gc_v2(mx, wp.y + head_h),
         gc_v2(pmax.x - 1.0f, wp.y + head_h),
-        IM_COL32(190, 160, 255, 52),
+        IM_COL32(190, 160, 255, 34),
         1.0f
     );
 
-    /* ---------- footer: RESIZE / OPACITY / SOS ---------- */
-    {
-        float gap = u * 0.55f;
-        float bw = (mw - pad * 2.0f - gap * 2.0f) / 3.0f;
-        float bx = mx + pad;
-
-        /* RESIZE (becomes DONE while resizing, which saves) */
-        if (
-            gc_button(
-                "##gc_f_resize",
-                gc_v2(bx, foot_y),
-                gc_v2(bw, foot_h),
-                adjusting_size ?
-                    IM_COL32(40, 160, 90, 255) :
-                    IM_COL32(255, 255, 255, 18),
-                adjusting_size ?
-                    IM_COL32(55, 190, 110, 255) :
-                    IM_COL32(255, 255, 255, 40),
-                u * 0.6f, 0
-            )
-        ) {
-            gc_toggle_adjust(env, GLOBAL_CHAT_ADJUST_SIZE);
-        }
-
-        gc_text_center(
-            dl, gc_v2(bx, foot_y), gc_v2(bw, foot_h),
-            IM_COL32(241, 236, 255, 255),
-            adjusting_size ? "DONE" : "RESIZE"
-        );
-
-        /* OPACITY (cycles the panel's see-through level) */
-        float ox = bx + bw + gap;
-
-        if (
-            gc_button(
-                "##gc_f_opacity",
-                gc_v2(ox, foot_y),
-                gc_v2(bw, foot_h),
-                IM_COL32(255, 255, 255, 18),
-                IM_COL32(255, 255, 255, 40),
-                u * 0.6f, 0
-            )
-        ) {
-            static const float steps[4] = {0.15f, 0.40f, 0.65f, 0.82f};
-            int next = 0;
-
-            for (int k = 0; k < 4; k++) {
-                if (gc_panel_alpha < steps[k] - 0.01f) {
-                    next = k;
-                    break;
-                }
-
-                next = (k + 1) % 4;
-            }
-
-            gc_panel_alpha = steps[next];
-        }
-
-        gc_text_center(
-            dl, gc_v2(ox, foot_y), gc_v2(bw, foot_h),
-            IM_COL32(241, 236, 255, 255), "OPACITY"
-        );
-
-        /* SOS toggle */
-        float sx = ox + bw + gap;
-        bool sos_on = global_chat_is_sos_active();
-
-        if (
-            gc_button(
-                "##gc_f_sos",
-                gc_v2(sx, foot_y),
-                gc_v2(bw, foot_h),
-                sos_on ?
-                    IM_COL32(255, 70, 55, 255) :
-                    IM_COL32(224, 56, 44, 255),
-                IM_COL32(245, 90, 76, 255),
-                u * 0.6f, 0
-            )
-        ) {
-            gc_toggle_sos();
-        }
-
-        char sos_label[24];
-
-        if (sos_on) {
-            snprintf(
-                sos_label, sizeof(sos_label), "SOS %llds",
-                (long long)(global_chat_sos_remaining_ms() / 1000)
-            );
-        } else {
-            snprintf(sos_label, sizeof(sos_label), "SOS");
-        }
-
-        gc_text_center(
-            dl, gc_v2(sx, foot_y), gc_v2(bw, foot_h),
-            IM_COL32(255, 255, 255, 255), sos_label
-        );
-    }
+    /* Soft glow along the header line. */
+    ImDrawList_AddRectFilledMultiColor(
+        dl,
+        gc_v2(mx, wp.y + head_h - 1.0f),
+        gc_v2(pmax.x - radius * 0.6f, wp.y + head_h + 1.0f),
+        IM_COL32(190, 160, 255, 120),
+        IM_COL32(190, 160, 255, 0),
+        IM_COL32(190, 160, 255, 0),
+        IM_COL32(190, 160, 255, 120)
+    );
 
     /* ---------- tab content ---------- */
     float content_top = wp.y + head_h + u * 0.35f;
-    float content_bot = foot_y - u * 0.55f;
     float area_x = mx + pad * 0.6f;
     float area_w = mw - pad * 1.2f;
+
+    float list_hit_w = u * 1.6f;
+    float list_w = area_w - list_hit_w;
+
+    if (list_w < 60.0f) {
+        list_w = 60.0f;
+    }
 
     if (needs_key) {
         gc_draw_key_screen(
@@ -2684,6 +3338,31 @@ static void global_chat_panel_contents(
         igPopStyleColor(3);
         igPopStyleVar(2);
 
+        /* Character counter when getting close to the limit. */
+        {
+            int used = (int)strlen(global_chat_input);
+            int limit = (int)sizeof(global_chat_input) - 1;
+
+            if (used >= limit - 40) {
+                char cnt[16];
+                snprintf(cnt, sizeof(cnt), "%d/%d", used, limit);
+
+                float cw = gc_text_w(cnt);
+
+                ImDrawList_AddText_Vec2(
+                    dl,
+                    gc_v2(
+                        mx + pad + in_w - cw - u * 0.8f,
+                        in_y + (in_h - u) * 0.5f
+                    ),
+                    used >= limit - 10 ?
+                        IM_COL32(255, 120, 100, 255) :
+                        IM_COL32(150, 142, 185, 230),
+                    cnt, NULL
+                );
+            }
+        }
+
         ImVec2 smn = gc_v2(mx + mw - pad - in_h, in_y);
 
         bool send_clicked =
@@ -2693,7 +3372,8 @@ static void global_chat_panel_contents(
                 gc_v2(in_h, in_h),
                 IM_COL32(124, 74, 232, 255),
                 IM_COL32(150, 100, 250, 255),
-                u * 0.7f, 0
+                u * 0.7f,
+                0
             );
 
         gc_icon_send(
@@ -2707,34 +3387,61 @@ static void global_chat_panel_contents(
             gc_submit_message(env);
         }
     } else if (gc_tab == GC_TAB_PLAYERS) {
+        float area_h = content_bot - content_top;
+
         igSetCursorScreenPos(gc_v2(area_x, content_top));
 
         igBeginChild_Str(
             "##gc_players",
-            gc_v2(area_w, content_bot - content_top),
+            gc_v2(list_w, area_h),
             0,
-            ImGuiWindowFlags_NoBackground
+            ImGuiWindowFlags_NoBackground |
+            ImGuiWindowFlags_NoScrollbar
         );
 
         char hdr[48];
         snprintf(hdr, sizeof(hdr), "Online players (%d)", online_count);
+
+        ImVec2 hp;
+        igGetCursorScreenPos(&hp);
+
         igTextColored((ImVec4){0.71f, 0.61f, 0.96f, 1.0f}, "%s", hdr);
-        igDummy(gc_v2(1.0f, u * 0.2f));
 
         ImVec2 av;
         igGetContentRegionAvail(&av);
 
-        gc_draw_players_list(u, av.x, usrs->nickname);
+        {
+            const char* hint = "Tap to highlight";
+            float hw = gc_text_w(hint);
 
-        igEndChild();
+            if (hw + gc_text_w(hdr) + u * 2.0f < av.x) {
+                ImDrawList_AddText_Vec2(
+                    igGetWindowDrawList(),
+                    gc_v2(hp.x + av.x - hw, hp.y),
+                    IM_COL32(120, 112, 155, 200), hint, NULL
+                );
+            }
+        }
+
+        igDummy(gc_v2(1.0f, u * 0.2f));
+
+        gc_draw_players_list(u, av.x, own_name);
+
+        gc_end_scroll_child(
+            gc_v2(area_x, content_top), area_h,
+            list_hit_w, list_w, u, !adjusting_pos, true
+        );
     } else if (gc_tab == GC_TAB_SOS) {
+        float area_h = content_bot - content_top;
+
         igSetCursorScreenPos(gc_v2(area_x, content_top));
 
         igBeginChild_Str(
             "##gc_sos",
-            gc_v2(area_w, content_bot - content_top),
+            gc_v2(list_w, area_h),
             0,
-            ImGuiWindowFlags_NoBackground
+            ImGuiWindowFlags_NoBackground |
+            ImGuiWindowFlags_NoScrollbar
         );
 
         bool sos_on = global_chat_is_sos_active();
@@ -2742,21 +3449,100 @@ static void global_chat_panel_contents(
         ImVec2 av;
         igGetContentRegionAvail(&av);
 
-        if (sos_on) {
-            igTextColored(
-                (ImVec4){1.0f, 0.45f, 0.38f, 1.0f},
-                "Your SOS is active - %llds left",
-                (long long)(global_chat_sos_remaining_ms() / 1000)
+        float lh = igGetTextLineHeight();
+        ImDrawList* cdl = igGetWindowDrawList();
+
+        /* Status card */
+        {
+            ImVec2 sp;
+            igGetCursorScreenPos(&sp);
+
+            float card_h = lh * 4.0f;
+            ImVec2 smax = gc_add(sp, av.x, card_h);
+
+            ImDrawList_AddRectFilled(
+                cdl, sp, smax,
+                sos_on ?
+                    IM_COL32(224, 56, 44, (int)(46.0f + pulse * 34.0f)) :
+                    IM_COL32(255, 255, 255, 14),
+                u * 0.8f, 0
             );
-        } else {
-            igTextDisabled("Your SOS is off.");
+            ImDrawList_AddRect(
+                cdl, sp, smax,
+                sos_on ?
+                    IM_COL32(255, 90, 74, 190) :
+                    IM_COL32(190, 160, 255, 50),
+                u * 0.8f, 0, 1.2f
+            );
+
+            gc_icon_sos(
+                cdl, gc_v2(sp.x + u * 1.7f, sp.y + card_h * 0.5f),
+                lh * 1.7f,
+                sos_on ? IM_COL32(255, 90, 74, 255) : IM_COL32(190, 175, 235, 255),
+                sos_on ? IM_COL32(60, 20, 20, 255) : IM_COL32(44, 30, 78, 255)
+            );
+
+            float tx = sp.x + u * 3.4f;
+            float room = smax.x - u * 0.7f - tx;
+            char l1[48];
+            char l2[96];
+            char l2c[96];
+
+            if (sos_on) {
+                snprintf(l1, sizeof(l1), "SOS is ON");
+
+                long long secs = global_chat_sos_remaining_ms() / 1000;
+                snprintf(
+                    l2, sizeof(l2), "%lld:%02lld left", secs / 60, secs % 60
+                );
+            } else {
+                snprintf(l1, sizeof(l1), "SOS is off");
+                snprintf(
+                    l2, sizeof(l2), "Alerts %d online teammate%s",
+                    online_count > 1 ? online_count - 1 : 0,
+                    online_count == 2 ? "" : "s"
+                );
+            }
+
+            ImDrawList_AddText_Vec2(
+                cdl, gc_v2(tx, sp.y + lh * 0.7f),
+                sos_on ? IM_COL32(255, 150, 138, 255) : IM_COL32(241, 236, 255, 255),
+                l1, NULL
+            );
+
+            gc_clip_text(l2c, sizeof(l2c), l2, room);
+
+            ImDrawList_AddText_Vec2(
+                cdl, gc_v2(tx, sp.y + lh * 1.8f),
+                IM_COL32(170, 160, 205, 230), l2c, NULL
+            );
+
+            /* Time-left bar (5 minute SOS). */
+            float bar_y = sp.y + lh * 3.0f;
+            float bar_h = fmaxf(4.0f, u * 0.35f);
+            float frac =
+                sos_on ?
+                    gc_clampf(
+                        (float)global_chat_sos_remaining_ms() / 300000.0f,
+                        0.0f, 1.0f
+                    ) :
+                    0.0f;
+
+            ImDrawList_AddRectFilled(
+                cdl, gc_v2(tx, bar_y), gc_v2(tx + room, bar_y + bar_h),
+                IM_COL32(255, 255, 255, 22), bar_h * 0.5f, 0
+            );
+
+            if (frac > 0.0f) {
+                ImDrawList_AddRectFilled(
+                    cdl, gc_v2(tx, bar_y),
+                    gc_v2(tx + room * frac, bar_y + bar_h),
+                    IM_COL32(255, 90, 74, 255), bar_h * 0.5f, 0
+                );
+            }
+
+            igDummy(gc_v2(av.x, card_h + u * 0.5f));
         }
-
-        igTextWrapped(
-            "SOS lets every teammate see you need help, on any server."
-        );
-
-        igDummy(gc_v2(1.0f, u * 0.3f));
 
         ImVec2 p;
         igGetCursorScreenPos(&p);
@@ -2780,33 +3566,56 @@ static void global_chat_panel_contents(
             gc_toggle_sos();
         }
 
+        ImDrawList_AddRectFilled(
+            cdl, p, gc_v2(p.x + av.x, p.y + bh * 0.5f),
+            IM_COL32(255, 255, 255, 22), u * 0.8f,
+            ImDrawFlags_RoundCornersTop
+        );
+
         gc_text_center(
-            igGetWindowDrawList(), p, gc_v2(av.x, bh),
+            cdl, p, gc_v2(av.x, bh),
             IM_COL32(255, 255, 255, 255),
             sos_on ? "CANCEL SOS" : "SEND SOS (5 min)"
         );
 
         igSetCursorScreenPos(p);
-        igDummy(gc_v2(av.x, bh + u * 0.6f));
+        igDummy(gc_v2(av.x, bh + u * 0.7f));
 
-        igTextColored(
-            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
-            "Teammates asking for help"
-        );
-        igDummy(gc_v2(1.0f, u * 0.2f));
+        gc_section("Teammates asking for help", av.x, u);
 
-        if (gc_draw_sos_cards(u, av.x, usrs->nickname) == 0) {
-            igTextDisabled("Nobody needs help right now.");
+        if (gc_draw_sos_cards(u, av.x, own_name) == 0) {
+            ImVec2 ep;
+            igGetCursorScreenPos(&ep);
+
+            float eh = lh * 3.0f;
+
+            ImDrawList_AddRectFilled(
+                cdl, ep, gc_add(ep, av.x, eh),
+                IM_COL32(125, 255, 176, 14), u * 0.8f, 0
+            );
+
+            gc_text_center(
+                cdl, ep, gc_v2(av.x, eh),
+                IM_COL32(125, 255, 176, 190),
+                "All clear - nobody needs help"
+            );
+
+            igDummy(gc_v2(av.x, eh));
         }
 
-        igEndChild();
+        gc_end_scroll_child(
+            gc_v2(area_x, content_top), area_h,
+            list_hit_w, list_w, u, !adjusting_pos, false
+        );
     } else {
         /* Settings */
+        float area_h = content_bot - content_top;
+
         igSetCursorScreenPos(gc_v2(area_x, content_top));
 
         igBeginChild_Str(
             "##gc_settings",
-            gc_v2(area_w, content_bot - content_top),
+            gc_v2(list_w, area_h),
             0,
             ImGuiWindowFlags_NoBackground |
             ImGuiWindowFlags_NoScrollbar
@@ -2819,62 +3628,35 @@ static void global_chat_panel_contents(
         float gap = u * 0.5f;
         float bw = (av.x - gap) * 0.5f;
 
-        igTextColored(
-            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
-            "Window"
-        );
-        igDummy(gc_v2(1.0f, u * 0.15f));
+        ImU32 dim = IM_COL32(150, 142, 185, 220);
+
+        /* ---- window ---- */
+        gc_section("Window", av.x, u);
 
         ImVec2 p;
         igGetCursorScreenPos(&p);
 
         if (
-            gc_button(
-                "##gc_s_move",
-                p,
-                gc_v2(bw, bh),
-                adjusting_pos ?
-                    IM_COL32(40, 160, 90, 255) :
-                    IM_COL32(255, 255, 255, 20),
-                adjusting_pos ?
-                    IM_COL32(55, 190, 110, 255) :
-                    IM_COL32(255, 255, 255, 42),
-                u * 0.6f, 0
+            gc_pill_button(
+                "##gc_s_move", p, gc_v2(bw, bh),
+                adjusting_pos ? "DONE MOVING" : "MOVE",
+                adjusting_pos, u
             )
         ) {
             gc_toggle_adjust(env, GLOBAL_CHAT_ADJUST_POSITION);
         }
 
-        gc_text_center(
-            igGetWindowDrawList(), p, gc_v2(bw, bh),
-            IM_COL32(241, 236, 255, 255),
-            adjusting_pos ? "DONE MOVING" : "MOVE"
-        );
-
         ImVec2 p2 = gc_v2(p.x + bw + gap, p.y);
 
         if (
-            gc_button(
-                "##gc_s_size",
-                p2,
-                gc_v2(bw, bh),
-                adjusting_size ?
-                    IM_COL32(40, 160, 90, 255) :
-                    IM_COL32(255, 255, 255, 20),
-                adjusting_size ?
-                    IM_COL32(55, 190, 110, 255) :
-                    IM_COL32(255, 255, 255, 42),
-                u * 0.6f, 0
+            gc_pill_button(
+                "##gc_s_size", p2, gc_v2(bw, bh),
+                adjusting_size ? "DONE SIZING" : "RESIZE",
+                adjusting_size, u
             )
         ) {
             gc_toggle_adjust(env, GLOBAL_CHAT_ADJUST_SIZE);
         }
-
-        gc_text_center(
-            igGetWindowDrawList(), p2, gc_v2(bw, bh),
-            IM_COL32(241, 236, 255, 255),
-            adjusting_size ? "DONE SIZING" : "RESIZE"
-        );
 
         igSetCursorScreenPos(p);
         igDummy(gc_v2(av.x, bh + u * 0.5f));
@@ -2891,10 +3673,8 @@ static void global_chat_panel_contents(
 
         igDummy(gc_v2(1.0f, u * 0.3f));
 
-        igTextColored(
-            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
-            "Panel opacity"
-        );
+        /* ---- appearance ---- */
+        gc_section("Panel opacity", av.x, u);
 
         igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, u * 0.5f);
         igPushStyleColor_Vec4(
@@ -2917,10 +3697,43 @@ static void global_chat_panel_contents(
 
         igDummy(gc_v2(1.0f, u * 0.3f));
 
-        igTextColored(
-            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
-            "Profile emoji"
-        );
+        /* ---- chat ---- */
+        gc_section("Chat", av.x, u);
+
+        igGetCursorScreenPos(&p);
+
+        if (
+            gc_pill_button(
+                "##gc_s_events", p, gc_v2(av.x, bh),
+                gc_show_events ? "NOTICES: ON" : "NOTICES: OFF",
+                gc_show_events, u
+            )
+        ) {
+            gc_show_events = !gc_show_events;
+        }
+
+        igSetCursorScreenPos(p);
+        igDummy(gc_v2(av.x, bh + u * 0.15f));
+
+        {
+            ImVec2 cp;
+            igGetCursorScreenPos(&cp);
+
+            char cap_c[64];
+            gc_clip_text(
+                cap_c, sizeof(cap_c),
+                "Show join / leave messages in chat", av.x
+            );
+
+            ImDrawList_AddText_Vec2(
+                igGetWindowDrawList(), cp, dim, cap_c, NULL
+            );
+
+            igDummy(gc_v2(av.x, igGetTextLineHeight() + u * 0.4f));
+        }
+
+        /* ---- profile emoji ---- */
+        gc_section("Profile emoji", av.x, u);
 
         {
             ImVec2 ep;
@@ -2935,14 +3748,11 @@ static void global_chat_panel_contents(
             );
 
             igSetCursorScreenPos(ep);
-            igDummy(gc_v2(av.x, u * 2.2f));
+            igDummy(gc_v2(av.x, u * 2.4f));
         }
 
         /* ---- quick messages editor ---- */
-        igTextColored(
-            (ImVec4){0.71f, 0.61f, 0.96f, 1.0f},
-            "Quick messages"
-        );
+        gc_section("Quick messages", av.x, u);
 
         igTextDisabled("Button label  |  message it sends");
 
@@ -3010,17 +3820,10 @@ static void global_chat_panel_contents(
             float sbh = u * 2.3f;
 
             if (
-                gc_button(
-                    "##gc_qm_sound",
-                    sp,
-                    gc_v2(sbw, sbh),
-                    gc_qm_sound ?
-                        IM_COL32(40, 160, 90, 255) :
-                        IM_COL32(255, 255, 255, 20),
-                    gc_qm_sound ?
-                        IM_COL32(55, 190, 110, 255) :
-                        IM_COL32(255, 255, 255, 42),
-                    u * 0.6f, 0
+                gc_pill_button(
+                    "##gc_qm_sound", sp, gc_v2(sbw, sbh),
+                    gc_qm_sound ? "SOUND: ON" : "SOUND: OFF",
+                    gc_qm_sound, u
                 )
             ) {
                 gc_qm_sound = !gc_qm_sound;
@@ -3031,22 +3834,12 @@ static void global_chat_panel_contents(
                 }
             }
 
-            gc_text_center(
-                igGetWindowDrawList(), sp, gc_v2(sbw, sbh),
-                IM_COL32(241, 236, 255, 255),
-                gc_qm_sound ? "SOUND: ON" : "SOUND: OFF"
-            );
-
             ImVec2 rp = gc_v2(sp.x + sbw + sgap, sp.y);
 
             if (
-                gc_button(
-                    "##gc_qm_reset",
-                    rp,
-                    gc_v2(sbw, sbh),
-                    IM_COL32(255, 255, 255, 20),
-                    IM_COL32(255, 255, 255, 42),
-                    u * 0.6f, 0
+                gc_pill_button(
+                    "##gc_qm_reset", rp, gc_v2(sbw, sbh),
+                    "RESET TEXTS", false, u
                 )
             ) {
                 bool keep_sound = gc_qm_sound;
@@ -3055,28 +3848,36 @@ static void global_chat_panel_contents(
                 gc_qm_save();
             }
 
-            gc_text_center(
-                igGetWindowDrawList(), rp, gc_v2(sbw, sbh),
-                IM_COL32(241, 236, 255, 255), "RESET TEXTS"
-            );
-
             igSetCursorScreenPos(sp);
             igDummy(gc_v2(av.x, sbh + u * 0.5f));
         }
 
-        /* Touch/mouse drag scrolls this page. */
+        gc_end_scroll_child(
+            gc_v2(area_x, content_top), area_h,
+            list_hit_w, list_w, u, !adjusting_pos, false
+        );
+    }
+
+    /* ---------- DONE bar while moving / resizing (any tab) ---------- */
+    if (adjusting) {
+        ImVec2 dmn = gc_v2(mx + pad, pmax.y - bottom_pad - done_h);
+        ImVec2 dsz = gc_v2(mw - pad * 2.0f, done_h);
+
         if (
-            !adjusting_pos &&
-            igIsWindowHovered(0) &&
-            !igIsAnyItemActive() &&
-            igIsMouseDragging(0, 6.0f)
+            gc_button(
+                "##gc_done", dmn, dsz,
+                IM_COL32(40, 160, 90, 255),
+                IM_COL32(55, 190, 110, 255),
+                u * 0.7f, 0
+            )
         ) {
-            igSetScrollY_Float(
-                igGetScrollY() - igGetIO_Nil()->MouseDelta.y
-            );
+            gc_toggle_adjust(env, global_chat_adjust);
         }
 
-        igEndChild();
+        gc_text_center(
+            dl, dmn, dsz, IM_COL32(255, 255, 255, 255),
+            adjusting_pos ? "DONE MOVING" : "DONE SIZING"
+        );
     }
 
     igPopFont();

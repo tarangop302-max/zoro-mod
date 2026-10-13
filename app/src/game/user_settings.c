@@ -230,13 +230,10 @@ void user_settings_default(user_settings* usr_settings) {
     usr_settings->head_dot_colors[m][1] = 1.0f;
     usr_settings->head_dot_colors[m][2] = 1.0f;
   }
-<<<<<<< HEAD
-=======
   memset(usr_settings->ntl_pulse_reserved, 0,
          sizeof(usr_settings->ntl_pulse_reserved));
   usr_settings->ntl_pulse_enabled = false;
   usr_settings->ntl_pulse_interval = 1.0f;
->>>>>>> f02f79a (Team dots: colour emoji, pulse, preview, reset, no duplicate looks)
 
   usr_settings->profile_emoji_id = 0;
 
@@ -330,11 +327,6 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v217_prefix = offsetof(user_settings, food_glow_reserved2);
   size_t v218_prefix = offsetof(user_settings, eyes_back_reserved);
   size_t v219_prefix = offsetof(user_settings, head_dot_reserved);
-<<<<<<< HEAD
-  size_t bytes_to_read;
-  if ((size_t)file_size >= sizeof loaded)
-    bytes_to_read = sizeof loaded;
-=======
   size_t v220_prefix = offsetof(user_settings, ntl_pulse_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
@@ -344,7 +336,6 @@ void read_user_settings(user_settings* usr_settings) {
        (it already contains the per-mode head dot). Keep every saved value;
        the pulse keeps its defaults (off, 1 s). */
     bytes_to_read = v220_prefix;
->>>>>>> f02f79a (Team dots: colour emoji, pulse, preview, reset, no duplicate looks)
   else if ((size_t)file_size >= v219_prefix)
     /* A file saved before the per-mode head dot existed ends at v219_prefix
        (it already contains the Eyes back hotkey), possibly followed only by
@@ -420,11 +411,7 @@ void read_user_settings(user_settings* usr_settings) {
                         : v23_prefix;
   size_t bytes_read = fread(&loaded, 1, bytes_to_read, f);
   fclose(f);
-<<<<<<< HEAD
-  const bool has_head_dot_fields = bytes_to_read >= sizeof loaded;
-=======
   const bool has_head_dot_fields = bytes_to_read >= v220_prefix;
->>>>>>> f02f79a (Team dots: colour emoji, pulse, preview, reset, no duplicate looks)
 
   if (bytes_read < sizeof loaded.version ||
       strncmp(loaded.version, SETTINGS_VERSION, strlen(SETTINGS_VERSION)) != 0) {

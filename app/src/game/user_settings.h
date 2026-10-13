@@ -376,8 +376,6 @@ typedef struct user_settings {
   bool    head_dot_enabled[2];
   float   head_dot_size[2];
   vec3    head_dot_colors[2];
-<<<<<<< HEAD
-=======
 
   /* Team minimap dot pulse (v2.20). Local display option: makes the dots on
      this player's own minimap breathe so they are easier to spot.
@@ -388,7 +386,6 @@ typedef struct user_settings {
   uint8_t ntl_pulse_reserved[8];
   bool    ntl_pulse_enabled;
   float   ntl_pulse_interval;
->>>>>>> f02f79a (Team dots: colour emoji, pulse, preview, reset, no duplicate looks)
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {

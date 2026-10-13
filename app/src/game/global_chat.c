@@ -6,7 +6,6 @@
 #include "thermite/tchat.h"
 #include "thermite/jsr_network.h"
 #include "ntl_team.h"
-#include "ntl_emoji.h"
 
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
@@ -1181,8 +1180,55 @@ void global_chat_draw(tenv* env) {
 
             float head_h = 44.0f;
 
-            /* Drag handle: the whole card. The Open button is submitted
-             * after it, so it still wins taps on its own area. Position
+            gc_text_center(
+                dl, p, gc_v2(sz.x, head_h),
+                IM_COL32(241, 236, 255, 255), "TEAM CHAT"
+            );
+
+            ImDrawList_AddLine(
+                dl,
+                gc_v2(p.x + 1.0f, p.y + head_h),
+                gc_v2(p.x + sz.x - 1.0f, p.y + head_h),
+                IM_COL32(190, 160, 255, 64),
+                1.0f
+            );
+
+            ImVec2 bmn = gc_v2(p.x + 12.0f, p.y + head_h + 11.0f);
+            ImVec2 bsz = gc_v2(sz.x - 24.0f, sz.y - head_h - 23.0f);
+
+            if (
+                gc_button(
+                    "##gc_open",
+                    bmn,
+                    bsz,
+                    IM_COL32(120, 70, 220, 255),
+                    IM_COL32(145, 92, 245, 255),
+                    12.0f,
+                    0
+                )
+            ) {
+                global_chat_open = true;
+            }
+
+            /* Soft highlight on the top half = the gradient look. */
+            ImDrawList_AddRectFilled(
+                dl,
+                bmn,
+                gc_v2(bmn.x + bsz.x, bmn.y + bsz.y * 0.5f),
+                IM_COL32(255, 255, 255, 34),
+                12.0f,
+                ImDrawFlags_RoundCornersTop
+            );
+
+            gc_text_center(
+                dl, bmn, bsz,
+                IM_COL32(255, 255, 255, 255), "Open"
+            );
+
+            /* Drag handle: the whole card. It MUST be submitted after the
+             * Open button: when items overlap, ImGui gives the tap to the
+             * first one submitted, so the Open button claims its own area
+             * and this handle gets the rest (header and margins). Position
              * is applied next frame (it is forced from the saved values
              * above) and saved when the finger / mouse is released. */
             igSetCursorScreenPos(p);
@@ -1234,51 +1280,6 @@ void global_chat_draw(tenv* env) {
                     save_user_settings(usrs);
                 }
             }
-
-            gc_text_center(
-                dl, p, gc_v2(sz.x, head_h),
-                IM_COL32(241, 236, 255, 255), "TEAM CHAT"
-            );
-
-            ImDrawList_AddLine(
-                dl,
-                gc_v2(p.x + 1.0f, p.y + head_h),
-                gc_v2(p.x + sz.x - 1.0f, p.y + head_h),
-                IM_COL32(190, 160, 255, 64),
-                1.0f
-            );
-
-            ImVec2 bmn = gc_v2(p.x + 12.0f, p.y + head_h + 11.0f);
-            ImVec2 bsz = gc_v2(sz.x - 24.0f, sz.y - head_h - 23.0f);
-
-            if (
-                gc_button(
-                    "##gc_open",
-                    bmn,
-                    bsz,
-                    IM_COL32(120, 70, 220, 255),
-                    IM_COL32(145, 92, 245, 255),
-                    12.0f,
-                    0
-                )
-            ) {
-                global_chat_open = true;
-            }
-
-            /* Soft highlight on the top half = the gradient look. */
-            ImDrawList_AddRectFilled(
-                dl,
-                bmn,
-                gc_v2(bmn.x + bsz.x, bmn.y + bsz.y * 0.5f),
-                IM_COL32(255, 255, 255, 34),
-                12.0f,
-                ImDrawFlags_RoundCornersTop
-            );
-
-            gc_text_center(
-                dl, bmn, bsz,
-                IM_COL32(255, 255, 255, 255), "Open"
-            );
         } else {
             global_chat_panel_contents(
                 env,
@@ -3207,14 +3208,12 @@ void global_chat_draw_minimap_markers(
             center.y + ry * map_radius
         };
 
-        ntl_draw_marker_pulse(
+        ntl_draw_marker(
             dl,
             p,
             u->usrs.ntl_marker_size,
             shape,
-            col,
-            u->usrs.ntl_pulse_enabled ?
-                u->usrs.ntl_pulse_interval : 0.0f
+            col
         );
 
         if (sos) {
@@ -3254,8 +3253,7 @@ void global_chat_draw_minimap_markers(
 
             ImVec2 text_pos = {
                 p.x - text_size.x * 0.5f,
-                p.y + u->usrs.ntl_marker_size *
-                    (shape >= NTL_SHAPE_EMOJI_BASE ? 1.7f : 1.0f) + 2.0f
+                p.y + u->usrs.ntl_marker_size + 2.0f
             };
 
             ImDrawList_AddText_Vec2(

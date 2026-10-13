@@ -211,16 +211,61 @@ void ui_title_screen(tenv* env) {
 
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y);
-  igPushItemWidth(logo_size);
+  float nn_btn_w = frame_height;
+  igPushItemWidth(logo_size - nn_btn_w - style->ItemSpacing.x);
   igInputTextWithHint("##nickname_input", "Nickname", usrs->nickname,
                       MAX_NICKNAME_LEN + 1, ImGuiInputTextFlags_None, NULL,
                       NULL);
+  /* Remember the name once editing is finished (like NTL's "change" event). */
+  if (igIsItemDeactivatedAfterEdit())
+    user_settings_add_saved_name(usrs, usrs->nickname);
   crystal_sheen();
+  igPopItemWidth();
+
+  /* Previous names: a dropdown button next to the nickname box, like NTL's
+     scroll button. Click a name to use it, X to forget it. */
+  igSameLine(0, style->ItemSpacing.x);
+  if (igArrowButton("##nn_btn", ImGuiDir_Down)) igOpenPopup_Str("##nn_popup", 0);
+  if (igIsItemHovered(0)) igSetTooltip("Previous names");
+  crystal_sheen();
+  if (igBeginPopup("##nn_popup", 0)) {
+    igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
+               usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
+    if (usrs->saved_name_count == 0) {
+      igTextDisabled("No previous names yet");
+    } else {
+      int remove_idx = -1;
+      igBeginChild_Str("##nn_scroll", (ImVec2){300, 260}, ImGuiChildFlags_None,
+                       0);
+      for (int i = 0; i < usrs->saved_name_count; ++i) {
+        igPushID_Int(i);
+        float x_w = igGetFrameHeight();
+        if (igSelectable_Bool(usrs->saved_names[i], false,
+                              ImGuiSelectableFlags_None,
+                              (ImVec2){300 - x_w - style->ItemSpacing.x * 2 -
+                                           style->ScrollbarSize,
+                                       0})) {
+          strncpy(usrs->nickname, usrs->saved_names[i], MAX_NICKNAME_LEN);
+          usrs->nickname[MAX_NICKNAME_LEN] = '\0';
+          igCloseCurrentPopup();
+        }
+        igSameLine(0, -1);
+        if (igSmallButton("X")) remove_idx = i;
+        igPopID();
+      }
+      igEndChild();
+      if (remove_idx >= 0)
+        user_settings_remove_saved_name(usrs, remove_idx);
+    }
+    igPopFont();
+    igEndPopup();
+  }
 
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 2 +
                   frame_height);
   float sl_btn_w = frame_height;
+  igPushItemWidth(logo_size);
   igPushItemWidth(logo_size - sl_btn_w - style->ItemSpacing.x);
   igInputTextWithHint("##ipv4_input", "IPv4:Port", usrs->ipv4, MAX_IPV4_LEN + 1,
                       ImGuiInputTextFlags_None, NULL, NULL);
@@ -359,6 +404,7 @@ void ui_title_screen(tenv* env) {
   igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
                         (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
   if (igButton("\uea1c Play", (ImVec2){logo_size})) {
+    user_settings_add_saved_name(usrs, usrs->nickname);
     usr->gdata.conn = CONNECTING;
     usr->gdata.curr_screen = PLAYING;
     glfwSetTime(0);

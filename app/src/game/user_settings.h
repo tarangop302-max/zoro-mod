@@ -400,12 +400,21 @@ typedef struct user_settings {
   uint8_t saved_names_reserved[8];
   int     saved_name_count;
   char    saved_names[MAX_SAVED_NAMES][MAX_NICKNAME_LEN + 1];
+
+  /* v2.22 extension: "Squeeze" hotkey. While on, the centre line of the head
+     is steered so it never touches an enemy body (see squeeze.c). Appended
+     after saved_names so every earlier file stays a compatible prefix (see
+     v222_prefix in read_user_settings). Access through
+     usr_hotkey(usrs, HOTKEY_SQUEEZE). */
+  uint8_t squeeze_reserved[8];
+  hotkey  hotkey_squeeze;
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {
   if (i < NUM_STORED_HOTKEYS) return &u->hotkeys[i];
   if (i == HOTKEY_OPEN_SETTINGS) return &u->hotkey_open_settings;
-  return &u->hotkey_eyes_back;
+  if (i == HOTKEY_EYES_BACK) return &u->hotkey_eyes_back;
+  return &u->hotkey_squeeze;
 }
 
 void user_settings_default(user_settings* usr_settings);

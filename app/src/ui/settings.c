@@ -8,6 +8,77 @@
 
 void ui_settings_init(tenv* env) {}
 
+/* Popup panel opacity (runtime only, adjustable from the popup header). */
+static float s_popup_alpha = 0.82f;
+
+/* Touch drag-to-scroll for the popup's child panels (ImGui has no native
+   touch scrolling). Call right after igBeginChild_Str(), once per panel,
+   with a unique idx. Dragging on a label / empty space scrolls the panel 1:1
+   and keeps a little momentum after release; dragging a slider or button
+   still operates that widget instead. The thick scrollbar also works. */
+static void popup_touch_scroll(tenv* env, int idx) {
+  static int owner = -1;       /* panel that owns the current drag */
+  static bool dragging = false;
+  static bool blocked = false; /* a widget took the touch: don't scroll */
+  static float last_y = 0.0f, start_y = 0.0f, vel = 0.0f;
+  static int vel_owner = -1;
+  touch_state* t = &env->wnd->ui_touch;
+
+  /* ImGui marks a press on EMPTY space inside a window as "active" too (it is
+     the window's internal move id, even for NoMove windows). That is not a
+     widget, so it must not count as one. Only a real item (slider, button,
+     combo, scrollbar...) being active should stop the drag-scroll. */
+  const ImGuiID move_id = igGetID_Str("#MOVE");
+  const ImGuiID active = igGetActiveID();
+  const bool item_active = (active != 0 && active != move_id);
+
+  if (!t->down) {
+    blocked = false;
+    if (owner == idx) {
+      if (dragging) vel_owner = idx;
+      owner = -1;
+      dragging = false;
+    }
+    if (vel_owner == idx) {
+      if (vel > 0.5f || vel < -0.5f) {
+        igSetScrollY_Float(igGetScrollY() - vel);
+        vel *= 0.90f;
+      } else {
+        vel = 0.0f;
+        vel_owner = -1;
+      }
+    }
+    return;
+  }
+
+  if (owner == -1 && !blocked) {
+    if (igIsWindowHovered(ImGuiHoveredFlags_None) && !item_active) {
+      owner = idx;
+      dragging = false;
+      last_y = start_y = t->y;
+      vel = 0.0f;
+      vel_owner = -1;
+    }
+    return;
+  }
+  if (owner != idx) return;
+
+  if (item_active) {
+    /* A slider/button/combo/scrollbar grabbed this touch. */
+    owner = -1;
+    blocked = true;
+    return;
+  }
+  float dy = t->y - last_y;
+  if (!dragging && (t->y - start_y > 10.0f || start_y - t->y > 10.0f))
+    dragging = true;
+  if (dragging) {
+    igSetScrollY_Float(igGetScrollY() - dy);
+    vel = dy;
+  }
+  last_y = t->y;
+}
+
 void ui_settings(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -31,20 +102,31 @@ void ui_settings(tenv* env) {
     usr->r->global.minimap_opacity = 0;
   }
 
+  float ui_s = 1.0f;
+  {
+    float short_edge = ctx->size[0] < ctx->size[1] ? ctx->size[0] : ctx->size[1];
+    ui_s = short_edge / 720.0f;
+    if (ui_s < 0.75f) ui_s = 0.75f;
+    if (ui_s > 1.30f) ui_s = 1.30f;
+  }
+
   if (popup) {
-    /* Popup rect: centered box, ~36% x 65% of the screen. */
-    float pw = ctx->size[0] * 0.363f;
-    float ph = ctx->size[1] * 0.650f;
+    /* Popup rect: centered box, ~42% x 76% of the screen. */
+    float pw = ctx->size[0] * 0.42f;
+    float ph = ctx->size[1] * 0.76f;
     igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 14.0f);
-    igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){10, 8});
-    igPushStyleVar_Vec2(ImGuiStyleVar_FramePadding, (ImVec2){6, 3});
-    igPushStyleVar_Vec2(ImGuiStyleVar_ItemSpacing, (ImVec2){6, 4});
-    /* 10% background so the live game stays visible behind it. */
+    igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){12 * ui_s, 10 * ui_s});
+    /* Roomier frames/spacing = bigger touch targets that are easy to hit. */
+    igPushStyleVar_Vec2(ImGuiStyleVar_FramePadding, (ImVec2){8 * ui_s, 7 * ui_s});
+    igPushStyleVar_Vec2(ImGuiStyleVar_ItemSpacing, (ImVec2){8 * ui_s, 9 * ui_s});
+    igPushStyleVar_Float(ImGuiStyleVar_ScrollbarSize, 22.0f * ui_s);
+    /* Mostly opaque dark panel so text is readable over the live game
+       (opacity slider in the header). */
     igPushStyleColor_Vec4(ImGuiCol_WindowBg,
-                          (ImVec4){0.086f, 0.063f, 0.145f, 0.10f});
+                          (ImVec4){0.070f, 0.050f, 0.120f, s_popup_alpha});
     igPushStyleColor_Vec4(ImGuiCol_Border,
                           (ImVec4){0.690f, 0.580f, 0.960f, 0.55f});
-    igSetNextWindowPos((ImVec2){ctx->size[0] * 0.4925f, ctx->size[1] * 0.523f},
+    igSetNextWindowPos((ImVec2){ctx->size[0] * 0.5f, ctx->size[1] * 0.5f},
                        ImGuiCond_Always, (ImVec2){0.5f, 0.5f});
     igSetNextWindowSize((ImVec2){pw, ph}, ImGuiCond_Always);
     igBegin("##settings_popup", NULL,
@@ -79,6 +161,18 @@ void ui_settings(tenv* env) {
   float popup_btn_h = frame_height * 1.2f;
   if (popup) {
     panel_columns = 1;
+    /* Header: title + panel opacity */
+    {
+      ImVec2 hv;
+      igGetContentRegionAvail(&hv);
+      igAlignTextToFramePadding();
+      igTextColored((ImVec4){0.80f, 0.72f, 1.0f, 1.0f}, "SETTINGS");
+      float sw = hv.x * 0.42f;
+      igSameLine(style->WindowPadding.x + hv.x - sw, 0);
+      igSetNextItemWidth(sw);
+      igSliderFloat("##popup_alpha", &s_popup_alpha, 0.30f, 1.0f,
+                    "Opacity %.2f", ImGuiSliderFlags_AlwaysClamp);
+    }
     /* Tab row: General / Normal / Assist / Hotkeys */
     const char* tab_names[4] = {"General", "Normal", "Assist", "Hotkeys"};
     ImVec2 av;
@@ -87,12 +181,13 @@ void ui_settings(tenv* env) {
     for (int t = 0; t < 4; t++) {
       if (t) igSameLine(0, -1);
       bool sel = (t == popup_tab);
-      if (sel)
-        igPushStyleColor_Vec4(ImGuiCol_Button,
-                              (ImVec4){0.510f, 0.294f, 0.910f, 0.85f});
-      if (igButton(tab_names[t], (ImVec2){tw, 0})) popup_tab = t;
-      if (sel) igPopStyleColor(1);
+      igPushStyleColor_Vec4(ImGuiCol_Button,
+          sel ? (ImVec4){0.510f, 0.294f, 0.910f, 0.95f}
+              : (ImVec4){0.200f, 0.160f, 0.320f, 0.85f});
+      if (igButton(tab_names[t], (ImVec2){tw, popup_btn_h})) popup_tab = t;
+      igPopStyleColor(1);
     }
+    igSeparator();
     igGetContentRegionAvail(&av);
     child_window_height =
         av.y - popup_btn_h - style->ItemSpacing.y * 2 - style->WindowPadding.y;
@@ -106,6 +201,7 @@ void ui_settings(tenv* env) {
     igBeginChild_Str("general_settings_child_holder",
                      (ImVec2){-1, child_window_height}, ImGuiChildFlags_None,
                      ImGuiWindowFlags_None);
+    if (popup) popup_touch_scroll(env, 0);
     igSeparatorText("General");
     if (igBeginTable("field:value", 2, ImGuiTableFlags_None, (ImVec2){}, 0)) {
       igTableNextRow(ImGuiTableRowFlags_None, 0);
@@ -232,6 +328,7 @@ void ui_settings(tenv* env) {
     igBeginChild_Str("mode_settings_child_holder",
                      (ImVec2){-1, child_window_height}, ImGuiChildFlags_None,
                      ImGuiWindowFlags_None);
+    if (popup) popup_touch_scroll(env, 1);
     for (int i = 0; i < 2; i++) {
       if (popup && i != popup_tab - 1) continue;
       igPushID_Int(i + 1);
@@ -391,6 +488,7 @@ void ui_settings(tenv* env) {
     }
     igBeginChild_Str("hotkey_child_window", (ImVec2){-1, child_window_height},
                      ImGuiChildFlags_None, ImGuiWindowFlags_None);
+    if (popup) popup_touch_scroll(env, 2);
     igSeparatorText("Hotkeys");
     if (igBeginTable("field:value", 2, ImGuiTableFlags_None, (ImVec2){}, 0)) {
       igTableNextRow(ImGuiTableRowFlags_None, 0);
@@ -499,10 +597,25 @@ void ui_settings(tenv* env) {
   }
   igSetCursorPosX(col2_x);
   igSetCursorPosY(reset_y);
-  if (igButton("Reset", (ImVec2){btn_w, btn_h})) {
-    user_settings_default(usrs);
-    env->config.vsync = usrs->vsync;
-    twindow_request_refresh(env->wnd);
+  {
+    /* Reliable taps make an accidental Reset easy, so it needs a second tap
+       within 3 seconds. */
+    static double reset_armed_until = 0.0;
+    bool armed = igGetTime() < reset_armed_until;
+    if (armed)
+      igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.780f, 0.220f, 0.260f, 1.0f});
+    if (igButton(armed ? "Tap again to reset" : "Reset",
+                 (ImVec2){btn_w, btn_h})) {
+      if (armed) {
+        user_settings_default(usrs);
+        env->config.vsync = usrs->vsync;
+        twindow_request_refresh(env->wnd);
+        reset_armed_until = 0.0;
+      } else {
+        reset_armed_until = igGetTime() + 3.0;
+      }
+    }
+    if (armed) igPopStyleColor(1);
   }
   igSetCursorPosX(ok_x);
   igSetCursorPosY(ok_y);
@@ -536,7 +649,7 @@ void ui_settings(tenv* env) {
   if (popup) {
     igEnd();
     igPopStyleColor(2);
-    igPopStyleVar(4);
+    igPopStyleVar(5);
   }
 
   igPopFont();

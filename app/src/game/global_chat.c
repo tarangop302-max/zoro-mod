@@ -18,6 +18,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include "../network/server.h"
+#include "screenshot.h"
 #include <math.h>
 #include <time.h>
 
@@ -1718,6 +1720,86 @@ static void gc_section(const char* title, float width, float u) {
     igDummy(gc_v2(width, lh + u * 0.35f));
 }
 
+/* True if the text has any non-ASCII byte (emoji etc.): those glyphs only
+ * exist in the emoji font, not in the panel's mono font. */
+static bool gc_has_non_ascii(const char* s) {
+    for (; *s != '\0'; s++) {
+        if ((unsigned char)*s >= 0x80) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Vector smiley for the emoji button (the mono font has no emoji). */
+static void gc_icon_smiley(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
+    float r = s * 0.5f;
+
+    ImDrawList_AddCircle(dl, c, r, col, 24, 2.0f);
+
+    ImDrawList_AddCircleFilled(
+        dl, gc_v2(c.x - r * 0.35f, c.y - r * 0.25f), r * 0.11f, col, 8
+    );
+    ImDrawList_AddCircleFilled(
+        dl, gc_v2(c.x + r * 0.35f, c.y - r * 0.25f), r * 0.11f, col, 8
+    );
+
+    ImVec2 pts[9];
+
+    for (int i = 0; i < 9; i++) {
+        float a = 0.14f * 3.14159265f + (0.72f * 3.14159265f) * (float)i / 8.0f;
+
+        pts[i] = gc_v2(
+            c.x + cosf(a) * r * 0.55f,
+            c.y + sinf(a) * r * 0.45f + r * 0.02f
+        );
+    }
+
+    ImDrawList_AddPolyline(dl, pts, 9, col, ImDrawFlags_None, 2.0f);
+}
+
+/* Emoji picker open under the message list (Chat tab). */
+static bool gc_emoji_picker_open = false;
+
+/* SWITCH needs a second tap ("SURE?") within a few seconds. */
+static char gc_switch_pending[32] = "";
+static double gc_switch_until = 0.0;
+
+/* Start playing on a teammate's server: from the title screen this is
+ * exactly the Play button; mid-game it uses the death-screen "restart"
+ * path (close the socket, then reconnect to the new address). */
+static void gc_play_on_server(tenv* env, const char* ip) {
+    if (env == NULL || env->usr == NULL || ip == NULL || ip[0] == '\0') {
+        return;
+    }
+
+    tuser_data* usr = env->usr;
+    user_settings* usrs = &usr->usrs;
+    game_data* gdata = &usr->gdata;
+
+    if (gdata->curr_screen == TITLE_SCREEN) {
+        strncpy(usrs->ipv4, ip, MAX_IPV4_LEN);
+        usrs->ipv4[MAX_IPV4_LEN] = '\0';
+
+        user_settings_add_saved_name(usrs, usrs->nickname);
+        usr->gdata.conn = CONNECTING;
+        usr->gdata.curr_screen = PLAYING;
+        glfwSetTime(0);
+        screenshot_run_reset();
+        server_connect(env);
+    } else if (
+        gdata->curr_screen == PLAYING &&
+        gdata->connection != NULL
+    ) {
+        strncpy(usrs->ipv4, ip, MAX_IPV4_LEN);
+        usrs->ipv4[MAX_IPV4_LEN] = '\0';
+
+        gdata->connection->is_closing = true;
+        gdata->restart_req = true;
+    }
+}
+
 /* Flat toggle/action button with a centred label. `on` = green. */
 static bool gc_pill_button(
     const char* id, ImVec2 p, ImVec2 sz, const char* label, bool on, float u
@@ -1877,7 +1959,9 @@ static int gc_player_cmp(const void* a, const void* b) {
 
 /* Roster list (Players tab): avatar, owner + name + emoji, score / server,
  * ping, YOU / SOS tags. Tap a row to highlight it. */
-static void gc_draw_players_list(float u, float width, const char* own_name) {
+static void gc_draw_players_list(
+    tenv* env, float u, float width, const char* own_name
+) {
     int roster_count =
         global_chat_net != NULL ?
             jsr_network_roster_count(global_chat_net) :
@@ -1953,6 +2037,9 @@ static void gc_draw_players_list(float u, float width, const char* own_name) {
     float lh = igGetTextLineHeight();
     float row_h = lh * 2.9f;
     float gap = u * 0.4f;
+
+    screen curr_scr = env->usr->gdata.curr_screen;
+    const char* own_ip = env->usr->usrs.ipv4;
     float pulse = 0.5f + 0.5f * sinf((float)igGetTime() * 5.0f);
 
     for (int ri = 0; ri < n; ri++) {
@@ -1969,6 +2056,51 @@ static void gc_draw_players_list(float u, float width, const char* own_name) {
             strcmp(gc_locate_name, pr->name) == 0;
 
         igPushID_Str(pr->name);
+
+        /* PLAY (title screen) / SWITCH (in a match on another server) on
+         * this teammate's server. Submitted BEFORE the row button: when
+         * items overlap, ImGui gives the tap to the first one submitted. */
+        int play_kind = 0;
+
+        if (
+            !pr->you && pr->has_loc && pr->ip[0] != '\0' &&
+            width > u * 12.0f
+        ) {
+            if (curr_scr == TITLE_SCREEN) {
+                play_kind = 1;
+            } else if (curr_scr == PLAYING && strcmp(pr->ip, own_ip) != 0) {
+                play_kind = 2;
+            }
+        }
+
+        bool confirming =
+            play_kind == 2 &&
+            strcmp(gc_switch_pending, pr->name) == 0 &&
+            igGetTime() < gc_switch_until;
+
+        float play_w =
+            play_kind != 0 ?
+                gc_text_w(play_kind == 2 ? "SWITCH" : "PLAY") + u * 1.4f :
+                0.0f;
+        float play_h = lh * 1.8f;
+        ImVec2 play_mn = gc_v2(
+            pmax.x - u * 0.7f - play_w,
+            p.y + (row_h - play_h) * 0.5f
+        );
+        bool play_clicked = false;
+        bool play_hot = false;
+
+        if (play_kind != 0) {
+            igSetCursorScreenPos(play_mn);
+
+            play_clicked = igInvisibleButton(
+                "##gc_play", gc_v2(play_w, play_h), ImGuiButtonFlags_None
+            );
+
+            play_hot = igIsItemHovered(0) || igIsItemActive();
+
+            igSetCursorScreenPos(p);
+        }
 
         bool row_clicked = igInvisibleButton(
             "##gc_prow", gc_v2(width, row_h), ImGuiButtonFlags_None
@@ -2037,7 +2169,9 @@ static void gc_draw_players_list(float u, float width, const char* own_name) {
         );
 
         float tx = ac.x + r_av + u * 0.8f;
-        float right = pmax.x - u * 0.7f;
+        float right =
+            pmax.x - u * 0.7f -
+            (play_kind != 0 ? play_w + u * 0.6f : 0.0f);
         float ty1 = cy - lh * 1.1f;
         float ty2 = cy + lh * 0.1f;
 
@@ -2120,6 +2254,12 @@ static void gc_draw_players_list(float u, float width, const char* own_name) {
             } else {
                 snprintf(info, sizeof(info), "%s", sc);
             }
+        } else if (pr->you) {
+            if (curr_scr == PLAYING) {
+                snprintf(info, sizeof(info), "%s", own_ip);
+            } else {
+                snprintf(info, sizeof(info), "In the menu");
+            }
         } else {
             snprintf(info, sizeof(info), "No game info");
         }
@@ -2131,6 +2271,42 @@ static void gc_draw_players_list(float u, float width, const char* own_name) {
         );
 
         ImDrawList_AddText_Vec2(dl, gc_v2(tx, ty2), dim, info_c, NULL);
+
+        /* PLAY / SWITCH button visual + action. */
+        if (play_kind != 0) {
+            ImU32 pc =
+                play_kind == 1 ?
+                    (play_hot ? IM_COL32(150, 100, 250, 255) : IM_COL32(124, 74, 232, 255)) :
+                confirming ?
+                    IM_COL32(230, 150, 40, 255) :
+                    (play_hot ? IM_COL32(95, 80, 160, 255) : IM_COL32(70, 56, 120, 255));
+
+            ImDrawList_AddRectFilled(
+                dl, play_mn, gc_add(play_mn, play_w, play_h),
+                pc, play_h * 0.5f, 0
+            );
+
+            gc_text_center(
+                dl, play_mn, gc_v2(play_w, play_h),
+                IM_COL32(255, 255, 255, 255),
+                play_kind == 1 ? "PLAY" : (confirming ? "SURE?" : "SWITCH")
+            );
+
+            if (play_clicked && !gc_scroll_dragged) {
+                if (play_kind == 1) {
+                    gc_play_on_server(env, pr->ip);
+                } else if (confirming) {
+                    gc_switch_pending[0] = '\0';
+                    gc_play_on_server(env, pr->ip);
+                } else {
+                    snprintf(
+                        gc_switch_pending, sizeof(gc_switch_pending),
+                        "%s", pr->name
+                    );
+                    gc_switch_until = igGetTime() + 3.0;
+                }
+            }
+        }
 
         /* Tap (not drag) toggles the highlight. */
         if (row_clicked && !gc_scroll_dragged) {
@@ -2455,8 +2631,13 @@ static void gc_draw_messages(
             strcmp(prev_name, m->name) == 0 &&
             strcmp(prev_hm, hm) == 0;
 
+        bool ext = gc_has_non_ascii(m->text);
+
         ImVec2 tsz;
+
+        if (ext) gc_emoji_push();
         igCalcTextSize(&tsz, m->text, NULL, false, wrap_w);
+        if (ext) gc_emoji_pop();
 
         float head_h = grouped ? 0.0f : lh + u * 0.15f;
         float bh = pad_y * 2.0f + head_h + tsz.y;
@@ -2548,7 +2729,9 @@ static void gc_draw_messages(
                 (ImVec4){0.62f, 0.91f, 1.0f, 1.0f} :
                 (ImVec4){0.93f, 0.91f, 1.0f, 1.0f}
         );
+        if (ext) gc_emoji_push();
         igTextUnformatted(m->text, NULL);
+        if (ext) gc_emoji_pop();
         igPopStyleColor(1);
         igPopTextWrapPos();
 
@@ -2715,6 +2898,146 @@ static void gc_draw_emoji_row(
             save_user_settings(usrs);
         }
     }
+
+    igEndChild();
+}
+
+/* Size of the emoji picker under the message list: the same chips as the
+ * Settings emoji row, wrapped into a grid so every emoji is visible. Chips
+ * shrink a little if needed; if it still does not fit it scrolls. */
+static void gc_emoji_picker_layout(
+    float width, float max_h, float u,
+    float* out_chip_h, int* out_cols, float* out_h
+) {
+    int n = PROFILE_EMOJI_COUNT - 1;
+    float pad = u * 0.55f;
+    float gx = u * 0.45f;
+    float chip_h = u * 1.95f;
+    int cols = 1;
+    float h = 0.0f;
+
+    for (int step = 0; step < 6; step++) {
+        float chip_w = chip_h * 1.15f;
+
+        cols = (int)((width - pad * 2.0f + gx) / (chip_w + gx));
+
+        if (cols < 1) cols = 1;
+
+        int rows = (n + cols - 1) / cols;
+
+        h = pad * 2.0f + (float)rows * chip_h + (float)(rows - 1) * gx;
+
+        if (h <= max_h || chip_h <= u * 1.3f) {
+            break;
+        }
+
+        chip_h -= u * 0.15f;
+    }
+
+    if (h > max_h) {
+        h = max_h;
+    }
+
+    *out_chip_h = chip_h;
+    *out_cols = cols;
+    *out_h = h;
+}
+
+/* Tapping an emoji adds it to the message being typed. */
+static void gc_draw_emoji_picker(
+    ImVec2 pos, ImVec2 size, float u, float chip_h, int cols
+) {
+    ImDrawList* pdl = igGetWindowDrawList();
+
+    ImDrawList_AddRectFilled(
+        pdl, pos, gc_add(pos, size.x, size.y),
+        IM_COL32(255, 255, 255, 12), u * 0.8f, 0
+    );
+    ImDrawList_AddRect(
+        pdl, pos, gc_add(pos, size.x, size.y),
+        IM_COL32(190, 160, 255, 55), u * 0.8f, 0, 1.0f
+    );
+
+    igSetCursorScreenPos(pos);
+
+    igBeginChild_Str(
+        "##gc_emoji_picker",
+        size,
+        0,
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBackground
+    );
+
+    if (
+        igIsWindowHovered(0) &&
+        !igIsAnyItemActive() &&
+        igIsMouseDragging(0, 6.0f)
+    ) {
+        igSetScrollY_Float(igGetScrollY() - igGetIO_Nil()->MouseDelta.y);
+        gc_scroll_dragged = true;
+    }
+
+    int n = PROFILE_EMOJI_COUNT - 1;
+    float pad = u * 0.55f;
+    float gx = u * 0.45f;
+    float chip_w = chip_h * 1.15f;
+    int rows = (n + cols - 1) / cols;
+
+    ImVec2 base;
+    igGetCursorScreenPos(&base);
+
+    ImDrawList* dl = igGetWindowDrawList();
+
+    for (int e = 1; e < PROFILE_EMOJI_COUNT; e++) {
+        int idx = e - 1;
+        int r = idx / cols;
+        int c = idx % cols;
+
+        ImVec2 p = gc_v2(
+            base.x + pad + (float)c * (chip_w + gx),
+            base.y + pad + (float)r * (chip_h + gx)
+        );
+
+        igSetCursorScreenPos(p);
+
+        char id[16];
+        snprintf(id, sizeof(id), "##gcep%d", e);
+
+        bool clicked = igInvisibleButton(
+            id, gc_v2(chip_w, chip_h), ImGuiButtonFlags_None
+        );
+
+        bool hot = igIsItemHovered(0) || igIsItemActive();
+
+        ImDrawList_AddRectFilled(
+            dl, p, gc_add(p, chip_w, chip_h),
+            hot ? IM_COL32(255, 255, 255, 46) : IM_COL32(255, 255, 255, 20),
+            chip_h * 0.5f, 0
+        );
+
+        gc_emoji_center(
+            dl, p, gc_v2(chip_w, chip_h),
+            IM_COL32(255, 255, 255, 255), profile_emoji_at(e)
+        );
+
+        if (clicked && !gc_scroll_dragged) {
+            size_t len = strlen(global_chat_input);
+            const char* em = profile_emoji_at(e);
+            size_t el = strlen(em);
+
+            if (len + el < sizeof(global_chat_input)) {
+                memcpy(global_chat_input + len, em, el + 1);
+            }
+        }
+    }
+
+    igSetCursorScreenPos(base);
+    igDummy(
+        gc_v2(
+            size.x,
+            pad * 2.0f + (float)rows * chip_h + (float)(rows - 1) * gx
+        )
+    );
 
     igEndChild();
 }
@@ -3051,6 +3374,33 @@ static void global_chat_panel_contents(
         float qh = btn * 0.72f;
         float qgap = rail_gap * 0.6f;
 
+        /* SOS button pinned to the bottom of the rail (far from the close
+         * button). Only drawn if the panel is tall enough for it. */
+        if (y + qh <= rail_bottom) {
+            bool sos_on_r = global_chat_is_sos_active();
+            ImVec2 smn = gc_v2(rail_x, rail_bottom - qh);
+
+            rail_bottom -= qh + qgap * 2.0f;
+
+            if (
+                gc_button(
+                    "##gc_rail_sos", smn, gc_v2(btn, qh),
+                    sos_on_r ?
+                        IM_COL32(255, (int)(50.0f + pulse * 40.0f), 40, 255) :
+                        IM_COL32(224, 56, 44, 255),
+                    IM_COL32(245, 90, 76, 255),
+                    qh * 0.3f, IM_COL32(255, 160, 150, 90)
+                )
+            ) {
+                gc_toggle_sos();
+            }
+
+            gc_text_center(
+                dl, smn, gc_v2(btn, qh),
+                IM_COL32(255, 255, 255, 255), "SOS"
+            );
+        }
+
         if (y + qh <= rail_bottom) {
             ImDrawList_AddLine(
                 dl,
@@ -3191,43 +3541,29 @@ static void global_chat_panel_contents(
         float by = wp.y + (head_h - hb) * 0.5f;
         float x_close = pmax.x - pad * 0.5f - hb;
 
-        /* One-tap SOS in the header (hidden if the panel is too narrow). */
-        bool sos_on = global_chat_is_sos_active();
-        char sl[24];
-
-        if (sos_on) {
+        /* SOS is no longer a button up here (it sat right next to the close
+         * button and got tapped by accident). While it is on, the time left
+         * is shown as plain, non-tappable text; the SOS button lives at the
+         * bottom of the rail and in the SOS tab. */
+        if (global_chat_is_sos_active()) {
             long long secs = global_chat_sos_remaining_ms() / 1000;
+            char sl[24];
+
             snprintf(
                 sl, sizeof(sl), "SOS %lld:%02lld",
                 secs / 60, secs % 60
             );
-        } else {
-            snprintf(sl, sizeof(sl), "SOS");
-        }
 
-        float pw = gc_text_w(sl) + u * 1.5f;
-        float px = x_close - u * 0.4f - pw;
+            float sw = gc_text_w(sl);
+            float sx = x_close - u * 0.7f - sw;
 
-        if (px > status_end + u * 0.6f) {
-            if (
-                gc_button(
-                    "##gc_h_sos",
-                    gc_v2(px, by),
-                    gc_v2(pw, hb),
-                    sos_on ?
-                        IM_COL32(255, (int)(50.0f + pulse * 40.0f), 40, 255) :
-                        IM_COL32(224, 56, 44, 255),
-                    IM_COL32(245, 90, 76, 255),
-                    hb * 0.5f, 0
-                )
-            ) {
-                gc_toggle_sos();
+            if (sx > status_end + u * 0.6f) {
+                ImDrawList_AddText_Vec2(
+                    dl, gc_v2(sx, wp.y + (head_h - u) * 0.5f),
+                    IM_COL32(255, (int)(110.0f + pulse * 60.0f), 96, 255),
+                    sl, NULL
+                );
             }
-
-            gc_text_center(
-                dl, gc_v2(px, by), gc_v2(pw, hb),
-                IM_COL32(255, 255, 255, 255), sl
-            );
         }
 
         if (
@@ -3290,7 +3626,26 @@ static void global_chat_panel_contents(
     } else if (gc_tab == GC_TAB_CHAT) {
         float in_h = gc_clampf(ws.y * 0.07f, u * 2.3f, u * 3.1f);
         float in_y = content_bot - in_h;
+        float gap = u * 0.55f;
+
+        /* Emoji picker (opened with the smiley button beside Send). */
+        float pick_h = 0.0f;
+        float pick_chip_h = 0.0f;
+        int pick_cols = 1;
+
+        if (gc_emoji_picker_open) {
+            gc_emoji_picker_layout(
+                area_w,
+                (in_y - u * 0.45f - content_top) * 0.6f,
+                u, &pick_chip_h, &pick_cols, &pick_h
+            );
+        }
+
         float msg_bot = in_y - u * 0.45f;
+
+        if (gc_emoji_picker_open) {
+            msg_bot -= pick_h + u * 0.45f;
+        }
 
         gc_draw_messages(
             env,
@@ -3300,9 +3655,16 @@ static void global_chat_panel_contents(
             !adjusting_pos
         );
 
-        /* Message input + send */
-        float gap = u * 0.55f;
-        float in_w = mw - pad * 2.0f - in_h - gap;
+        if (gc_emoji_picker_open) {
+            gc_draw_emoji_picker(
+                gc_v2(area_x, msg_bot + u * 0.45f),
+                gc_v2(area_w, pick_h),
+                u, pick_chip_h, pick_cols
+            );
+        }
+
+        /* Message input + emoji + send */
+        float in_w = mw - pad * 2.0f - (in_h + gap) * 2.0f;
 
         igSetCursorScreenPos(gc_v2(mx + pad, in_y));
 
@@ -3323,6 +3685,10 @@ static void global_chat_panel_contents(
 
         igPushItemWidth(in_w);
 
+        bool input_ext = gc_has_non_ascii(global_chat_input);
+
+        if (input_ext) gc_emoji_push();
+
         bool submitted =
             igInputTextWithHint(
                 "##global_chat_input",
@@ -3333,6 +3699,8 @@ static void global_chat_panel_contents(
                 NULL,
                 NULL
             );
+
+        if (input_ext) gc_emoji_pop();
 
         igPopItemWidth();
         igPopStyleColor(3);
@@ -3362,6 +3730,33 @@ static void global_chat_panel_contents(
                 );
             }
         }
+
+        ImVec2 emn = gc_v2(mx + pad + in_w + gap, in_y);
+
+        if (
+            gc_button(
+                "##gc_emoji_btn",
+                emn,
+                gc_v2(in_h, in_h),
+                gc_emoji_picker_open ?
+                    IM_COL32(124, 74, 232, 200) :
+                    IM_COL32(255, 255, 255, 22),
+                gc_emoji_picker_open ?
+                    IM_COL32(150, 100, 250, 230) :
+                    IM_COL32(255, 255, 255, 46),
+                u * 0.7f,
+                IM_COL32(190, 160, 255, 60)
+            )
+        ) {
+            gc_emoji_picker_open = !gc_emoji_picker_open;
+        }
+
+        gc_icon_smiley(
+            dl,
+            gc_v2(emn.x + in_h * 0.5f, emn.y + in_h * 0.5f),
+            in_h * 0.52f,
+            IM_COL32(241, 236, 255, 255)
+        );
 
         ImVec2 smn = gc_v2(mx + mw - pad - in_h, in_y);
 
@@ -3425,7 +3820,7 @@ static void global_chat_panel_contents(
 
         igDummy(gc_v2(1.0f, u * 0.2f));
 
-        gc_draw_players_list(u, av.x, own_name);
+        gc_draw_players_list(env, u, av.x, own_name);
 
         gc_end_scroll_child(
             gc_v2(area_x, content_top), area_h,

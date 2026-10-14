@@ -12,18 +12,23 @@
    get killed while squeezing, lower it to hug bodies tighter. */
 #define SQ_MARGIN 3.0f
 
-/* The BLUE dot: the tip of your head, this many head-radii in front of the
-   head centre (the RED dot). Both dots are kept out of enemy bodies; the blue
-   one leads, so it is the one that decides how close you get. 1.0 = the very
-   front edge of the head. Set to 0 to protect only the centre (red) dot. */
+/* Two dots are protected: the RED dot (the head centre) and the BLUE dot (the
+   tip of the head), SQ_TIP_FACTOR head-radii in front of the red one.
+   1.0 = the very front edge of the head. Set to 0 to protect only the red
+   dot. */
 #define SQ_TIP_FACTOR 1.0f
 
 /* Extra clearance around enemy HEADS (they move and can turn into you). */
 #define SQ_HEAD_EXTRA 6.0f
 
-/* Look-ahead: SQ_LOOK_STEPS iterations of SQ_STEP_FRAMES game frames each. */
-#define SQ_LOOK_STEPS 40
-#define SQ_STEP_FRAMES 2.0f
+/* Look-ahead: SQ_LOOK_STEPS iterations of SQ_STEP_FRAMES game frames each.
+   Kept short on purpose: Squeeze stays out of the way until a dot is about to
+   touch a body (it first steps in roughly 90 px from a body edge at normal
+   speed). A longer look-ahead makes the snake start steering away from
+   far-off enemies. Don't go much below 40: the snake needs about that many
+   frames to turn away from a body it is heading straight into. */
+#define SQ_LOOK_STEPS 45
+#define SQ_STEP_FRAMES 1.0f
 
 /* Candidate headings tried around the wanted one (every 7.5 degrees). */
 #define SQ_CAND_STEP 0.1309f /* 7.5 deg in radians */

@@ -19,6 +19,15 @@ sbot_dbg g_bot_dbg;
 #define COLLISION_DELAY 10
 #define ACTION_FRAMES 2
 
+/* Expand / roam mode (stage 2): leave the loop only while there is zero
+ * perceived death risk, and snap back to the tight loop the moment any
+ * risk shows up. Distances are multiples of the snake's width. */
+#define ROAM_HEAD_SAFE_MULT 40.0f  /* enemy head this close to my head/body */
+#define ROAM_BODY_SAFE_MULT 15.0f  /* enemy body this close to my head */
+#define ROAM_WALL_MARGIN 2000.0f   /* world units from the arena wall */
+#define ROAM_CLEAR_FRAMES 8        /* risk-free frames before going out */
+#define ROAM_ARC_DIV 64.0f         /* gentle outward arc (bigger = wider) */
+
 #define MAX_BODY_PTS 8192
 #define MAX_HULL_PTS 32
 #define MAX_INSIDE_PTS 512
@@ -68,6 +77,8 @@ typedef struct {
   int circle_dir;
   bool enable_encircle;
   bool enable_follow_circle;
+  bool roaming;
+  int clear_frames;
 
   int id;
   float x, y, ang, ca, sa;
@@ -808,6 +819,10 @@ static void follow_circle_self(game_data* gdata) {
       fminf(target_course, (-0.5f * (close_dist - 4.0f * B.width)) / B.width);
 
   target_course = fmaxf(target_course, (-0.75f * close_dist) / B.width);
+  /* When the head has roamed far from the loop, close_dist is huge and
+   * the term above would go to many radians (wrapping around). Clamp so
+   * the return trip is a firm but sane turn back toward the loop. */
+  target_course = fmaxf(target_course, -1.5f);
   target_course = fminf(target_course, 1.0f);
 
   v2 goal_dir = {close_tang.x * cosf(target_course) -
@@ -824,6 +839,57 @@ static void follow_circle_self(game_data* gdata) {
   } else {
     B.goal = (v2){roundf(goal.x), roundf(goal.y)};
   }
+}
+
+static void compute_food_goal(game_data* gdata);
+
+/*
+ * True if there is ANY chance of dying right now: an enemy head near my
+ * head or body, an enemy body near my head, or the wall close by. Used to
+ * decide between roaming outward (false) and holding the tight loop (true).
+ */
+static bool death_risk(game_data* gdata) {
+  populate_pts(gdata);
+  float w = fmaxf(B.width, 29.0f);
+  float head_safe = ROAM_HEAD_SAFE_MULT * w;
+  float body_safe = ROAM_BODY_SAFE_MULT * w;
+  float hs2 = head_safe * head_safe;
+  float bs2 = body_safe * body_safe;
+
+  float dctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
+  if (gdata->data.flux_grd - dctr < ROAM_WALL_MARGIN) return true;
+
+  int ns = tdarray_length(gdata->data.snakes);
+  for (int i = 0; i < ns; i++) {
+    snake* sk = gdata->data.snakes + i;
+    if (sk->id == B.id || sk->dead) continue;
+
+    /* enemy head vs my head */
+    if (dist2(B.x, B.y, sk->xx, sk->yy) < hs2) return true;
+
+    /* enemy head vs my body (sampled) */
+    for (int j = 0; j < B.bpts_n; j += 8)
+      if (dist2(B.bpts[j].x, B.bpts[j].y, sk->xx, sk->yy) < hs2) return true;
+
+    /* enemy body vs my head */
+    int pn = tdarray_length(sk->pts);
+    for (int j = 0; j < pn; j++) {
+      body_part* po = sk->pts + j;
+      if (po->dying) continue;
+      if (dist2(B.x, B.y, po->xx, po->yy) < bs2) return true;
+    }
+  }
+  return false;
+}
+
+/* Risk-free: head out. Chase food if any, otherwise a wide gentle arc. */
+static void roam_expand(game_data* gdata) {
+  get_collision_points(gdata);
+  compute_food_goal(gdata);
+  if (B.has_food)
+    B.goal = (v2){B.current_food.x, B.current_food.y};
+  else
+    B.goal = heading_rel((B.circle_dir * (float)M_PI) / ROAM_ARC_DIV);
 }
 
 static void to_circle(game_data* gdata) {
@@ -1007,8 +1073,23 @@ void sbot_go(tenv* env) {
 
   if (B.stage == 2) {
     bot->output.accel = (bool)B.default_accel;
-    follow_circle_self(gdata);
+    /* Any risk at all -> back to the tight loop immediately. Only after
+     * a few consecutive risk-free frames do we head out and expand. */
+    if (death_risk(gdata)) {
+      B.clear_frames = 0;
+      B.roaming = false;
+    } else if (B.clear_frames < ROAM_CLEAR_FRAMES) {
+      B.clear_frames++;
+    }
+    if (B.clear_frames >= ROAM_CLEAR_FRAMES) {
+      B.roaming = true;
+      roam_expand(gdata);
+    } else {
+      follow_circle_self(gdata);
+    }
   } else {
+    B.roaming = false;
+    B.clear_frames = 0;
     /* Score-gated stage promotion runs every frame, regardless of
      * whether a collision/encircle dodge is also active right now --
      * previously this was only checked on a fully "clear" frame, which

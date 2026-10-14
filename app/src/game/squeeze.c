@@ -7,10 +7,12 @@
 
 /* ---- tuning ------------------------------------------------------------ */
 
-/* Extra clearance (game units) kept between the centre line and an enemy
-   body edge. Covers network latency / server rounding. Raise it if you still
-   get killed while squeezing, lower it to hug bodies tighter. */
-#define SQ_MARGIN 3.0f
+/* Extra clearance (game units) kept between the two protected dots and an
+   enemy body edge. Very small on purpose so the dots hug the body as tightly
+   as physically possible. Raise it (try 2-4) if you still get killed while
+   squeezing: the server sees your head slightly behind / ahead of what you
+   see, by about (ping x speed). */
+#define SQ_MARGIN 0.75f
 
 /* Two dots are protected: the RED dot (the head centre) and the BLUE dot (the
    tip of the head), SQ_TIP_FACTOR head-radii in front of the red one.
@@ -21,29 +23,56 @@
 /* Extra clearance around enemy HEADS (they move and can turn into you). */
 #define SQ_HEAD_EXTRA 6.0f
 
-/* Look-ahead: SQ_LOOK_STEPS iterations of SQ_STEP_FRAMES game frames each.
-   Kept short on purpose: Squeeze stays out of the way until a dot is about to
-   touch a body (it first steps in roughly 90 px from a body edge at normal
-   speed). A longer look-ahead makes the snake start steering away from
-   far-off enemies. Don't go much below 40: the snake needs about that many
-   frames to turn away from a body it is heading straight into. */
+/* Look-ahead used to decide WHEN to step in: SQ_LOOK_STEPS simulated frames.
+   Squeeze stays out of the way until a dot is about to touch a body, or the
+   path ahead leads into a dead end (see viable() below). A longer value makes
+   the snake start steering away from far-off enemies. Don't go much below
+   40: the snake needs about that many frames to turn away from a body it is
+   heading straight into. */
 #define SQ_LOOK_STEPS 45
 #define SQ_STEP_FRAMES 1.0f
 
-/* Candidate headings tried around the wanted one (every 7.5 degrees). */
+/* A heading is only accepted as an escape route if it stays safe for the whole
+   time the snake needs to turn onto it PLUS SQ_LOOK_STEPS frames straight
+   after that, capped at SQ_LOOK_MAX. */
+#define SQ_LOOK_MAX 220
+
+/* Never pick a heading that needs a (nearly) 180 degree turn: the turn
+   direction of a head-on reversal is ambiguous (the game and this code can
+   pick opposite ways round), which flips the snake into the body mid-turn. */
+#define SQ_MAX_TURN 2.95f /* radians, about 169 degrees */
+
+/* Candidate headings tried around the wanted one (every 7.5 degrees), then
+   refined by bisection down to a fraction of a degree. */
 #define SQ_CAND_STEP 0.1309f /* 7.5 deg in radians */
 #define SQ_CAND_MAX 24       /* 24 * 7.5 = 180 deg each side */
+
+/* How much further ahead the dead-end check looks than the normal check, on
+   top of the turn time. This is what notices a funnel / coil closing in long
+   before the gap is too narrow to turn around in. It only ever makes the snake
+   step in earlier when the way ahead really is a trap -- in open space it
+   changes nothing. */
+#define SQ_VIABLE_EXTRA 90
+
+/* Dead-end check budget per frame (it is the expensive part). */
+#define SQ_VIABLE_BUDGET 10
 
 #define SQ_MAX_OBS 768
 
 typedef struct {
   float x, y;   /* position now */
   float vx, vy; /* movement per game frame (heads only) */
-  float r;      /* radius the centre line must stay outside of */
+  float r;      /* radius the dots must stay outside of */
 } sq_obs;
 
+typedef struct {
+  float x, y, ang;
+} sq_state;
+
 static sq_obs g_obs[SQ_MAX_OBS];
+static float g_reff[SQ_MAX_OBS];
 static int g_obs_n;
+static int g_viable_budget;
 static bool g_deflecting = false;
 
 bool squeeze_is_deflecting(void) { return g_deflecting; }
@@ -62,7 +91,6 @@ static void add_obs(float x, float y, float vx, float vy, float r) {
 
 static void gather(game_data* gdata, snake* me, float reach) {
   g_obs_n = 0;
-  float reach2 = reach * reach;
   int ns = tdarray_length(gdata->data.snakes);
   for (int i = 0; i < ns; i++) {
     snake* s = gdata->data.snakes + i;
@@ -85,18 +113,20 @@ static void gather(game_data* gdata, snake* me, float reach) {
       float dx = po->xx - me->xx, dy = po->yy - me->yy;
       float rr = reach + sr;
       if (dx * dx + dy * dy > rr * rr) continue;
-      (void)reach2;
       add_obs(po->xx, po->yy, 0.0f, 0.0f, sr);
     }
   }
 }
 
-/* Turn the head toward `target` for `steps` iterations, moving along the way,
-   and return how many iterations it survived without the centre line touching
-   anything (SQ_LOOK_STEPS = fully safe). */
-static int simulate(float x, float y, float ang, float target, float csp,
-                    float mang, float tip, const float* r_eff) {
-  for (int i = 1; i <= SQ_LOOK_STEPS; i++) {
+/* Turn the head toward `target` for `steps` frames, moving along the way, and
+   return how many frames it survived without either dot touching anything
+   (== steps means fully safe). t0 = frames already elapsed (enemy heads keep
+   moving). `end` receives the final state. */
+static int simulate(sq_state st, float target, float csp, float mang, float tip,
+                    int steps, int t0, sq_state* end) {
+  float x = st.x, y = st.y, ang = st.ang;
+  int survived = steps;
+  for (int i = 1; i <= steps; i++) {
     float diff = wrap_pi(target - ang);
     float turn = mang * SQ_STEP_FRAMES;
     if (fabsf(diff) <= turn)
@@ -106,26 +136,74 @@ static int simulate(float x, float y, float ang, float target, float csp,
 
     x += cosf(ang) * csp * SQ_STEP_FRAMES;
     y += sinf(ang) * csp * SQ_STEP_FRAMES;
-    float t = (float)i * SQ_STEP_FRAMES;
+    float t = (float)(t0 + i) * SQ_STEP_FRAMES;
 
     float bx = x + cosf(ang) * tip; /* blue dot (head tip) */
     float by = y + sinf(ang) * tip;
 
-    for (int k = 0; k < g_obs_n; k++) {
+    bool hit = false;
+    for (int k = 0; k < g_obs_n && !hit; k++) {
       const sq_obs* o = &g_obs[k];
       float ox = o->x + o->vx * t;
       float oy = o->y + o->vy * t;
-      float r = r_eff[k];
+      float r = g_reff[k];
       float dx = x - ox, dy = y - oy; /* red dot */
-      if (dx * dx + dy * dy < r * r) return i - 1;
-      if (tip > 0.0f) {
+      if (dx * dx + dy * dy < r * r) hit = true;
+      else if (tip > 0.0f) {
         dx = bx - ox;
         dy = by - oy;
-        if (dx * dx + dy * dy < r * r) return i - 1;
+        if (dx * dx + dy * dy < r * r) hit = true;
       }
     }
+    if (hit) {
+      survived = i - 1;
+      break;
+    }
   }
-  return SQ_LOOK_STEPS;
+  if (end) *end = (sq_state){x, y, ang};
+  return survived;
+}
+
+/* Look-ahead needed to trust `target` as an escape route (see SQ_LOOK_MAX),
+   or -1 if that heading is not allowed (see SQ_MAX_TURN). */
+static int commit_steps(float cur, float target, float mang) {
+  float d = fabsf(wrap_pi(target - cur));
+  if (d > SQ_MAX_TURN) return -1;
+  int n = SQ_LOOK_STEPS + (int)(d / (mang * SQ_STEP_FRAMES));
+  return n > SQ_LOOK_MAX ? SQ_LOOK_MAX : n;
+}
+
+/* Dead-end check: from state `st` (reached after t0 frames), is there still at
+   least one heading that stays safe? This is what stops the snake from
+   following your aim into a wedge / pocket between bodies whose far end is
+   too narrow to turn around in. */
+static bool viable(const sq_state* st, int t0, float csp, float mang,
+                   float tip) {
+  if (g_viable_budget <= 0) return false;
+  g_viable_budget--;
+  for (int j = 0; j <= 5; j++) {
+    for (int sg = -1; sg <= 1; sg += 2) {
+      if (j == 0 && sg == 1) continue;
+      float tgt = st->ang + (float)sg * (float)j * 0.5236f; /* 30 deg steps */
+      int need = commit_steps(st->ang, tgt, mang);
+      if (need < 0) continue;
+      need += SQ_VIABLE_EXTRA;
+      if (simulate(*st, tgt, csp, mang, tip, need, t0, NULL) == need)
+        return true;
+    }
+  }
+  return false;
+}
+
+/* Is heading `target` fully safe for `steps` frames AND does it still leave a
+   way out afterwards? */
+static bool heading_ok(sq_state st, float target, float csp, float mang,
+                       float tip, int steps, int* survived) {
+  sq_state end;
+  int sv = simulate(st, target, csp, mang, tip, steps, 0, &end);
+  if (survived) *survived = sv;
+  if (sv != steps) return false;
+  return viable(&end, steps, csp, mang, tip);
 }
 
 bool squeeze_filter(game_data* gdata, snake* me, int* xm, int* ym) {
@@ -142,14 +220,14 @@ bool squeeze_filter(game_data* gdata, snake* me, int* xm, int* ym) {
   float tipx = me->xx + cosf(me->ang) * tip;
   float tipy = me->yy + sinf(me->ang) * tip;
 
-  float reach = csp * SQ_STEP_FRAMES * SQ_LOOK_STEPS + 40.0f + tip;
+  float reach =
+      csp * SQ_STEP_FRAMES * (SQ_LOOK_STEPS * 2 + 60) + 40.0f + tip;
   gather(gdata, me, reach);
   if (g_obs_n == 0) return false;
 
-  /* Effective radius per obstacle. Normally radius + margin. If the head is
-     already inside the margin ring (but not inside the body), only forbid
-     getting any closer, otherwise every heading would count as unsafe. */
-  static float r_eff[SQ_MAX_OBS];
+  /* Effective radius per obstacle. Normally radius + margin. If a dot is
+     already inside the margin ring, only forbid getting any closer, so a way
+     out is still found. */
   for (int k = 0; k < g_obs_n; k++) {
     const sq_obs* o = &g_obs[k];
     float want = o->r + SQ_MARGIN;
@@ -160,12 +238,11 @@ bool squeeze_filter(game_data* gdata, snake* me, int* xm, int* ym) {
     float dt = sqrtf(dx * dx + dy * dy);
     if (dt < d0) d0 = dt; /* the closer of the two dots */
     if (d0 < want) {
-      /* Already inside the margin ring (or touching): only forbid getting
-         any closer, so a way out is still found. */
-      want = d0 - 0.5f;
+      want = d0 - 0.02f; /* tiny float tolerance only: any bigger and the
+                            snake creeps inward a little every frame */
       if (want < 0.5f) want = 0.5f;
     }
-    r_eff[k] = want;
+    g_reff[k] = want;
   }
 
   /* Wanted heading from the mouse / joystick (hold current if centred). */
@@ -175,13 +252,19 @@ bool squeeze_filter(game_data* gdata, snake* me, int* xm, int* ym) {
   else
     wanted = me->ang;
 
-  if (simulate(me->xx, me->yy, me->ang, wanted, csp, mang, tip, r_eff) ==
-      SQ_LOOK_STEPS)
-    return false; /* requested heading is already safe: don't touch it */
+  sq_state now = {me->xx, me->yy, me->ang};
+  g_viable_budget = SQ_VIABLE_BUDGET;
+
+  if (heading_ok(now, wanted, csp, mang, tip, SQ_LOOK_STEPS, NULL))
+    return false; /* requested heading is fine: don't touch it */
 
   float best = wanted;
-  int best_steps = -1;
+  float found_prev = wanted;   /* last rejected heading before the good one */
   bool found = false;
+  bool have_nv = false;        /* safe but leads into a dead end */
+  float nv_best = wanted;
+  int best_steps = -1;
+  float surv_best = wanted;
 
   for (int k = 1; k <= SQ_CAND_MAX && !found; k++) {
     float a1 = wanted + k * SQ_CAND_STEP;
@@ -195,20 +278,53 @@ bool squeeze_filter(game_data* gdata, snake* me, int* xm, int* ym) {
     }
     float cands[2] = {a1, a2};
     for (int c = 0; c < 2; c++) {
-      int st = simulate(me->xx, me->yy, me->ang, cands[c], csp, mang, tip, r_eff);
-      if (st == SQ_LOOK_STEPS) {
-        best = cands[c];
-        found = true;
-        break;
-      }
-      if (st > best_steps) {
-        best_steps = st;
-        best = cands[c];
+      int need = commit_steps(me->ang, cands[c], mang);
+      if (need < 0) continue; /* reversal: ambiguous turn direction */
+      sq_state end;
+      int sv = simulate(now, cands[c], csp, mang, tip, need, 0, &end);
+      if (sv == need) {
+        if (viable(&end, need, csp, mang, tip)) {
+          best = cands[c];
+          float sgn = wrap_pi(cands[c] - wanted) >= 0 ? 1.0f : -1.0f;
+          found_prev = wanted + sgn * (k - 1) * SQ_CAND_STEP;
+          found = true;
+          break;
+        }
+        if (!have_nv) {
+          have_nv = true;
+          nv_best = cands[c];
+        }
+      } else if (sv > best_steps) {
+        best_steps = sv;
+        surv_best = cands[c];
       }
     }
   }
-  /* Nothing fully safe (boxed in): `best` is the heading that survives the
-     longest, which is the best chance of the gap opening up. */
+
+  if (found) {
+    /* Refine: the coarse search only says "somewhere between found_prev
+       (rejected) and best (accepted)". Bisect to the tightest accepted
+       heading, i.e. the one that grazes the enemy body, so the dots hug it as
+       closely as possible instead of overshooting by up to 7.5 degrees. */
+    float lo = found_prev, hi = best;
+    for (int it = 0; it < 7; it++) {
+      float mid = lo + wrap_pi(hi - lo) * 0.5f;
+      int need = commit_steps(me->ang, mid, mang);
+      if (need > 0 && heading_ok(now, mid, csp, mang, tip, need, NULL))
+        hi = mid;
+      else
+        lo = mid;
+    }
+    best = hi;
+  } else if (have_nv) {
+    /* No heading with a guaranteed way out afterwards: at least take one that
+       is safe for the whole look-ahead. */
+    best = nv_best;
+  } else {
+    /* Boxed in: take the heading that survives the longest, the best chance
+       of a gap opening up. */
+    best = surv_best;
+  }
 
   *xm = (int)lroundf(cosf(best) * 256.0f);
   *ym = (int)lroundf(sinf(best) * 256.0f);

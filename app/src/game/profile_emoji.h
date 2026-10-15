@@ -51,6 +51,26 @@ static const char *PROFILE_EMOJIS[] = {
 #define PROFILE_EMOJI_COUNT \
   ((int)(sizeof PROFILE_EMOJIS / sizeof PROFILE_EMOJIS[0]))
 
+/* Colour emoji profile ids. Ids 1..PROFILE_EMOJI_COUNT-1 are the old
+   text glyphs above (still understood, so nothing already saved or sent
+   breaks). Ids PROFILE_EMOJI_SPRITE_BASE.. are the colour pictures of
+   ntl_emoji.h (sprite n = id - PROFILE_EMOJI_SPRITE_BASE); clients that
+   only know the glyphs simply show no emoji for those. They fit the
+   one-byte emoji_id of the location packet. */
+#include "ntl_emoji.h"
+
+#define PROFILE_EMOJI_SPRITE_BASE 32
+
+static inline int profile_emoji_is_sprite(int id) {
+  return id >= PROFILE_EMOJI_SPRITE_BASE &&
+         id < PROFILE_EMOJI_SPRITE_BASE + NTL_EMOJI_COUNT;
+}
+
+static inline int profile_emoji_valid(int id) {
+  return id == 0 || (id > 0 && id < PROFILE_EMOJI_COUNT) ||
+         profile_emoji_is_sprite(id);
+}
+
 /* Clamped lookup -- always returns a valid pointer, "" for an
    out-of-range or zero id. */
 static inline const char *profile_emoji_at(int id) {

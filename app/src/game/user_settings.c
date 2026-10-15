@@ -618,8 +618,7 @@ void read_user_settings(user_settings* usr_settings) {
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     if (loaded.key_btn_shape[i] > 1) loaded.key_btn_shape[i] = 0;
   }
-  if (loaded.profile_emoji_id < 0 ||
-      loaded.profile_emoji_id >= PROFILE_EMOJI_COUNT)
+  if (!profile_emoji_valid(loaded.profile_emoji_id))
     loaded.profile_emoji_id = 0;
   if (!isfinite(loaded.net_graph_rel_x) || loaded.net_graph_rel_x < -0.25f ||
       loaded.net_graph_rel_x > 1.25f)

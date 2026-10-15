@@ -19,5 +19,9 @@ bool snakey_rain_enabled_at_start(void);
 bool snakey_rain_requires_restart(tenv *env);
 /* Push latest bot name/skin/max-bots to the Snakey Rain server if logged in. */
 void snakey_rain_apply_settings(tenv *env);
+/* Draws the Snakey Rain settings widgets (status, account, bots, bot look)
+   into the current window. Shared by the title-screen popup and the in-game
+   settings window; wraps itself in touch-scrolling for the current window. */
+void snakey_rain_draw_settings_panel(tenv *env);
 
 #endif

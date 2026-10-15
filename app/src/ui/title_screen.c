@@ -47,85 +47,23 @@ static void draw_snakey_rain_homepage(tenv* env, float frame_height) {
     igOpenPopup_Str("Snakey Rain Settings", 0);
   crystal_sheen();
 
-  float popup_w = fminf(390.0f, ctx->size[0] - 24.0f);
+  float popup_w = fminf(460.0f, ctx->size[0] - 24.0f);
   igSetNextWindowSize((ImVec2){popup_w, 0.0f}, ImGuiCond_Appearing);
+  /* Never taller than the screen; the panel scrolls (thick scrollbar and
+     drag-to-scroll) when it does not fit, e.g. on a landscape phone. */
+  igSetNextWindowSizeConstraints((ImVec2){0.0f, 0.0f},
+                                 (ImVec2){100000.0f, ctx->size[1] * 0.92f},
+                                 NULL, NULL);
+  igPushStyleVar_Float(ImGuiStyleVar_ScrollbarSize, 26.0f);
   if (igBeginPopup("Snakey Rain Settings", ImGuiWindowFlags_NoSavedSettings)) {
     igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
                usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
 
     igSeparatorText("Snakey Rain");
-    bool enabled = usrs->snakey_rain_enabled;
-    if (igCheckbox("Enable Snakey Rain", &enabled)) {
-      usrs->snakey_rain_enabled = enabled;
-      save_user_settings(usrs);
-      snakey_rain_apply_settings(env);
-    }
+    /* Status, account, bots and bot look -- shared with the in-game settings
+       window (gear button on the Snakey Rain bar). */
+    snakey_rain_draw_settings_panel(env);
     igSpacing();
-
-    igBeginDisabled(!usrs->snakey_rain_enabled);
-
-    igSetNextItemWidth(-1.0f);
-    igInputTextWithHint("##snakey_username", "Snakey Rain username",
-                        usrs->snakey_rain_username,
-                        sizeof usrs->snakey_rain_username,
-                        ImGuiInputTextFlags_None, NULL, NULL);
-    if (igIsItemDeactivatedAfterEdit()) {
-      save_user_settings(usrs);
-      snakey_rain_apply_settings(env);
-    }
-
-    igSetNextItemWidth(-1.0f);
-    igInputTextWithHint("##snakey_password", "Snakey Rain password",
-                        usrs->snakey_rain_password,
-                        sizeof usrs->snakey_rain_password,
-                        ImGuiInputTextFlags_Password, NULL, NULL);
-    if (igIsItemDeactivatedAfterEdit()) {
-      save_user_settings(usrs);
-      snakey_rain_apply_settings(env);
-    }
-
-    igText("Maximum bots");
-    igSetNextItemWidth(-1.0f);
-    igSliderInt("##snakey_max_bots", &usrs->snakey_rain_max_bots, 1, 1000,
-                "%d", ImGuiSliderFlags_AlwaysClamp);
-    if (igIsItemDeactivatedAfterEdit()) {
-      save_user_settings(usrs);
-      snakey_rain_apply_settings(env);
-    }
-
-    igText("Bot in-game name (max 24)");
-    igSetNextItemWidth(-1.0f);
-    igInputTextWithHint("##snakey_bot_name", "Name shown on bots",
-                        usrs->snakey_rain_bot_name,
-                        sizeof usrs->snakey_rain_bot_name,
-                        ImGuiInputTextFlags_None, NULL, NULL);
-    if (igIsItemDeactivatedAfterEdit()) {
-      save_user_settings(usrs);
-      snakey_rain_apply_settings(env);
-    }
-
-    igText("Bot skin code");
-    igSetNextItemWidth(-1.0f);
-    igInputTextWithHint("##snakey_bot_skin", "Skin string (same as extension)",
-                        usrs->snakey_rain_bot_skin,
-                        sizeof usrs->snakey_rain_bot_skin,
-                        ImGuiInputTextFlags_None, NULL, NULL);
-    if (igIsItemDeactivatedAfterEdit()) {
-      save_user_settings(usrs);
-      snakey_rain_apply_settings(env);
-    }
-
-    igEndDisabled();
-
-    igSpacing();
-    igTextWrapped("Credentials, bot name/skin, and the selected game server "
-                  "are sent to snakeyrain.com when bots start.");
-    if (snakey_rain_enabled_at_start()) {
-      igTextColored((ImVec4){0.35f, 1.0f, 0.55f, 1.0f}, "Active now.");
-    } else if (usrs->snakey_rain_enabled) {
-      igTextColored((ImVec4){1.0f, 0.85f, 0.35f, 1.0f},
-                    "Enabled - will connect when you play.");
-    }
 
     ImVec2 avail;
     igGetContentRegionAvail(&avail);
@@ -134,6 +72,7 @@ static void draw_snakey_rain_homepage(tenv* env, float frame_height) {
     igPopFont();
     igEndPopup();
   }
+  igPopStyleVar(1);
 
   crystal_pop_theme();
 }

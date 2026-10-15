@@ -400,6 +400,17 @@ typedef struct user_settings {
   uint8_t saved_names_reserved[8];
   int     saved_name_count;
   char    saved_names[MAX_SAVED_NAMES][MAX_NICKNAME_LEN + 1];
+
+  /* v2.22 extension: Snakey Rain panel state -- the last bot mode and Boost
+     choice (restored on the next launch) and whether the in-game control bar
+     is collapsed. Appended after saved_names so every earlier file stays a
+     compatible prefix (see v222_prefix in read_user_settings). The 16-byte
+     reserved block keeps sizeof(user_settings) strictly larger than the
+     previous release (it always crosses the 16-byte alignment boundary). */
+  uint8_t snakey_rain_ui_reserved[16];
+  int     snakey_rain_last_mode;
+  bool    snakey_rain_last_boost;
+  bool    snakey_rain_bar_collapsed;
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {

@@ -61,6 +61,7 @@ typedef struct sr_state {
   bool mode_picker_open;
   bool settings_open;
   bool show_password;
+  char last_error[80];      /* why the last connection attempt failed */
   uint8_t spawn_packet[SR_SPAWN_MAX];
   size_t spawn_packet_len;
 } sr_state;
@@ -336,7 +337,12 @@ static void sr_schedule_reconnect(void) {
     S.start_requested = false;
     S.conn_error = true;
     S.reconnect_at = 0.0;
-    sr_status("Can't reach Snakey Rain - tap Retry");
+    {
+      char msg[128];
+      snprintf(msg, sizeof msg, "Can't reach Snakey Rain (%s) - tap Retry",
+               S.last_error);
+      sr_status(msg);
+    }
     sr_local_chat("Snakey Rain: can't connect - tap Retry");
     return;
   }
@@ -344,7 +350,12 @@ static void sr_schedule_reconnect(void) {
   double delay = 2.0 * (double)(1 << shift);
   if (delay > 15.0) delay = 15.0;
   S.reconnect_at = igGetTime() + delay;
-  sr_status("Connection lost - reconnecting...");
+  {
+    char msg[128];
+    snprintf(msg, sizeof msg, "Connection lost (%s) - reconnecting...",
+             S.last_error);
+    sr_status(msg);
+  }
 }
 
 static void sr_callback(struct mg_connection *c, int ev, void *ev_data) {
@@ -433,9 +444,17 @@ static void sr_callback(struct mg_connection *c, int ev, void *ev_data) {
       }
     }
   } else if (ev == MG_EV_ERROR) {
+    /* mongoose passes the failure reason (e.g. "dns resolve failed",
+       "connect failed", a TLS error) as a C string. */
+    if (ev_data) snprintf(S.last_error, sizeof S.last_error, "%s", (char *)ev_data);
     sr_status("Snakey Rain connection error");
     c->is_closing = true;
   } else if (ev == MG_EV_CLOSE) {
+    if (!S.last_error[0])
+      snprintf(S.last_error, sizeof S.last_error, "%s",
+               S.logged_in ? "server closed the connection"
+               : S.ws_open ? "closed during login"
+                           : "no response from server");
     S.connection = NULL;
     S.ws_open = false;
     S.logged_in = false;
@@ -464,6 +483,7 @@ static void sr_connect(tenv *env) {
   char url[96];
   snprintf(url, sizeof url, "wss://%s:%d/", SR_HOST, SR_PORT);
   S.reconnect_at = 0.0;
+  S.last_error[0] = 0;
   S.connect_started = igGetTime();
   S.connection = mg_ws_connect(&S.mgr, url, sr_callback, env,
                                "Origin: https://slither.io\r\n");
@@ -1204,7 +1224,7 @@ static void sr_draw_chip(tenv *env, sr_metrics m, float sw, float y_top,
   if (S.toast[0] && now < S.toast_until) {
     snprintf(buf, sizeof buf, "%s", S.toast);
   } else if (kind == SRK_CONNECTING && S.reconnect_at > now) {
-    snprintf(buf, sizeof buf, "Connection lost - reconnecting in %ds (%d/%d)",
+    snprintf(buf, sizeof buf, "%s - retry in %ds (%d/%d)", S.last_error,
              (int)ceil(S.reconnect_at - now), S.reconnect_attempts,
              SR_MAX_RECONNECT);
   } else if (kind == SRK_CONNECTING || kind == SRK_WAITING ||

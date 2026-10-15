@@ -1,3 +1,4 @@
+
 #ifndef NTL_TEAM_H
 #define NTL_TEAM_H
 
@@ -11,6 +12,17 @@
  * empty macro and cimgui.h has its own include guard. */
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include "../cimgui/cimgui.h"
+
+/* Colour emoji sprites (app/res/textures/emoji_sheet.png, see ntl_emoji.h),
+ * shared with the TEAM CHAT so both show the same pictures.
+ * ntl_emoji_ready(): the sheet is uploaded and can be drawn.
+ * index_for_cp: sprite index of a Unicode codepoint, -1 if not in the set.
+ * cp_for_index: the codepoint of a sprite (0 if out of range).
+ * ntl_emoji_draw: draw sprite idx into the rect a..b. */
+bool ntl_emoji_ready(void);
+int ntl_emoji_index_for_cp(unsigned int cp);
+unsigned int ntl_emoji_cp_for_index(int idx);
+void ntl_emoji_draw(ImDrawList* dl, ImVec2 a, ImVec2 b, int idx, ImU32 tint);
 
 void ntl_team_init(tenv* env);
 void ntl_team_update(tenv* env);

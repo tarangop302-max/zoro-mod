@@ -1,4 +1,3 @@
-
 #ifndef NTL_TEAM_H
 #define NTL_TEAM_H
 

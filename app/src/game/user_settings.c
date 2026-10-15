@@ -240,6 +240,12 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->saved_name_count = 0;
   memset(usr_settings->saved_names, 0, sizeof(usr_settings->saved_names));
 
+  memset(usr_settings->snakey_rain_ui_reserved, 0,
+         sizeof(usr_settings->snakey_rain_ui_reserved));
+  usr_settings->snakey_rain_last_mode = 1;
+  usr_settings->snakey_rain_last_boost = false;
+  usr_settings->snakey_rain_bar_collapsed = false;
+
   usr_settings->profile_emoji_id = 0;
 
   usr_settings->show_net_graph = true;
@@ -334,9 +340,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v219_prefix = offsetof(user_settings, head_dot_reserved);
   size_t v220_prefix = offsetof(user_settings, ntl_pulse_reserved);
   size_t v221_prefix = offsetof(user_settings, saved_names_reserved);
+  size_t v222_prefix = offsetof(user_settings, snakey_rain_ui_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v222_prefix)
+    /* A file saved before the Snakey Rain panel state existed ends at
+       v222_prefix (it already contains the previous-names list), possibly
+       followed only by compiler tail padding. Keep every saved value; the
+       last mode / Boost / collapsed state keep their defaults. */
+    bytes_to_read = v222_prefix;
   else if ((size_t)file_size >= v221_prefix)
     /* A file saved before the previous-names list existed ends at
        v221_prefix (it already contains the team dot pulse). Keep every saved
@@ -614,6 +627,17 @@ void read_user_settings(user_settings* usr_settings) {
   if (!isfinite(loaded.net_graph_rel_y) || loaded.net_graph_rel_y < -0.25f ||
       loaded.net_graph_rel_y > 1.25f)
     loaded.net_graph_rel_y = 0.60f;
+
+  /* Snakey Rain panel state: only the modes the control bar can select are
+     valid (1-5, 8-11, 13, 14). */
+  {
+    int lm = loaded.snakey_rain_last_mode;
+    bool lm_ok = (lm >= 1 && lm <= 5) || (lm >= 8 && lm <= 11) ||
+                 lm == 13 || lm == 14;
+    if (!lm_ok) loaded.snakey_rain_last_mode = 1;
+    loaded.snakey_rain_last_boost = !!loaded.snakey_rain_last_boost;
+    loaded.snakey_rain_bar_collapsed = !!loaded.snakey_rain_bar_collapsed;
+  }
 
   loaded.snakey_rain_enabled = !!loaded.snakey_rain_enabled;
   loaded.snakey_rain_username[sizeof loaded.snakey_rain_username - 1] = 0;

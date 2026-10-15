@@ -1443,6 +1443,287 @@ static void gc_emoji_center(
     gc_emoji_pop();
 }
 
+/* True if the text has any non-ASCII byte (emoji etc.): those glyphs only
+ * exist in the emoji font, not in the panel's mono font. */
+static bool gc_has_non_ascii(const char* s) {
+    for (; *s != '\0'; s++) {
+        if ((unsigned char)*s >= 0x80) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* ---- colour emoji (the sprites the minimap dots use) ---------------- */
+
+/* Decode one UTF-8 codepoint and advance *pp (bad bytes come back as-is). */
+static unsigned int gc_utf8_decode(const char** pp) {
+    const unsigned char* p = (const unsigned char*)*pp;
+    unsigned int c = p[0];
+    int n = 0;
+    unsigned int cp = c;
+
+    if (c == 0) {
+        return 0;
+    }
+
+    if (c >= 0xF0 && c < 0xF8) { cp = c & 0x07; n = 3; }
+    else if (c >= 0xE0) { cp = c & 0x0F; n = 2; }
+    else if (c >= 0xC0) { cp = c & 0x1F; n = 1; }
+
+    int used = 1;
+
+    for (int i = 0; i < n; i++) {
+        if ((p[1 + i] & 0xC0) != 0x80) {
+            *pp += 1;
+            return c;
+        }
+
+        cp = (cp << 6) | (p[1 + i] & 0x3F);
+        used++;
+    }
+
+    *pp += used;
+    return cp;
+}
+
+static int gc_utf8_encode(unsigned int cp, char* out) {
+    if (cp < 0x80) {
+        out[0] = (char)cp;
+        out[1] = '\0';
+        return 1;
+    }
+
+    if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        out[2] = '\0';
+        return 2;
+    }
+
+    if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        out[3] = '\0';
+        return 3;
+    }
+
+    out[0] = (char)(0xF0 | (cp >> 18));
+    out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (cp & 0x3F));
+    out[4] = '\0';
+    return 4;
+}
+
+/* Does the text contain at least one emoji that has a colour picture? */
+static bool gc_text_has_sprite(const char* s) {
+    if (!ntl_emoji_ready()) {
+        return false;
+    }
+
+    const char* p = s;
+
+    while (*p != '\0') {
+        unsigned int cp = gc_utf8_decode(&p);
+
+        if (cp >= 0x2600 && ntl_emoji_index_for_cp(cp) >= 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Width an emoji takes next to text, and drawing it (sprite or legacy
+ * glyph) for a profile-emoji id as sent in the location packet. */
+static float gc_pemoji_w(int id, float lh) {
+    if (profile_emoji_is_sprite(id)) {
+        return ntl_emoji_ready() ? lh * 1.25f : 0.0f;
+    }
+
+    const char* g = profile_emoji_at(id);
+
+    return g[0] != '\0' ? gc_emoji_w(g) : 0.0f;
+}
+
+static void gc_pemoji_draw(ImDrawList* dl, ImVec2 p, int id, float lh) {
+    if (profile_emoji_is_sprite(id)) {
+        if (ntl_emoji_ready()) {
+            float es = lh * 1.25f;
+            float y = p.y - (es - lh) * 0.5f;
+
+            ntl_emoji_draw(
+                dl, gc_v2(p.x, y), gc_v2(p.x + es, y + es),
+                id - PROFILE_EMOJI_SPRITE_BASE,
+                IM_COL32(255, 255, 255, 255)
+            );
+        }
+
+        return;
+    }
+
+    const char* g = profile_emoji_at(id);
+
+    if (g[0] != '\0') {
+        gc_emoji_text(dl, p, IM_COL32(255, 255, 255, 255), g);
+    }
+}
+
+/* Word-wrapped text with colour emoji drawn inline as pictures. Used for
+ * chat messages that contain emoji. draw=false only measures. Returns
+ * the height. */
+typedef struct {
+    ImDrawList* dl;
+    ImVec2 origin;
+    ImU32 col;
+    bool draw;
+    float wrap_w, lh, es, line_h, x, y;
+} gc_rich;
+
+static void gc_rich_fit(gc_rich* r, float w) {
+    if (r->x > 0.0f && r->x + w > r->wrap_w) {
+        r->x = 0.0f;
+        r->y += r->line_h;
+    }
+}
+
+static void gc_rich_text_atom(gc_rich* r, const char* str) {
+    bool ext = gc_has_non_ascii(str);
+    float w;
+
+    if (ext) gc_emoji_push();
+    w = gc_text_w(str);
+    if (ext) gc_emoji_pop();
+
+    gc_rich_fit(r, w);
+
+    if (r->draw) {
+        ImVec2 pos = gc_v2(
+            r->origin.x + r->x,
+            r->origin.y + r->y + (r->line_h - r->lh) * 0.5f
+        );
+
+        if (ext) gc_emoji_push();
+        ImDrawList_AddText_Vec2(r->dl, pos, r->col, str, NULL);
+        if (ext) gc_emoji_pop();
+    }
+
+    r->x += w;
+}
+
+static void gc_rich_word(gc_rich* r, const char* word) {
+    if (word[0] == '\0') {
+        return;
+    }
+
+    bool ext = gc_has_non_ascii(word);
+    float w;
+
+    if (ext) gc_emoji_push();
+    w = gc_text_w(word);
+    if (ext) gc_emoji_pop();
+
+    if (w <= r->wrap_w) {
+        gc_rich_text_atom(r, word);
+        return;
+    }
+
+    /* A single word wider than the line: break it by character. */
+    const char* q = word;
+
+    while (*q != '\0') {
+        const char* st = q;
+        gc_utf8_decode(&q);
+
+        char one[8];
+        size_t n = (size_t)(q - st);
+
+        if (n >= sizeof(one)) n = sizeof(one) - 1;
+
+        memcpy(one, st, n);
+        one[n] = '\0';
+
+        gc_rich_text_atom(r, one);
+    }
+}
+
+static float gc_rich_text(
+    const char* text, float wrap_w, float lh,
+    bool draw, ImDrawList* dl, ImVec2 origin, ImU32 col
+) {
+    gc_rich r;
+    r.dl = dl;
+    r.origin = origin;
+    r.col = col;
+    r.draw = draw;
+    r.wrap_w = wrap_w;
+    r.lh = lh;
+    r.es = lh * 1.25f;
+    r.line_h = lh * 1.4f;
+    r.x = 0.0f;
+    r.y = 0.0f;
+
+    float space_w = gc_text_w(" ");
+    char word[128];
+    size_t wl = 0;
+    const char* p = text;
+
+    word[0] = '\0';
+
+    while (*p != '\0') {
+        const char* st = p;
+        unsigned int cp = gc_utf8_decode(&p);
+        int idx = cp >= 0x2600 ? ntl_emoji_index_for_cp(cp) : -1;
+
+        if (cp == ' ' || cp == '\n' || cp == 0xFE0F || idx >= 0) {
+            word[wl] = '\0';
+            gc_rich_word(&r, word);
+            wl = 0;
+
+            if (idx >= 0) {
+                gc_rich_fit(&r, r.es);
+
+                if (draw) {
+                    ImVec2 a = gc_v2(
+                        origin.x + r.x,
+                        origin.y + r.y + (r.line_h - r.es) * 0.5f
+                    );
+
+                    ntl_emoji_draw(
+                        dl, a, gc_v2(a.x + r.es, a.y + r.es), idx,
+                        IM_COL32(255, 255, 255, 255)
+                    );
+                }
+
+                r.x += r.es + lh * 0.12f;
+            } else if (cp == ' ' || cp == '\n') {
+                if (r.x > 0.0f) {
+                    r.x += space_w;
+                }
+            }
+        } else {
+            size_t n = (size_t)(p - st);
+
+            if (wl + n >= sizeof(word)) {
+                word[wl] = '\0';
+                gc_rich_word(&r, word);
+                wl = 0;
+            }
+
+            memcpy(word + wl, st, n);
+            wl += n;
+        }
+    }
+
+    word[wl] = '\0';
+    gc_rich_word(&r, word);
+
+    return r.y + r.line_h;
+}
+
 /* Copy `s` into out, ending with ".." if it has to be cut to fit max_w. */
 static void gc_clip_text(char* out, size_t cap, const char* s, float max_w) {
     if (cap == 0) {
@@ -1718,18 +1999,6 @@ static void gc_section(const char* title, float width, float u) {
     );
 
     igDummy(gc_v2(width, lh + u * 0.35f));
-}
-
-/* True if the text has any non-ASCII byte (emoji etc.): those glyphs only
- * exist in the emoji font, not in the panel's mono font. */
-static bool gc_has_non_ascii(const char* s) {
-    for (; *s != '\0'; s++) {
-        if ((unsigned char)*s >= 0x80) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 /* Vector smiley for the emoji button (the mono font has no emoji). */
@@ -2203,8 +2472,8 @@ static void gc_draw_players_list(
             x += gc_text_w(ow) + u * 0.4f;
         }
 
-        const char* em = profile_emoji_at(pr->emoji);
-        float ew = em[0] != '\0' ? gc_emoji_w(em) + u * 0.4f : 0.0f;
+        float ew0 = gc_pemoji_w(pr->emoji, lh);
+        float ew = ew0 > 0.0f ? ew0 + u * 0.4f : 0.0f;
 
         char nm[48];
         gc_clip_text(nm, sizeof(nm), pr->name, avail1 - (x - tx) - ew);
@@ -2219,8 +2488,8 @@ static void gc_draw_players_list(
 
         x += gc_text_w(nm) + u * 0.4f;
 
-        if (em[0] != '\0') {
-            gc_emoji_text(dl, gc_v2(x, ty1), IM_COL32(255, 255, 255, 255), em);
+        if (ew0 > 0.0f) {
+            gc_pemoji_draw(dl, gc_v2(x, ty1), pr->emoji, lh);
         }
 
         /* Line 2: score / server on the left, ping on the right. */
@@ -2632,12 +2901,20 @@ static void gc_draw_messages(
             strcmp(prev_hm, hm) == 0;
 
         bool ext = gc_has_non_ascii(m->text);
+        bool rich = gc_text_has_sprite(m->text);
 
         ImVec2 tsz;
 
-        if (ext) gc_emoji_push();
-        igCalcTextSize(&tsz, m->text, NULL, false, wrap_w);
-        if (ext) gc_emoji_pop();
+        if (rich) {
+            tsz.x = wrap_w;
+            tsz.y = gc_rich_text(
+                m->text, wrap_w, lh, false, dl, gc_v2(0.0f, 0.0f), 0
+            );
+        } else {
+            if (ext) gc_emoji_push();
+            igCalcTextSize(&tsz, m->text, NULL, false, wrap_w);
+            if (ext) gc_emoji_pop();
+        }
 
         float head_h = grouped ? 0.0f : lh + u * 0.15f;
         float bh = pad_y * 2.0f + head_h + tsz.y;
@@ -2684,8 +2961,9 @@ static void gc_draw_messages(
                 );
             } else {
                 const gc_loc* l = gc_find_loc(locs, loc_n, m->name);
-                const char* em = l != NULL ? profile_emoji_at(l->emoji) : "";
-                float ew = em[0] != '\0' ? gc_emoji_w(em) + u * 0.4f : 0.0f;
+                int eid = l != NULL ? l->emoji : 0;
+                float ew0 = gc_pemoji_w(eid, lh);
+                float ew = ew0 > 0.0f ? ew0 + u * 0.4f : 0.0f;
                 float x = hx;
 
                 if (m->owner[0] != '\0') {
@@ -2713,27 +2991,35 @@ static void gc_draw_messages(
 
                 x += gc_text_w(nm) + u * 0.4f;
 
-                if (em[0] != '\0') {
-                    gc_emoji_text(
-                        dl, gc_v2(x, hy), IM_COL32(255, 255, 255, 255), em
-                    );
+                if (ew0 > 0.0f) {
+                    gc_pemoji_draw(dl, gc_v2(x, hy), eid, lh);
                 }
             }
         }
 
-        igSetCursorScreenPos(gc_v2(p.x + pad_x, p.y + pad_y + head_h));
-        igPushTextWrapPos(igGetCursorPosX() + wrap_w);
-        igPushStyleColor_Vec4(
-            ImGuiCol_Text,
-            is_system ?
-                (ImVec4){0.62f, 0.91f, 1.0f, 1.0f} :
-                (ImVec4){0.93f, 0.91f, 1.0f, 1.0f}
-        );
-        if (ext) gc_emoji_push();
-        igTextUnformatted(m->text, NULL);
-        if (ext) gc_emoji_pop();
-        igPopStyleColor(1);
-        igPopTextWrapPos();
+        if (rich) {
+            gc_rich_text(
+                m->text, wrap_w, lh, true, dl,
+                gc_v2(p.x + pad_x, p.y + pad_y + head_h),
+                is_system ?
+                    IM_COL32(158, 232, 255, 255) :
+                    IM_COL32(237, 232, 255, 255)
+            );
+        } else {
+            igSetCursorScreenPos(gc_v2(p.x + pad_x, p.y + pad_y + head_h));
+            igPushTextWrapPos(igGetCursorPosX() + wrap_w);
+            igPushStyleColor_Vec4(
+                ImGuiCol_Text,
+                is_system ?
+                    (ImVec4){0.62f, 0.91f, 1.0f, 1.0f} :
+                    (ImVec4){0.93f, 0.91f, 1.0f, 1.0f}
+            );
+            if (ext) gc_emoji_push();
+            igTextUnformatted(m->text, NULL);
+            if (ext) gc_emoji_pop();
+            igPopStyleColor(1);
+            igPopTextWrapPos();
+        }
 
         igSetCursorScreenPos(p);
         igDummy(gc_v2(w, bh + (grouped ? u * 0.12f : u * 0.3f)));
@@ -2804,148 +3090,140 @@ static void gc_draw_messages(
     );
 }
 
-/* Emoji chips row (the profile emoji picker). Drag sideways to scroll. */
-static void gc_draw_emoji_row(
-    user_settings* usrs,
-    ImVec2 pos,
-    ImVec2 size,
-    float u,
-    bool allow_drag_scroll
-) {
-    static bool chips_dragged = false;
+/* ---- colour emoji picker -------------------------------------------- */
 
-    igSetCursorScreenPos(pos);
+#define GC_TRAY_MAX 12
 
-    igBeginChild_Str(
-        "##gc_chips",
-        size,
-        0,
-        ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoBackground
-    );
+/* Emoji picked in the chat picker; they are sent after the typed text. */
+static int gc_tray[GC_TRAY_MAX];
+static int gc_tray_n = 0;
 
-    if (igIsMouseClicked_Bool(0, false)) {
-        chips_dragged = false;
-    }
+/* Put the picked emoji (as real Unicode) at the end of the message. */
+static void gc_tray_flush_into_input(void) {
+    for (int i = 0; i < gc_tray_n; i++) {
+        unsigned int cp = ntl_emoji_cp_for_index(gc_tray[i]);
 
-    if (
-        allow_drag_scroll &&
-        igIsWindowHovered(0) &&
-        igIsMouseDragging(0, 6.0f)
-    ) {
-        igSetScrollX_Float(
-            igGetScrollX() - igGetIO_Nil()->MouseDelta.x
-        );
-        chips_dragged = true;
-    }
-
-    float chip_h = size.y - 4.0f;
-    float chip_w = chip_h * 1.15f;
-    ImDrawList* dl = igGetWindowDrawList();
-
-    for (int e = 0; e < PROFILE_EMOJI_COUNT; e++) {
-        if (e > 0) {
-            igSameLine(0.0f, u * 0.45f);
+        if (cp == 0) {
+            continue;
         }
 
-        ImVec2 p;
-        igGetCursorScreenPos(&p);
+        char enc[8];
+        int el = gc_utf8_encode(cp, enc);
+        size_t len = strlen(global_chat_input);
 
-        char id[16];
-        snprintf(id, sizeof(id), "##pe%d", e);
-
-        bool clicked =
-            igInvisibleButton(
-                id,
-                gc_v2(chip_w, chip_h),
-                ImGuiButtonFlags_None
-            );
-
-        bool hot = igIsItemHovered(0);
-        bool selected = usrs->profile_emoji_id == e;
-
-        ImU32 fill =
-            selected ?
-                IM_COL32(77, 140, 255, 255) :
-                (hot ?
-                    IM_COL32(255, 255, 255, 40) :
-                    IM_COL32(255, 255, 255, 20));
-
-        ImDrawList_AddRectFilled(
-            dl, p, gc_add(p, chip_w, chip_h),
-            fill, chip_h * 0.5f, 0
-        );
-
-        const char* label =
-            profile_emoji_at(e)[0] != '\0' ?
-                profile_emoji_at(e) :
-                "-";
-
-        if (profile_emoji_at(e)[0] != '\0') {
-            gc_emoji_center(
-                dl, p, gc_v2(chip_w, chip_h),
-                IM_COL32(255, 255, 255, 255), label
-            );
-        } else {
-            gc_text_center(
-                dl, p, gc_v2(chip_w, chip_h),
-                IM_COL32(255, 255, 255, 255), label
-            );
-        }
-
-        if (clicked && !chips_dragged) {
-            usrs->profile_emoji_id = e;
-            save_user_settings(usrs);
+        if (len + (size_t)el < sizeof(global_chat_input)) {
+            memcpy(global_chat_input + len, enc, (size_t)el + 1);
         }
     }
 
-    igEndChild();
+    gc_tray_n = 0;
 }
 
-/* Size of the emoji picker under the message list: the same chips as the
- * Settings emoji row, wrapped into a grid so every emoji is visible. Chips
- * shrink a little if needed; if it still does not fit it scrolls. */
-static void gc_emoji_picker_layout(
-    float width, float max_h, float u,
-    float* out_chip_h, int* out_cols, float* out_h
-) {
-    int n = PROFILE_EMOJI_COUNT - 1;
-    float pad = u * 0.55f;
-    float gx = u * 0.45f;
-    float chip_h = u * 1.95f;
-    int cols = 1;
-    float h = 0.0f;
+static float gc_tray_height(float u) {
+    return u * 2.0f + u * 0.8f;
+}
 
-    for (int step = 0; step < 6; step++) {
-        float chip_w = chip_h * 1.15f;
+/* Strip above the input showing the emoji picked so far. Tap one to
+ * remove it. */
+static void gc_draw_tray(ImVec2 pos, float width, float u) {
+    ImDrawList* dl = igGetWindowDrawList();
 
-        cols = (int)((width - pad * 2.0f + gx) / (chip_w + gx));
+    float h = gc_tray_height(u);
+    float chip_h = u * 2.0f;
+    float chip_w = chip_h * 1.15f;
+    float pad = u * 0.4f;
+    float gx = u * 0.4f;
 
-        if (cols < 1) cols = 1;
+    ImDrawList_AddRectFilled(
+        dl, pos, gc_add(pos, width, h),
+        IM_COL32(255, 255, 255, 12), u * 0.8f, 0
+    );
+    ImDrawList_AddRect(
+        dl, pos, gc_add(pos, width, h),
+        IM_COL32(190, 160, 255, 55), u * 0.8f, 0, 1.0f
+    );
 
-        int rows = (n + cols - 1) / cols;
+    int remove = -1;
 
-        h = pad * 2.0f + (float)rows * chip_h + (float)(rows - 1) * gx;
+    for (int i = 0; i < gc_tray_n; i++) {
+        ImVec2 p = gc_v2(
+            pos.x + pad + (float)i * (chip_w + gx), pos.y + pad
+        );
 
-        if (h <= max_h || chip_h <= u * 1.3f) {
+        if (p.x + chip_w > pos.x + width - pad) {
             break;
         }
 
-        chip_h -= u * 0.15f;
+        igSetCursorScreenPos(p);
+
+        char id[16];
+        snprintf(id, sizeof(id), "##gctray%d", i);
+
+        bool clicked = igInvisibleButton(
+            id, gc_v2(chip_w, chip_h), ImGuiButtonFlags_None
+        );
+
+        bool hot = igIsItemHovered(0) || igIsItemActive();
+
+        ImDrawList_AddRectFilled(
+            dl, p, gc_add(p, chip_w, chip_h),
+            hot ? IM_COL32(255, 255, 255, 46) : IM_COL32(255, 255, 255, 22),
+            chip_h * 0.5f, 0
+        );
+
+        float es = chip_h * 0.78f;
+        ImVec2 a = gc_v2(
+            p.x + (chip_w - es) * 0.5f, p.y + (chip_h - es) * 0.5f
+        );
+
+        ntl_emoji_draw(
+            dl, a, gc_v2(a.x + es, a.y + es), gc_tray[i],
+            IM_COL32(255, 255, 255, 255)
+        );
+
+        if (clicked) {
+            remove = i;
+        }
     }
 
-    if (h > max_h) {
-        h = max_h;
+    if (remove >= 0) {
+        for (int i = remove; i + 1 < gc_tray_n; i++) {
+            gc_tray[i] = gc_tray[i + 1];
+        }
+
+        gc_tray_n--;
     }
+}
+
+/* Size of an emoji grid for `count` chips in `width`: the same pill chips
+ * as before, wrapped into rows. If it is taller than max_h it scrolls. */
+static void gc_emoji_grid_layout(
+    float width, float max_h, float u, int count,
+    float* out_chip_h, int* out_cols, float* out_h
+) {
+    float pad = u * 0.55f;
+    float gx = u * 0.45f;
+    float chip_h = u * 2.1f;
+    float chip_w = chip_h * 1.15f;
+
+    int cols = (int)((width - pad * 2.0f + gx) / (chip_w + gx));
+
+    if (cols < 1) cols = 1;
+
+    int rows = (count + cols - 1) / cols;
+    float full = pad * 2.0f + (float)rows * chip_h + (float)(rows - 1) * gx;
 
     *out_chip_h = chip_h;
     *out_cols = cols;
-    *out_h = h;
+    *out_h = full > max_h ? max_h : full;
 }
 
-/* Tapping an emoji adds it to the message being typed. */
-static void gc_draw_emoji_picker(
-    ImVec2 pos, ImVec2 size, float u, float chip_h, int cols
+/* The colour emoji of the minimap dots, as a scrolling grid. With
+ * usrs == NULL (chat picker) a tap adds the emoji to the message; with
+ * usrs set (Settings) a tap chooses the profile emoji, plus a "none" chip. */
+static void gc_draw_emoji_grid(
+    const char* child_id, ImVec2 pos, ImVec2 size, float u,
+    float chip_h, int cols, user_settings* usrs
 ) {
     ImDrawList* pdl = igGetWindowDrawList();
 
@@ -2961,12 +3239,18 @@ static void gc_draw_emoji_picker(
     igSetCursorScreenPos(pos);
 
     igBeginChild_Str(
-        "##gc_emoji_picker",
+        child_id,
         size,
         0,
         ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoBackground
     );
+
+    if (!ntl_emoji_ready()) {
+        igTextDisabled("Emoji pictures are not available.");
+        igEndChild();
+        return;
+    }
 
     if (
         igIsWindowHovered(0) &&
@@ -2977,21 +3261,21 @@ static void gc_draw_emoji_picker(
         gc_scroll_dragged = true;
     }
 
-    int n = PROFILE_EMOJI_COUNT - 1;
+    int total = NTL_EMOJI_COUNT + (usrs != NULL ? 1 : 0);
     float pad = u * 0.55f;
     float gx = u * 0.45f;
     float chip_w = chip_h * 1.15f;
-    int rows = (n + cols - 1) / cols;
+    int rows = (total + cols - 1) / cols;
 
     ImVec2 base;
     igGetCursorScreenPos(&base);
 
     ImDrawList* dl = igGetWindowDrawList();
 
-    for (int e = 1; e < PROFILE_EMOJI_COUNT; e++) {
-        int idx = e - 1;
-        int r = idx / cols;
-        int c = idx % cols;
+    for (int k = 0; k < total; k++) {
+        int idx = usrs != NULL ? k - 1 : k; /* -1 = "none" chip */
+        int r = k / cols;
+        int c = k % cols;
 
         ImVec2 p = gc_v2(
             base.x + pad + (float)c * (chip_w + gx),
@@ -3001,7 +3285,7 @@ static void gc_draw_emoji_picker(
         igSetCursorScreenPos(p);
 
         char id[16];
-        snprintf(id, sizeof(id), "##gcep%d", e);
+        snprintf(id, sizeof(id), "##gcem%d", k);
 
         bool clicked = igInvisibleButton(
             id, gc_v2(chip_w, chip_h), ImGuiButtonFlags_None
@@ -3009,24 +3293,47 @@ static void gc_draw_emoji_picker(
 
         bool hot = igIsItemHovered(0) || igIsItemActive();
 
+        bool selected =
+            usrs != NULL &&
+            usrs->profile_emoji_id ==
+                (idx < 0 ? 0 : PROFILE_EMOJI_SPRITE_BASE + idx);
+
         ImDrawList_AddRectFilled(
             dl, p, gc_add(p, chip_w, chip_h),
-            hot ? IM_COL32(255, 255, 255, 46) : IM_COL32(255, 255, 255, 20),
+            selected ? IM_COL32(77, 140, 255, 255) :
+            hot ? IM_COL32(255, 255, 255, 46) :
+                  IM_COL32(255, 255, 255, 20),
             chip_h * 0.5f, 0
         );
 
-        gc_emoji_center(
-            dl, p, gc_v2(chip_w, chip_h),
-            IM_COL32(255, 255, 255, 255), profile_emoji_at(e)
-        );
+        if (idx < 0) {
+            gc_text_center(
+                dl, p, gc_v2(chip_w, chip_h),
+                IM_COL32(255, 255, 255, 255), "-"
+            );
+        } else {
+            float es = chip_h * 0.78f;
+            ImVec2 a = gc_v2(
+                p.x + (chip_w - es) * 0.5f, p.y + (chip_h - es) * 0.5f
+            );
+
+            ntl_emoji_draw(
+                dl, a, gc_v2(a.x + es, a.y + es), idx,
+                IM_COL32(255, 255, 255, 255)
+            );
+        }
 
         if (clicked && !gc_scroll_dragged) {
-            size_t len = strlen(global_chat_input);
-            const char* em = profile_emoji_at(e);
-            size_t el = strlen(em);
-
-            if (len + el < sizeof(global_chat_input)) {
-                memcpy(global_chat_input + len, em, el + 1);
+            if (usrs != NULL) {
+                usrs->profile_emoji_id =
+                    idx < 0 ? 0 : PROFILE_EMOJI_SPRITE_BASE + idx;
+                save_user_settings(usrs);
+            } else if (
+                gc_tray_n < GC_TRAY_MAX &&
+                strlen(global_chat_input) + 4u * (size_t)(gc_tray_n + 1) <
+                    sizeof(global_chat_input)
+            ) {
+                gc_tray[gc_tray_n++] = idx;
             }
         }
     }
@@ -3628,24 +3935,36 @@ static void global_chat_panel_contents(
         float in_y = content_bot - in_h;
         float gap = u * 0.55f;
 
-        /* Emoji picker (opened with the smiley button beside Send). */
+        /* Picked-emoji strip + emoji picker stack up above the input. */
+        float gv = u * 0.45f;
+        float ycur = in_y;
+
+        float tray_h = gc_tray_n > 0 ? gc_tray_height(u) : 0.0f;
+        float tray_y = 0.0f;
+
+        if (tray_h > 0.0f) {
+            ycur -= gv;
+            tray_y = ycur - tray_h;
+            ycur = tray_y;
+        }
+
         float pick_h = 0.0f;
+        float pick_y = 0.0f;
         float pick_chip_h = 0.0f;
         int pick_cols = 1;
 
         if (gc_emoji_picker_open) {
-            gc_emoji_picker_layout(
-                area_w,
-                (in_y - u * 0.45f - content_top) * 0.6f,
-                u, &pick_chip_h, &pick_cols, &pick_h
+            gc_emoji_grid_layout(
+                area_w, (ycur - gv - content_top) * 0.6f, u,
+                NTL_EMOJI_COUNT, &pick_chip_h, &pick_cols, &pick_h
             );
+
+            ycur -= gv;
+            pick_y = ycur - pick_h;
+            ycur = pick_y;
         }
 
-        float msg_bot = in_y - u * 0.45f;
-
-        if (gc_emoji_picker_open) {
-            msg_bot -= pick_h + u * 0.45f;
-        }
+        float msg_bot = ycur - gv;
 
         gc_draw_messages(
             env,
@@ -3656,11 +3975,15 @@ static void global_chat_panel_contents(
         );
 
         if (gc_emoji_picker_open) {
-            gc_draw_emoji_picker(
-                gc_v2(area_x, msg_bot + u * 0.45f),
-                gc_v2(area_w, pick_h),
-                u, pick_chip_h, pick_cols
+            gc_draw_emoji_grid(
+                "##gc_emoji_picker",
+                gc_v2(area_x, pick_y), gc_v2(area_w, pick_h),
+                u, pick_chip_h, pick_cols, NULL
             );
+        }
+
+        if (tray_h > 0.0f) {
+            gc_draw_tray(gc_v2(area_x, tray_y), area_w, u);
         }
 
         /* Message input + emoji + send */
@@ -3779,6 +4102,7 @@ static void global_chat_panel_contents(
         );
 
         if (submitted || send_clicked) {
+            gc_tray_flush_into_input();
             gc_submit_message(env);
         }
     } else if (gc_tab == GC_TAB_PLAYERS) {
@@ -4134,16 +4458,30 @@ static void global_chat_panel_contents(
             ImVec2 ep;
             igGetCursorScreenPos(&ep);
 
-            gc_draw_emoji_row(
-                usrs,
-                ep,
-                gc_v2(av.x, u * 1.95f),
-                u,
-                !adjusting_pos
+            float chip_h;
+            int cols;
+            float full_h;
+
+            gc_emoji_grid_layout(
+                av.x, 1.0e9f, u, NTL_EMOJI_COUNT + 1,
+                &chip_h, &cols, &full_h
+            );
+
+            /* About three rows visible, with a peek of the next one. */
+            float view_h =
+                u * 1.1f + chip_h * 3.45f + u * 0.9f;
+
+            if (view_h > full_h) {
+                view_h = full_h;
+            }
+
+            gc_draw_emoji_grid(
+                "##gc_pf_grid", ep, gc_v2(av.x, view_h),
+                u, chip_h, cols, usrs
             );
 
             igSetCursorScreenPos(ep);
-            igDummy(gc_v2(av.x, u * 2.4f));
+            igDummy(gc_v2(av.x, view_h + u * 0.5f));
         }
 
         /* ---- quick messages editor ---- */

@@ -1026,6 +1026,25 @@ static void ntl_draw_emoji_image(ImDrawList *dl, ImVec2 a, ImVec2 b, int idx,
   ImDrawList_AddImage(dl, tex, a, b, uv0, uv1, tint);
 }
 
+/* ---- colour emoji helpers shared with the TEAM CHAT (global_chat.c) ---- */
+
+bool ntl_emoji_ready(void) { return g_emoji_tex != 0; }
+
+int ntl_emoji_index_for_cp(unsigned int cp) {
+  for (int i = 0; i < NTL_EMOJI_COUNT; ++i)
+    if (ntl_emoji_cps[i] == cp) return i;
+  return -1;
+}
+
+unsigned int ntl_emoji_cp_for_index(int idx) {
+  if (idx < 0 || idx >= NTL_EMOJI_COUNT) return 0;
+  return ntl_emoji_cps[idx];
+}
+
+void ntl_emoji_draw(ImDrawList *dl, ImVec2 a, ImVec2 b, int idx, ImU32 tint) {
+  ntl_draw_emoji_image(dl, a, b, idx, tint);
+}
+
 static ImU32 ntl_scale_alpha(ImU32 c, float a) {
   unsigned int al = (c >> 24) & 0xFFu;
   al = (unsigned int)((float)al * a + 0.5f);

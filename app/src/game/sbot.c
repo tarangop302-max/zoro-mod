@@ -22,13 +22,13 @@ sbot_dbg g_bot_dbg;
 /* Expand / roam mode (stage 2): leave the loop only while there is zero
  * perceived death risk, and snap back to the tight loop the moment any
  * risk shows up. Distances are multiples of the snake's width. */
-#define ROAM_HEAD_SAFE_MULT 40.0f  /* enemy head this close to my head/body */
-#define ROAM_BODY_SAFE_MULT 15.0f  /* enemy body this close to my head */
+#define ROAM_HEAD_SAFE_MULT 22.0f  /* enemy head this close to my head/body */
+#define ROAM_BODY_SAFE_MULT 9.0f  /* enemy body this close to my head */
 #define ROAM_WALL_MARGIN 2000.0f   /* world units from the arena wall */
 #define ROAM_CLEAR_FRAMES 8        /* risk-free frames before going out */
-#define ROAM_ARC_DIV 64.0f         /* gentle outward arc (bigger = wider) */
-#define ROAM_PATH_SAFE_MULT 15.0f  /* enemy head vs my return path */
-#define ROAM_PATH_BODY_MULT 4.0f   /* enemy body vs my return path */
+#define ROAM_ARC_DIV 192.0f        /* outward arc: must be gentler than the max turn rate, bigger = wider */
+#define ROAM_PATH_SAFE_MULT 10.0f  /* enemy head vs my return path */
+#define ROAM_PATH_BODY_MULT 3.0f   /* enemy body vs my return path */
 #define SHRINK_CLEAR_MULT 8.0f     /* keep death points this far (x width) from enemy bodies */
 #define SHRINK_GAIN 1.2f           /* how hard to shrink the circle when too close */
 #define RETURN_BOOST_MULT 3.0f     /* boost home when this far (x width) from the loop */
@@ -84,6 +84,7 @@ typedef struct {
   bool enable_follow_circle;
   bool roaming;
   bool was_roaming;
+  int risk_reason; /* 0 none, 1 wall, 2 enemy head, 3 enemy body, 4 return path */
   float ret_dist;
   int clear_frames;
 
@@ -914,6 +915,7 @@ static float pt_seg_d2(v2 p, v2 a, v2 b) {
  */
 static bool death_risk(game_data* gdata) {
   populate_pts(gdata);
+  B.risk_reason = 0;
   float w = fmaxf(B.width, 29.0f);
   float head_safe = ROAM_HEAD_SAFE_MULT * w;
   float body_safe = ROAM_BODY_SAFE_MULT * w;
@@ -921,7 +923,10 @@ static bool death_risk(game_data* gdata) {
   float bs2 = body_safe * body_safe;
 
   float dctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
-  if (gdata->data.flux_grd - dctr < ROAM_WALL_MARGIN) return true;
+  if (gdata->data.flux_grd - dctr < ROAM_WALL_MARGIN) {
+    B.risk_reason = 1;
+    return true;
+  }
 
   /* Return path: straight line from my head to the nearest part of my own
    * loop (skipping the neck). Anything that can cut it is a risk. */
@@ -952,23 +957,38 @@ static bool death_risk(game_data* gdata) {
     /* enemy head vs my return path */
     {
       float psk = ps * k;
-      if (pt_seg_d2((v2){sk->xx, sk->yy}, head, cp) < psk * psk) return true;
+      if (pt_seg_d2((v2){sk->xx, sk->yy}, head, cp) < psk * psk) {
+        B.risk_reason = 4;
+        return true;
+      }
     }
 
     /* enemy head vs my head */
-    if (dist2(B.x, B.y, sk->xx, sk->yy) < hs2k) return true;
+    if (dist2(B.x, B.y, sk->xx, sk->yy) < hs2k) {
+      B.risk_reason = 2;
+      return true;
+    }
 
     /* enemy head vs my body (sampled) */
     for (int j = 0; j < B.bpts_n; j += 8)
-      if (dist2(B.bpts[j].x, B.bpts[j].y, sk->xx, sk->yy) < hs2k) return true;
+      if (dist2(B.bpts[j].x, B.bpts[j].y, sk->xx, sk->yy) < hs2k) {
+        B.risk_reason = 2;
+        return true;
+      }
 
     /* enemy body vs my head */
     int pn = tdarray_length(sk->pts);
     for (int j = 0; j < pn; j++) {
       body_part* po = sk->pts + j;
       if (po->dying) continue;
-      if (dist2(B.x, B.y, po->xx, po->yy) < bs2) return true;
-      if (pt_seg_d2((v2){po->xx, po->yy}, head, cp) < pb * pb) return true;
+      if (dist2(B.x, B.y, po->xx, po->yy) < bs2) {
+        B.risk_reason = 3;
+        return true;
+      }
+      if (pt_seg_d2((v2){po->xx, po->yy}, head, cp) < pb * pb) {
+        B.risk_reason = 4;
+        return true;
+      }
     }
   }
   return false;
@@ -1217,6 +1237,9 @@ void sbot_go(tenv* env) {
 
   bot->output.xm = (B.goal.x - gdata->data.view_xx) * gdata->data.gsc;
   bot->output.ym = (B.goal.y - gdata->data.view_yy) * gdata->data.gsc;
+
+  if (B.stage == 2)
+    g_bot_dbg.encircle_state = B.risk_reason == 1 ? 1 : (B.risk_reason ? 2 : 0);
 
   g_bot_dbg.active        = true;
   g_bot_dbg.bx            = B.x;

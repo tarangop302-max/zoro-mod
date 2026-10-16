@@ -27,6 +27,11 @@ sbot_dbg g_bot_dbg;
 #define ROAM_WALL_MARGIN 2000.0f   /* world units from the arena wall */
 #define ROAM_CLEAR_FRAMES 8        /* risk-free frames before going out */
 #define ROAM_ARC_DIV 64.0f         /* gentle outward arc (bigger = wider) */
+#define ROAM_PATH_SAFE_MULT 15.0f  /* enemy head vs my return path */
+#define ROAM_PATH_BODY_MULT 4.0f   /* enemy body vs my return path */
+#define SHRINK_CLEAR_MULT 8.0f     /* keep death points this far (x width) from enemy bodies */
+#define SHRINK_GAIN 1.2f           /* how hard to shrink the circle when too close */
+#define RETURN_BOOST_MULT 3.0f     /* boost home when this far (x width) from the loop */
 
 #define MAX_BODY_PTS 8192
 #define MAX_HULL_PTS 32
@@ -78,6 +83,8 @@ typedef struct {
   bool enable_encircle;
   bool enable_follow_circle;
   bool roaming;
+  bool was_roaming;
+  float ret_dist;
   int clear_frames;
 
   int id;
@@ -638,27 +645,65 @@ static void construct_inside_polygon(float close_t, poly_box_large* out) {
   poly_box_large_aabb(out);
 }
 
+/*
+ * Distance (world units) from the snake's two "death points" -- the head
+ * centre and the head tip -- to the nearest enemy body edge (or the arena
+ * wall). Enemy points inside `skip` (my own loop interior) are ignored.
+ */
+static float death_gap(game_data* gdata, const poly_box_large* skip) {
+  float tipx = B.x + B.ca * B.radius, tipy = B.y + B.sa * B.radius;
+  float best = 1e9f;
+  int ns = tdarray_length(gdata->data.snakes);
+  for (int i = 0; i < ns; i++) {
+    snake* sk = gdata->data.snakes + i;
+    if (sk->id == B.id || sk->dead) continue;
+    float sr = snake_width(sk->sc) / 2.0f;
+    int pn = tdarray_length(sk->pts);
+    for (int j = 0; j < pn; j++) {
+      body_part* po = sk->pts + j;
+      if (po->dying) continue;
+      v2 pt = {po->xx, po->yy};
+      if (skip && point_in_poly_large(pt, skip)) continue;
+      float d2 = fminf(dist2(tipx, tipy, pt.x, pt.y),
+                       dist2(B.x, B.y, pt.x, pt.y));
+      float g = sqrtf(d2) - sr;
+      if (g < best) best = g;
+    }
+  }
+  float dctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
+  float wg = gdata->data.flux_grd - dctr;
+  if (wg < best) best = wg;
+  return best;
+}
+
+/* Turn rate (rad) for forming/holding the circle: tighter when an enemy
+ * body is close to the death points, so the circle shrinks away from it. */
+static float circle_turn(game_data* gdata) {
+  float safe = SHRINK_CLEAR_MULT * fmaxf(B.width, 29.0f);
+  float gap = death_gap(gdata, NULL);
+  float base = (float)M_PI / 32.0f, tight = (float)M_PI / 12.0f;
+  if (gap >= safe) return base;
+  float t = 1.0f - fmaxf(gap, 0.0f) / safe;
+  return base + (tight - base) * t;
+}
+
 static void follow_circle_self(game_data* gdata) {
   populate_pts(gdata);
-  determine_circle_dir();
-  int o = B.circle_dir;
 
   /*
-   * The corridor/spine projection below needs enough looped body (9
-   * body-widths) to have a stable near/far reference point -- on a
-   * small or freshly-formed loop that isn't met yet. This matches the
-   * faithful original: just leave B.goal untouched and wait for the
-   * loop to grow, rather than actively steering here. An earlier
-   * version of this fix nudged the heading directly, but that nudge
-   * had no awareness of the arena center or the wall -- if this
-   * condition kept re-triggering it could walk the snake straight
-   * toward the boundary with nothing pulling it back. Freezing the
-   * goal is safe because check_collision()/check_encircle() (stage 1,
-   * run before the snake ever reaches stage 2) already handle wall
-   * and enemy avoidance reactively; this early-return only matters
-   * for the brief window right as a loop first forms.
+   * Not enough body yet for the spine/corridor projection below (needs
+   * 9 body-widths). Don't freeze the goal -- keep turning at a constant
+   * rate so the snake keeps circling and the loop keeps forming. The
+   * circle direction is left alone here (the centroid is meaningless on
+   * a tiny body and would make it flip).
    */
-  if (B.bpts_len < 9.0f * B.width) return;
+  if (B.bpts_len < 9.0f * B.width) {
+    B.goal = heading_rel(B.circle_dir * circle_turn(gdata));
+    return;
+  }
+
+  determine_circle_dir();
+  int o = B.circle_dir;
 
   float close_t = closest_body_point();
   v2 close_pt = smooth_point(close_t);
@@ -818,6 +863,17 @@ static void follow_circle_self(game_data* gdata) {
   target_course =
       fminf(target_course, (-0.5f * (close_dist - 4.0f * B.width)) / B.width);
 
+  /* Keep both death points away from enemy bodies: if one gets within
+   * SHRINK_CLEAR_MULT widths, pull the goal toward the loop centre
+   * (shrink the circle). Enemies inside my own loop are ignored. */
+  {
+    float safe = SHRINK_CLEAR_MULT * B.width;
+    float gap = death_gap(gdata, &inside_poly);
+    if (gap < safe)
+      target_course = fminf(
+          target_course, -SHRINK_GAIN * (safe - fmaxf(gap, 0.0f)) / safe);
+  }
+
   target_course = fmaxf(target_course, (-0.75f * close_dist) / B.width);
   /* When the head has roamed far from the loop, close_dist is huge and
    * the term above would go to many radians (wrapping around). Clamp so
@@ -843,6 +899,14 @@ static void follow_circle_self(game_data* gdata) {
 
 static void compute_food_goal(game_data* gdata);
 
+static float pt_seg_d2(v2 p, v2 a, v2 b) {
+  float abx = b.x - a.x, aby = b.y - a.y;
+  float l2 = abx * abx + aby * aby;
+  float t = l2 > 0.0f ? ((p.x - a.x) * abx + (p.y - a.y) * aby) / l2 : 0.0f;
+  t = fmaxf(0.0f, fminf(1.0f, t));
+  return dist2(p.x, p.y, a.x + abx * t, a.y + aby * t);
+}
+
 /*
  * True if there is ANY chance of dying right now: an enemy head near my
  * head or body, an enemy body near my head, or the wall close by. Used to
@@ -859,17 +923,44 @@ static bool death_risk(game_data* gdata) {
   float dctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
   if (gdata->data.flux_grd - dctr < ROAM_WALL_MARGIN) return true;
 
+  /* Return path: straight line from my head to the nearest part of my own
+   * loop (skipping the neck). Anything that can cut it is a risk. */
+  v2 head = {B.x, B.y};
+  v2 cp = head;
+  float best_d2 = 1e30f;
+  for (int j = 0; j < B.bpts_n; j++) {
+    if (B.bpts[j].len < 6.0f * w) continue;
+    float d2 = dist2(B.x, B.y, B.bpts[j].x, B.bpts[j].y);
+    if (d2 < best_d2) {
+      best_d2 = d2;
+      cp = (v2){B.bpts[j].x, B.bpts[j].y};
+    }
+  }
+  B.ret_dist = best_d2 < 1e29f ? sqrtf(best_d2) : 0.0f;
+  float ps = ROAM_PATH_SAFE_MULT * w, pb = ROAM_PATH_BODY_MULT * w;
+
   int ns = tdarray_length(gdata->data.snakes);
   for (int i = 0; i < ns; i++) {
     snake* sk = gdata->data.snakes + i;
     if (sk->id == B.id || sk->dead) continue;
 
+    /* A boosting enemy can cut off the return path much faster, so give
+     * it twice the clearance. */
+    float k = (sk->sp > 10.0f) ? 2.0f : 1.0f;
+    float hs2k = hs2 * k * k;
+
+    /* enemy head vs my return path */
+    {
+      float psk = ps * k;
+      if (pt_seg_d2((v2){sk->xx, sk->yy}, head, cp) < psk * psk) return true;
+    }
+
     /* enemy head vs my head */
-    if (dist2(B.x, B.y, sk->xx, sk->yy) < hs2) return true;
+    if (dist2(B.x, B.y, sk->xx, sk->yy) < hs2k) return true;
 
     /* enemy head vs my body (sampled) */
     for (int j = 0; j < B.bpts_n; j += 8)
-      if (dist2(B.bpts[j].x, B.bpts[j].y, sk->xx, sk->yy) < hs2) return true;
+      if (dist2(B.bpts[j].x, B.bpts[j].y, sk->xx, sk->yy) < hs2k) return true;
 
     /* enemy body vs my head */
     int pn = tdarray_length(sk->pts);
@@ -877,6 +968,7 @@ static bool death_risk(game_data* gdata) {
       body_part* po = sk->pts + j;
       if (po->dying) continue;
       if (dist2(B.x, B.y, po->xx, po->yy) < bs2) return true;
+      if (pt_seg_d2((v2){po->xx, po->yy}, head, cp) < pb * pb) return true;
     }
   }
   return false;
@@ -928,7 +1020,7 @@ static void to_circle(game_data* gdata) {
     }
   }
   gdata->bot.output.accel = (bool)B.default_accel;
-  B.goal = heading_rel((B.circle_dir * (float)M_PI) / 32.0f);
+  B.goal = heading_rel(B.circle_dir * circle_turn(gdata));
 }
 
 static void compute_food_goal(game_data* gdata) {
@@ -1075,7 +1167,8 @@ void sbot_go(tenv* env) {
     bot->output.accel = (bool)B.default_accel;
     /* Any risk at all -> back to the tight loop immediately. Only after
      * a few consecutive risk-free frames do we head out and expand. */
-    if (death_risk(gdata)) {
+    bool risk = death_risk(gdata);
+    if (risk) {
       B.clear_frames = 0;
       B.roaming = false;
     } else if (B.clear_frames < ROAM_CLEAR_FRAMES) {
@@ -1083,12 +1176,18 @@ void sbot_go(tenv* env) {
     }
     if (B.clear_frames >= ROAM_CLEAR_FRAMES) {
       B.roaming = true;
+      B.was_roaming = true;
       roam_expand(gdata);
     } else {
       follow_circle_self(gdata);
+      /* Risk showed up while out on a limb: boost back to the loop. */
+      if (risk && B.was_roaming && B.ret_dist > RETURN_BOOST_MULT * B.width)
+        bot->output.accel = true;
     }
+    if (B.ret_dist < 2.0f * B.width) B.was_roaming = false;
   } else {
     B.roaming = false;
+    B.was_roaming = false;
     B.clear_frames = 0;
     /* Score-gated stage promotion runs every frame, regardless of
      * whether a collision/encircle dodge is also active right now --
@@ -1098,20 +1197,15 @@ void sbot_go(tenv* env) {
      * happening. That left the bot stuck reacting frame-to-frame with
      * no coherent plan, unable to even attempt to_circle() -- so an
      * already-formed loop was never recognized either. */
-    if (B.snake_len > B.follow_circle_length) B.stage = 1;
-
-    if (check_collision(gdata) || check_encircle(gdata)) {
-      /*
-       * Only start a fresh cooldown from idle (delay_frame == -1),
-       * matching the same idiom the non-colliding path below already
-       * uses -- don't keep refreshing an already-idle timer back to
-       * -1 forever. This still gives an active dodge time to finish
-       * (a countdown already in progress is left alone), but under
-       * sustained/continuous collision or encircle triggering -- like
-       * simply being in a crowded area -- it guarantees to_circle()
-       * still gets a chance to run roughly every COLLISION_DELAY
-       * frames instead of being starved indefinitely.
-       */
+    if (B.snake_len > B.follow_circle_length) {
+      /* Past the circle score: ONLY circle. No collision/encircle
+       * dodging at all -- enemies being close when the bot is turned on
+       * must not stop the loop from forming. to_circle() promotes to
+       * stage 2 as soon as the head meets the body. */
+      B.stage = 1;
+      bot->output.accel = (bool)B.default_accel;
+      to_circle(gdata);
+    } else if (check_collision(gdata) || check_encircle(gdata)) {
       if (B.delay_frame == -1) B.delay_frame = COLLISION_DELAY;
     } else {
       if (B.delay_frame == -1) B.delay_frame = ACTION_FRAMES;

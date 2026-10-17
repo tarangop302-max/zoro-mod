@@ -12,7 +12,7 @@
    as physically possible. Raise it (try 2-4) if you still get killed while
    squeezing: the server sees your head slightly behind / ahead of what you
    see, by about (ping x speed). */
-#define SQ_MARGIN 0.75f
+#define SQ_MARGIN 2.0f
 
 /* Two dots are protected: the RED dot (the head centre) and the BLUE dot (the
    tip of the head), SQ_TIP_FACTOR head-radii in front of the red one.
@@ -46,13 +46,6 @@
    refined by bisection down to a fraction of a degree. */
 #define SQ_CAND_STEP 0.1309f /* 7.5 deg in radians */
 #define SQ_CAND_MAX 24       /* 24 * 7.5 = 180 deg each side */
-
-/* How much further ahead the dead-end check looks than the normal check, on
-   top of the turn time. This is what notices a funnel / coil closing in long
-   before the gap is too narrow to turn around in. It only ever makes the snake
-   step in earlier when the way ahead really is a trap -- in open space it
-   changes nothing. */
-#define SQ_VIABLE_EXTRA 90
 
 /* Dead-end check budget per frame (it is the expensive part). */
 #define SQ_VIABLE_BUDGET 10
@@ -187,7 +180,6 @@ static bool viable(const sq_state* st, int t0, float csp, float mang,
       float tgt = st->ang + (float)sg * (float)j * 0.5236f; /* 30 deg steps */
       int need = commit_steps(st->ang, tgt, mang);
       if (need < 0) continue;
-      need += SQ_VIABLE_EXTRA;
       if (simulate(*st, tgt, csp, mang, tip, need, t0, NULL) == need)
         return true;
     }

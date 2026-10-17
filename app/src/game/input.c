@@ -333,6 +333,7 @@ void input(tenv* env) {
     /* Squeeze: keep the head's centre line out of every enemy body (see    
        squeeze.c). Runs on the final steering vector, so it also covers the    
        bot-less mouse, touch joystick and trackpad modes. */    
+    squeeze_observe(gdata, me, usrs->hotkey_squeeze.active);    
     if (usrs->hotkey_squeeze.active && !me->dead)    
       squeeze_filter(gdata, me, &xm, &ym);    
 #ifdef ANDROID    

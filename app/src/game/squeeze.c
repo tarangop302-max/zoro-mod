@@ -333,14 +333,14 @@ static int cmp_cand(const void* a, const void* b) {
 }
 
 static void add_iv(float lo, float hi) {
-  const float PI = (float)M_PI;
+  const float SQ_PI = (float)M_PI;
   if (g_iv_n + 2 >= (int)(sizeof g_iv / sizeof g_iv[0])) return;
-  if (lo < -PI) {
-    g_iv[g_iv_n++] = (sq_iv){lo + 2 * PI, PI};
-    g_iv[g_iv_n++] = (sq_iv){-PI, hi};
-  } else if (hi > PI) {
-    g_iv[g_iv_n++] = (sq_iv){lo, PI};
-    g_iv[g_iv_n++] = (sq_iv){-PI, hi - 2 * PI};
+  if (lo < -SQ_PI) {
+    g_iv[g_iv_n++] = (sq_iv){lo + 2 * SQ_PI, SQ_PI};
+    g_iv[g_iv_n++] = (sq_iv){-SQ_PI, hi};
+  } else if (hi > SQ_PI) {
+    g_iv[g_iv_n++] = (sq_iv){lo, SQ_PI};
+    g_iv[g_iv_n++] = (sq_iv){-SQ_PI, hi - 2 * SQ_PI};
   } else {
     g_iv[g_iv_n++] = (sq_iv){lo, hi};
   }
@@ -363,7 +363,7 @@ static void add_cand(float ang, float wanted, float cur_ang) {
    around the wanted heading is added as a fallback. */
 static void build_candidates(const sq_state* now, float wanted, float csp,
                              float tip) {
-  const float PI = (float)M_PI;
+  const float SQ_PI = (float)M_PI;
   g_iv_n = 0;
   g_cand_n = 0;
   float ray = csp * SQ_LOOK_STEPS * SQ_STEP_FRAMES + tip + 10.0f;
@@ -388,9 +388,9 @@ static void build_candidates(const sq_state* now, float wanted, float csp,
   qsort(g_iv, g_iv_n, sizeof g_iv[0], cmp_iv);
 
   static const float T[] = {0.0015f, 0.005f, 0.012f, 0.03f, 0.065f, 0.13f, 0.26f};
-  float cursor = -PI;
+  float cursor = -SQ_PI;
   for (int i = 0; i <= g_iv_n; i++) {
-    float lo = (i < g_iv_n) ? g_iv[i].lo : PI;
+    float lo = (i < g_iv_n) ? g_iv[i].lo : SQ_PI;
     if (lo > cursor + 1e-5f) {
       float a = cursor, b = lo, w = b - a;
       add_cand(wanted + (a + b) * 0.5f, wanted, now->ang);

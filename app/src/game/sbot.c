@@ -22,15 +22,16 @@ sbot_dbg g_bot_dbg;
 /* Expand / roam mode (stage 2): leave the loop only while there is zero
  * perceived death risk, and snap back to the tight loop the moment any
  * risk shows up. Distances are multiples of the snake's width. */
-#define ROAM_HEAD_SAFE_MULT 22.0f  /* enemy head this close to my head/body */
-#define ROAM_BODY_SAFE_MULT 9.0f  /* enemy body this close to my head */
-#define ROAM_WALL_MARGIN 2000.0f   /* world units from the arena wall */
+#define ROAM_BODY_SAFE_MULT 9.0f   /* enemy body this close (x width) to my head */
 #define ROAM_CLEAR_FRAMES 8        /* risk-free frames before going out */
 #define ROAM_ARC_DIV 192.0f        /* outward arc: must be gentler than the max turn rate, bigger = wider */
-#define ROAM_PATH_SAFE_MULT 10.0f  /* enemy head vs my return path */
 #define ROAM_PATH_BODY_MULT 3.0f   /* enemy body vs my return path */
 #define SHRINK_CLEAR_MULT 8.0f     /* keep death points this far (x width) from enemy bodies */
 #define SHRINK_GAIN 1.2f           /* how hard to shrink the circle when too close */
+#define BOOST_SP 14.0f             /* snake sp while boosting (units: sp/32 world units per ms) */
+#define ROAM_TURN_ANGLE 1.5708f    /* how far (rad) the head must turn to come back (pi/2: it is on a spiral, not facing away) */
+#define ROAM_TIME_MARGIN_MS 500.0f /* extra reaction time on top of the return time */
+#define ROAM_IDLE_ENEMY_SPEED 1.6f /* a non-boosting enemy might start boosting: assume this x its speed */
 #define RETURN_BOOST_MULT 3.0f     /* boost home when this far (x width) from the loop */
 
 #define MAX_BODY_PTS 8192
@@ -86,6 +87,9 @@ typedef struct {
   bool was_roaming;
   int risk_reason; /* 0 none, 1 wall, 2 enemy head, 3 enemy body, 4 return path */
   float ret_dist;
+  float omega;   /* max turn rate, rad per ms */
+  float v_norm;  /* normal speed, world units per ms */
+  float v_boost; /* boost speed, world units per ms */
   int clear_frames;
 
   int id;
@@ -688,6 +692,18 @@ static float circle_turn(game_data* gdata) {
   return base + (tight - base) * t;
 }
 
+/* Goal while the loop is still forming (not enough body to follow yet).
+ * Keeps turning in the circle direction -- but never lets the forming
+ * circle carry the head out of the arena: near the wall, head for the
+ * centre until there is room again. */
+static v2 form_goal(game_data* gdata) {
+  float dctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
+  float margin = fmaxf(1000.0f, 3.0f * B.v_norm / B.omega);
+  if (gdata->data.flux_grd - dctr < margin)
+    return (v2){gdata->data.grd, gdata->data.grd};
+  return heading_rel(B.circle_dir * circle_turn(gdata));
+}
+
 static void follow_circle_self(game_data* gdata) {
   populate_pts(gdata);
 
@@ -699,7 +715,7 @@ static void follow_circle_self(game_data* gdata) {
    * a tiny body and would make it flip).
    */
   if (B.bpts_len < 9.0f * B.width) {
-    B.goal = heading_rel(B.circle_dir * circle_turn(gdata));
+    B.goal = form_goal(gdata);
     return;
   }
 
@@ -917,19 +933,8 @@ static bool death_risk(game_data* gdata) {
   populate_pts(gdata);
   B.risk_reason = 0;
   float w = fmaxf(B.width, 29.0f);
-  float head_safe = ROAM_HEAD_SAFE_MULT * w;
-  float body_safe = ROAM_BODY_SAFE_MULT * w;
-  float hs2 = head_safe * head_safe;
-  float bs2 = body_safe * body_safe;
 
-  float dctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
-  if (gdata->data.flux_grd - dctr < ROAM_WALL_MARGIN) {
-    B.risk_reason = 1;
-    return true;
-  }
-
-  /* Return path: straight line from my head to the nearest part of my own
-   * loop (skipping the neck). Anything that can cut it is a risk. */
+  /* My nearest own loop point (skipping the neck) = where I'd return to. */
   v2 head = {B.x, B.y};
   v2 cp = head;
   float best_d2 = 1e30f;
@@ -942,41 +947,42 @@ static bool death_risk(game_data* gdata) {
     }
   }
   B.ret_dist = best_d2 < 1e29f ? sqrtf(best_d2) : 0.0f;
-  float ps = ROAM_PATH_SAFE_MULT * w, pb = ROAM_PATH_BODY_MULT * w;
+
+  /* How long coming home takes: turn around (turn rate is the limit), then
+   * run the distance at boost speed, plus a reaction margin. */
+  float t_ret = ROAM_TURN_ANGLE / B.omega + B.ret_dist / B.v_boost +
+                ROAM_TIME_MARGIN_MS;
+  float r_turn = B.v_norm / B.omega;
+
+  /* Wall: how far I'd travel in that time, plus a bit. */
+  float dctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
+  if (gdata->data.flux_grd - dctr < B.v_norm * t_ret + 4.0f * w) {
+    B.risk_reason = 1;
+    return true;
+  }
+
+  float corridor = ROAM_PATH_BODY_MULT * w + 0.5f * r_turn;
+  float c2 = corridor * corridor;
+  float bs = ROAM_BODY_SAFE_MULT * w;
+  float bs2 = bs * bs;
 
   int ns = tdarray_length(gdata->data.snakes);
   for (int i = 0; i < ns; i++) {
     snake* sk = gdata->data.snakes + i;
     if (sk->id == B.id || sk->dead) continue;
 
-    /* A boosting enemy can cut off the return path much faster, so give
-     * it twice the clearance. */
-    float k = (sk->sp > 10.0f) ? 2.0f : 1.0f;
-    float hs2k = hs2 * k * k;
-
-    /* enemy head vs my return path */
-    {
-      float psk = ps * k;
-      if (pt_seg_d2((v2){sk->xx, sk->yy}, head, cp) < psk * psk) {
-        B.risk_reason = 4;
-        return true;
-      }
-    }
-
-    /* enemy head vs my head */
-    if (dist2(B.x, B.y, sk->xx, sk->yy) < hs2k) {
-      B.risk_reason = 2;
+    /* Enemy head: how far can it get while I come home? A boosting enemy
+     * moves at boost speed; an idle one might start boosting. */
+    float ve = (sk->sp > 10.0f ? sk->sp : sk->sp * ROAM_IDLE_ENEMY_SPEED) / 32.0f;
+    float reach = ve * t_ret + snake_width(sk->sc) / 2.0f + B.radius;
+    float d2h = pt_seg_d2((v2){sk->xx, sk->yy}, head, cp);
+    if (d2h < reach * reach) {
+      B.risk_reason = dist2(B.x, B.y, sk->xx, sk->yy) < d2h * 1.0001f ? 2 : 4;
       return true;
     }
 
-    /* enemy head vs my body (sampled) */
-    for (int j = 0; j < B.bpts_n; j += 8)
-      if (dist2(B.bpts[j].x, B.bpts[j].y, sk->xx, sk->yy) < hs2k) {
-        B.risk_reason = 2;
-        return true;
-      }
-
-    /* enemy body vs my head */
+    /* Enemy bodies are static for this purpose (they slide along their own
+     * trail): anything lying on my return corridor or right at my head. */
     int pn = tdarray_length(sk->pts);
     for (int j = 0; j < pn; j++) {
       body_part* po = sk->pts + j;
@@ -985,7 +991,7 @@ static bool death_risk(game_data* gdata) {
         B.risk_reason = 3;
         return true;
       }
-      if (pt_seg_d2((v2){po->xx, po->yy}, head, cp) < pb * pb) {
+      if (pt_seg_d2((v2){po->xx, po->yy}, head, cp) < c2) {
         B.risk_reason = 4;
         return true;
       }
@@ -1040,7 +1046,7 @@ static void to_circle(game_data* gdata) {
     }
   }
   gdata->bot.output.accel = (bool)B.default_accel;
-  B.goal = heading_rel(B.circle_dir * circle_turn(gdata));
+  B.goal = form_goal(gdata);
 }
 
 static void compute_food_goal(game_data* gdata) {
@@ -1130,6 +1136,12 @@ static void every(game_data* gdata) {
   B.ca = cosf(B.ang);
   B.sa = sinf(B.ang);
   B.speed_mult = me->sp / SPEED_BASE;
+  /* Movement model (matches the game's own update): a snake moves
+   * sp/32 world units per ms and turns at most
+   * mamu/8 * scang * spang rad per ms. */
+  B.v_norm = fmaxf(me->sp, SPEED_BASE) / 32.0f;
+  B.v_boost = BOOST_SP / 32.0f;
+  B.omega = fmaxf((gdata->data.mamu / 8.0f) * me->scang * me->spang, 1e-5f);
   B.width = snake_width(me->sc);
   B.radius = B.width / 2.0f;
   B.snake_len = snake_score(gdata, me);

@@ -89,9 +89,12 @@ jobs:
           # old version, where a `set -e` pipeline failure aborted the
           # script *before* the "couldn't find asset" diagnostic below
           # could ever run, leaving nothing but a bare exit-code-1.
+          # Latest release can be missing its linux-x86_64 asset (v2026.20
+          # shipped only aarch64 + wasm), so scan the recent releases and
+          # take the newest one that actually has the x86_64 tarball.
           API_RESPONSE=$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/shader-slang/slang/releases/latest)
+            "https://api.github.com/repos/shader-slang/slang/releases?per_page=15")
 
           ASSET_URL=$(echo "$API_RESPONSE" \
             | grep -o '"browser_download_url": *"[^"]*-linux-x86_64\.tar\.gz"' \
@@ -99,9 +102,8 @@ jobs:
             | grep -o 'https://[^"]*' || true)
 
           if [ -z "$ASSET_URL" ]; then
-            echo "ERROR: couldn't find a linux-x86_64 Slang release asset"
-            echo "API response was:"
-            echo "$API_RESPONSE"
+            echo "ERROR: couldn't find a linux-x86_64 Slang release asset in the last 15 releases"
+            echo "$API_RESPONSE" | grep -o '"name": *"slang-[^"]*"' | head -n 40
             exit 1
           fi
 

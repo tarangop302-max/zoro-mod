@@ -246,6 +246,9 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->snakey_rain_last_boost = false;
   usr_settings->snakey_rain_bar_collapsed = false;
 
+  memset(usr_settings->squeeze_reserved, 0, sizeof(usr_settings->squeeze_reserved));
+  usr_settings->hotkey_squeeze = (hotkey){GLFW_KEY_Y, false, 0, "Squeeze"};
+
   usr_settings->profile_emoji_id = 0;
 
   usr_settings->show_net_graph = true;
@@ -341,9 +344,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v220_prefix = offsetof(user_settings, ntl_pulse_reserved);
   size_t v221_prefix = offsetof(user_settings, saved_names_reserved);
   size_t v222_prefix = offsetof(user_settings, snakey_rain_ui_reserved);
+  size_t v223_prefix = offsetof(user_settings, squeeze_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v223_prefix)
+    /* A file saved before the Squeeze hotkey existed ends at v223_prefix (it
+       already contains the Snakey Rain panel state). Keep every saved value;
+       the Squeeze hotkey keeps its default (Y, toggle). */
+    bytes_to_read = v223_prefix;
   else if ((size_t)file_size >= v222_prefix)
     /* A file saved before the Snakey Rain panel state existed ends at
        v222_prefix (it already contains the previous-names list), possibly
@@ -685,6 +694,24 @@ void read_user_settings(user_settings* usr_settings) {
     if (eb->mode < 0 || eb->mode > 1) eb->mode = 0;
     eb->active = false;
     strcpy(eb->description, "Eyes back");
+  }
+
+  {
+    /* Squeeze: same key rules as the other hotkeys; never share a key. */
+    hotkey* sq = &loaded.hotkey_squeeze;
+    bool ok = (sq->key >= 48 && sq->key < 58) || (sq->key >= 65 && sq->key < 91);
+    if (!ok || sq->key == GLFW_KEY_M || sq->key == GLFW_KEY_N)
+      sq->key = GLFW_KEY_Y;
+    for (int tries = 0; tries < 36; ++tries) {
+      bool taken = false;
+      for (int d = 0; d < HOTKEY_SQUEEZE; ++d)
+        if (usr_hotkey(&loaded, d)->key == sq->key) taken = true;
+      if (!taken && sq->key != GLFW_KEY_M && sq->key != GLFW_KEY_N) break;
+      sq->key = (sq->key >= 65 && sq->key < 90) ? sq->key + 1 : 65;
+    }
+    if (sq->mode < 0 || sq->mode > 1) sq->mode = 0;
+    sq->active = false;
+    strcpy(sq->description, "Squeeze");
   }
 
   *usr_settings = loaded;

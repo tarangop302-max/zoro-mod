@@ -246,15 +246,11 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Laser thickness");
       igAlignTextToFramePadding();
-      igText("Centre ring (server centre)");
-      igAlignTextToFramePadding();
       igText("Centre ring radius");
       igAlignTextToFramePadding();
       igText("Centre ring colour");
       igAlignTextToFramePadding();
       igText("Assist turn path");
-      igAlignTextToFramePadding();
-      igText("Turn path active above");
       igAlignTextToFramePadding();
       igText("Turn path colour");
       igAlignTextToFramePadding();
@@ -317,27 +313,19 @@ void ui_settings(tenv* env) {
       igSetNextItemWidth(-1);
       igSliderInt("##laser thickness", &usrs->laser_thickness, 1, 4, "%d px",
                   ImGuiSliderFlags_AlwaysClamp);
-      igCheckbox("##center ring", &usrs->center_ring_enabled);
-      igBeginDisabled(!usrs->center_ring_enabled);
       igSetNextItemWidth(-1);
       igSliderFloat("##center ring radius", &usrs->center_ring_radius, 16.0f,
                     600.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
       igSetNextItemWidth(-1);
-      igColorEdit4("##center ring colour", usrs->center_ring_color,
-                   ImGuiColorEditFlags_AlphaBar);
-      igEndDisabled();
+      igColorEdit3("##center ring colour", usrs->center_ring_color,
+                   ImGuiColorEditFlags_None);
       igCheckbox("##turn path", &usrs->turn_path_enabled);
-      igBeginDisabled(!usrs->turn_path_enabled);
       igSetNextItemWidth(-1);
-      igSliderInt("##turn path min score", &usrs->turn_path_min_score, 0, 20000,
-                  "%d", ImGuiSliderFlags_AlwaysClamp);
+      igColorEdit3("##turn path colour", usrs->turn_path_color,
+                   ImGuiColorEditFlags_None);
       igSetNextItemWidth(-1);
-      igColorEdit4("##turn path colour", usrs->turn_path_color,
-                   ImGuiColorEditFlags_AlphaBar);
-      igSetNextItemWidth(-1);
-      igColorEdit4("##turn path danger colour", usrs->turn_path_danger_color,
-                   ImGuiColorEditFlags_AlphaBar);
-      igEndDisabled();
+      igColorEdit3("##turn path danger colour", usrs->turn_path_danger_color,
+                   ImGuiColorEditFlags_None);
                   igSetNextItemWidth(-1);
       igSliderInt("##circle after", &usrs->bot_follow_circle_score, 1000, 6000, "%d",
                   ImGuiSliderFlags_AlwaysClamp);

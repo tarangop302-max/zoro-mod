@@ -1526,6 +1526,25 @@ void ui_overlay(tenv* env) {
           IM_COL32(50,255,100,230),1.8f);
       }
 
+      /* 7b. circle planner: chosen path (green calm, yellow pressured,
+       *     cyan expansion locked, red breakout) */
+      if (g_bot_dbg.plan_n > 0) {
+        ImU32 pcol = IM_COL32(80, 255, 120, 230);
+        if (g_bot_dbg.plan_mode == 1) pcol = IM_COL32(255, 220, 60, 230);
+        else if (g_bot_dbg.plan_mode == 2) pcol = IM_COL32(60, 220, 255, 230);
+        else if (g_bot_dbg.plan_mode == 3) pcol = IM_COL32(255, 60, 60, 240);
+        float prevx = shx, prevy = shy;
+        for (int _i = 0; _i < g_bot_dbg.plan_n; _i++) {
+          float qx = W2SX(g_bot_dbg.plan_x[_i]);
+          float qy = W2SY(g_bot_dbg.plan_y[_i]);
+          ImDrawList_AddLine(bdl, (ImVec2){prevx, prevy}, (ImVec2){qx, qy},
+            pcol, 2.5f);
+          prevx = qx;
+          prevy = qy;
+        }
+        ImDrawList_AddCircleFilled(bdl, (ImVec2){prevx, prevy}, 4.0f, pcol, 10);
+      }
+
       /* 8. goal: magenta crosshair + line from head */
       float gx  = W2SX(g_bot_dbg.goal_x);
       float gy  = W2SY(g_bot_dbg.goal_y);

@@ -252,6 +252,8 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Assist turn path");
       igAlignTextToFramePadding();
+      igText("Turn path width");
+      igAlignTextToFramePadding();
       igText("Turn path colour");
       igAlignTextToFramePadding();
       igText("Turn path danger colour");
@@ -320,6 +322,9 @@ void ui_settings(tenv* env) {
       igColorEdit3("##center ring colour", usrs->center_ring_color,
                    ImGuiColorEditFlags_None);
       igCheckbox("##turn path", &usrs->turn_path_enabled);
+      igSetNextItemWidth(-1);
+      igSliderFloat("##turn path width", &usrs->turn_path_width, 1.0f, 12.0f,
+                    "%.1f px", ImGuiSliderFlags_AlwaysClamp);
       igSetNextItemWidth(-1);
       igColorEdit3("##turn path colour", usrs->turn_path_color,
                    ImGuiColorEditFlags_None);

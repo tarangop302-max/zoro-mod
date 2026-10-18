@@ -303,8 +303,7 @@ static void draw_center_ring(ImDrawList* dl, game_data* gdata,
       dl, (ImVec2){cx, cy}, r,
       igColorConvertFloat4ToU32((ImVec4){usrs->center_ring_color[0],
                                          usrs->center_ring_color[1],
-                                         usrs->center_ring_color[2],
-                                         usrs->center_ring_color[3]}),
+                                         usrs->center_ring_color[2], 0.85f}),
       64, th);
 }
 
@@ -313,8 +312,6 @@ static void draw_turn_path(ImDrawList* dl, game_data* gdata,
                            float mww2, float mhh2) {
   static tp_point path_a[TP_MAX_POINTS];
   static tp_point path_b[TP_MAX_POINTS];
-
-  if (gdata->data.cur_length < usrs->turn_path_min_score) return;
 
   float gsc = gdata->data.gsc;
   /* Same body width NTL uses: round(29.2 * scale); the hit test uses its
@@ -337,7 +334,7 @@ static void draw_turn_path(ImDrawList* dl, game_data* gdata,
     bool hit = tp_hits_enemy(me, gdata, paths[d], n, hit_radius);
     const float* c = hit ? usrs->turn_path_danger_color : usrs->turn_path_color;
     ImU32 col = igColorConvertFloat4ToU32(
-        (ImVec4){c[0], c[1], c[2], c[3] * alive});
+        (ImVec4){c[0], c[1], c[2], alive});
     tp_draw_dashed(dl, paths[d], from, to, mww2, mhh2, gdata->data.view_xx,
                    gdata->data.view_yy, gsc, col, thickness, dash, gap);
   }
@@ -383,7 +380,7 @@ void ui_overlay(tenv* env) {
         gdata->data.cur_length = GLM_MIN(GLM_MAX(cur, 0), 999999);
       }
 
-      if (usrs->center_ring_enabled && !me->dead) {
+      if (!me->dead) {
         draw_center_ring(igGetWindowDrawList(), gdata, usrs, ctx, mww2, mhh2);
       }
 

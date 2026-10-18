@@ -411,6 +411,30 @@ typedef struct user_settings {
   int     snakey_rain_last_mode;
   bool    snakey_rain_last_boost;
   bool    snakey_rain_bar_collapsed;
+
+  /* v2.23 extension: NTL-style centre ring and assist turn path.
+
+     center_ring_*: a ring drawn at the centre of the map (the server centre)
+     so you always know where the middle is. Radius is in game units (NTL's
+     default is 64), colour has an alpha channel.
+
+     turn_path_*: while Assist is held, draws the path your snake would follow
+     if it turned as hard as it can (both directions). The segment turns the
+     "danger" colour when it would hit another snake. It is only drawn while
+     your length is at least turn_path_min_score.
+
+     Appended after snakey_rain_bar_collapsed so every earlier file stays a
+     compatible prefix (see v223_prefix in read_user_settings). The 16-byte
+     reserved block keeps sizeof(user_settings) strictly larger than the
+     previous release. */
+  uint8_t center_ring_reserved[16];
+  bool    center_ring_enabled;
+  float   center_ring_radius;
+  vec4    center_ring_color;
+  bool    turn_path_enabled;
+  int     turn_path_min_score;
+  vec4    turn_path_color;
+  vec4    turn_path_danger_color;
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {

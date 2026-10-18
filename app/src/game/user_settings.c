@@ -246,6 +246,25 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->snakey_rain_last_boost = false;
   usr_settings->snakey_rain_bar_collapsed = false;
 
+  memset(usr_settings->center_ring_reserved, 0,
+         sizeof(usr_settings->center_ring_reserved));
+  usr_settings->center_ring_enabled = true;
+  usr_settings->center_ring_radius = 64.0f;
+  usr_settings->center_ring_color[0] = 1.0f;
+  usr_settings->center_ring_color[1] = 0.0f;
+  usr_settings->center_ring_color[2] = 0.0f;
+  usr_settings->center_ring_color[3] = 0.6f;
+  usr_settings->turn_path_enabled = true;
+  usr_settings->turn_path_min_score = 0;
+  usr_settings->turn_path_color[0] = 0.4f;
+  usr_settings->turn_path_color[1] = 0.85f;
+  usr_settings->turn_path_color[2] = 1.0f;
+  usr_settings->turn_path_color[3] = 1.0f;
+  usr_settings->turn_path_danger_color[0] = 1.0f;
+  usr_settings->turn_path_danger_color[1] = 0.27f;
+  usr_settings->turn_path_danger_color[2] = 0.0f;
+  usr_settings->turn_path_danger_color[3] = 1.0f;
+
   usr_settings->profile_emoji_id = 0;
 
   usr_settings->show_net_graph = true;
@@ -341,9 +360,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v220_prefix = offsetof(user_settings, ntl_pulse_reserved);
   size_t v221_prefix = offsetof(user_settings, saved_names_reserved);
   size_t v222_prefix = offsetof(user_settings, snakey_rain_ui_reserved);
+  size_t v223_prefix = offsetof(user_settings, center_ring_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v223_prefix)
+    /* A file saved before the centre ring / turn path existed ends at
+       v223_prefix (it already contains the Snakey Rain panel state), possibly
+       followed only by compiler tail padding. Keep every saved value; the
+       ring and turn path keep their defaults (on, red ring, cyan path). */
+    bytes_to_read = v223_prefix;
   else if ((size_t)file_size >= v222_prefix)
     /* A file saved before the Snakey Rain panel state existed ends at
        v222_prefix (it already contains the previous-names list), possibly
@@ -463,6 +489,12 @@ void read_user_settings(user_settings* usr_settings) {
         loaded.transparent_skin_opacity[i] > 0.85f)
       loaded.transparent_skin_opacity[i] = 0.35f;
   }
+  loaded.center_ring_enabled = loaded.center_ring_enabled ? true : false;
+  loaded.turn_path_enabled = loaded.turn_path_enabled ? true : false;
+  if (!(loaded.center_ring_radius >= 8.0f && loaded.center_ring_radius <= 2000.0f))
+    loaded.center_ring_radius = 64.0f;
+  if (loaded.turn_path_min_score < 0 || loaded.turn_path_min_score > 100000)
+    loaded.turn_path_min_score = 0;
   if (loaded.fps_limit != 0 && loaded.fps_limit != 60 &&
       loaded.fps_limit != 90 && loaded.fps_limit != 120 &&
       loaded.fps_limit != 144)

@@ -435,6 +435,12 @@ typedef struct user_settings {
   int     turn_path_min_score;
   vec4    turn_path_color;
   vec4    turn_path_danger_color;
+
+  /* v2.24 extension: turn path line width in pixels. Appended after the
+     v2.23 block; the 16-byte reserved block keeps sizeof(user_settings)
+     strictly larger than the previous release (see v224_prefix). */
+  uint8_t turn_path_reserved[16];
+  float   turn_path_width;
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {

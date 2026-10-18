@@ -141,6 +141,208 @@ static void hud_layout_resize_handle(
 }
 #endif
 
+
+/* ---------------------------------------------------------------------------
+ * Centre ring + assist turn path (ported from NTL).
+ * ------------------------------------------------------------------------- */
+
+#define TP_MAX_POINTS 6100
+
+typedef struct tp_point {
+  float x;
+  float y;
+} tp_point;
+
+/* Simulate the path the local snake follows if it turns as hard as it can in
+ * one direction (`sign` = -1 turns counter-clockwise, +1 clockwise), using the
+ * same turn-rate / step-length formulas as the game loop (oef.c). Stops after
+ * one full revolution. Returns the number of points written to `out`
+ * (including the head position), or 0 if the snake can't be simulated. */
+static int tp_simulate(const snake* me, const game_data* gdata, int sign,
+                       tp_point* out) {
+  float sp = me->sp;
+  if (!(sp > 0.0f)) return 0;
+
+  float spangdv = gdata->data.spangdv > 0.0f ? gdata->data.spangdv : 4.8f;
+  float scang = me->scang;
+  if (!(scang > 0.0f))
+    scang = .13f + .87f * powf((7.0f - me->sc) / 6.0f, 2.0f);
+  float spang = me->spang;
+  if (!(spang > 0.0f)) spang = fminf(1.0f, sp / spangdv);
+
+  float turn = gdata->data.mamu * scang * spang; /* radians per tick */
+  if (!(turn > 0.0f)) return 0;
+
+  float msl = me->msl > 0.0f ? me->msl : 42.0f;
+  float step = sp / 4.0f;
+  if (step > msl) step = msl;
+
+  const float two_pi = 6.2831853f;
+  int max_ticks = (int)ceilf(two_pi / turn) + 32;
+  if (max_ticks < 120) max_ticks = 120;
+  if (max_ticks > TP_MAX_POINTS - 1) max_ticks = TP_MAX_POINTS - 1;
+
+  float x = me->xx + me->fx;
+  float y = me->yy + me->fy;
+  float ang = me->ang;
+  float turned = 0.0f;
+  int n = 0;
+  out[n++] = (tp_point){x, y};
+  for (int i = 0; i < max_ticks && turned < two_pi; i++) {
+    ang += (float)sign * turn;
+    if (ang < 0.0f)
+      ang += two_pi;
+    else if (ang >= two_pi)
+      ang -= two_pi;
+    turned += turn;
+    x += cosf(ang) * step;
+    y += sinf(ang) * step;
+    out[n++] = (tp_point){x, y};
+  }
+  return n;
+}
+
+/* True when the middle part of the path (25%..75%, like NTL) passes within
+ * `radius` of any other snake's body. */
+static bool tp_hits_enemy(const snake* me, const game_data* gdata,
+                          const tp_point* p, int n, float radius) {
+  int a = (int)floorf(0.25f * n);
+  int b = (int)floorf(0.75f * n);
+  if (b - a < 2) {
+    a = 0;
+    b = n;
+  }
+  if (b > n) b = n;
+  if (b - a < 1) return false;
+
+  float minx = p[a].x, maxx = p[a].x, miny = p[a].y, maxy = p[a].y;
+  for (int i = a; i < b; i++) {
+    if (p[i].x < minx) minx = p[i].x;
+    if (p[i].x > maxx) maxx = p[i].x;
+    if (p[i].y < miny) miny = p[i].y;
+    if (p[i].y > maxy) maxy = p[i].y;
+  }
+
+  float r2 = radius * radius;
+  int snakes_len = tdarray_length(gdata->data.snakes);
+  for (int si = 0; si < snakes_len; si++) {
+    const snake* o = gdata->data.snakes + si;
+    if (o->dead || o->id == me->id || !o->pts) continue;
+    int pts_len = tdarray_length(o->pts);
+    for (int k = 0; k < pts_len; k++) {
+      const body_part* bp = o->pts + k;
+      if (bp->dying) continue;
+      float bx = bp->xx + bp->fx;
+      float by = bp->yy + bp->fy;
+      if (bx < minx - radius || bx > maxx + radius || by < miny - radius ||
+          by > maxy + radius)
+        continue;
+      for (int i = a; i < b; i++) {
+        float dx = p[i].x - bx;
+        float dy = p[i].y - by;
+        if (dx * dx + dy * dy < r2) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/* Draw p[from..to) as a dashed polyline in screen space. */
+static void tp_draw_dashed(ImDrawList* dl, const tp_point* p, int from, int to,
+                           float mww2, float mhh2, float view_x, float view_y,
+                           float gsc, ImU32 col, float thickness, float dash,
+                           float gap) {
+  if (to - from < 2) return;
+  float rem = dash;
+  bool on = true;
+  ImVec2 prev = {mww2 + (p[from].x - view_x) * gsc,
+                 mhh2 + (p[from].y - view_y) * gsc};
+  for (int i = from + 1; i < to; i++) {
+    ImVec2 cur = {mww2 + (p[i].x - view_x) * gsc,
+                  mhh2 + (p[i].y - view_y) * gsc};
+    float dx = cur.x - prev.x;
+    float dy = cur.y - prev.y;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len > 0.0001f) {
+      float ux = dx / len;
+      float uy = dy / len;
+      float pos = 0.0f;
+      while (len - pos > 0.0001f) {
+        float take = fminf(rem, len - pos);
+        if (on) {
+          ImDrawList_AddLine(
+              dl, (ImVec2){prev.x + ux * pos, prev.y + uy * pos},
+              (ImVec2){prev.x + ux * (pos + take), prev.y + uy * (pos + take)},
+              col, thickness);
+        }
+        pos += take;
+        rem -= take;
+        if (rem <= 0.0001f) {
+          on = !on;
+          rem = on ? dash : gap;
+        }
+      }
+    }
+    prev = cur;
+  }
+}
+
+static void draw_center_ring(ImDrawList* dl, game_data* gdata,
+                             user_settings* usrs, tcontext* ctx, float mww2,
+                             float mhh2) {
+  float gsc = gdata->data.gsc;
+  float cx = mww2 + (gdata->data.grd - gdata->data.view_xx) * gsc;
+  float cy = mhh2 + (gdata->data.grd - gdata->data.view_yy) * gsc;
+  float r = usrs->center_ring_radius * gsc;
+  float th = fmaxf(1.5f, 16.0f * gsc); /* NTL: 16 game units wide */
+  float reach = r + th;
+  if (cx + reach < 0.0f || cx - reach > (float)ctx->size[0] ||
+      cy + reach < 0.0f || cy - reach > (float)ctx->size[1])
+    return;
+  ImDrawList_AddCircle(
+      dl, (ImVec2){cx, cy}, r,
+      igColorConvertFloat4ToU32((ImVec4){usrs->center_ring_color[0],
+                                         usrs->center_ring_color[1],
+                                         usrs->center_ring_color[2],
+                                         usrs->center_ring_color[3]}),
+      64, th);
+}
+
+static void draw_turn_path(ImDrawList* dl, game_data* gdata,
+                           user_settings* usrs, const snake* me, float alive,
+                           float mww2, float mhh2) {
+  static tp_point path_a[TP_MAX_POINTS];
+  static tp_point path_b[TP_MAX_POINTS];
+
+  if (gdata->data.cur_length < usrs->turn_path_min_score) return;
+
+  float gsc = gdata->data.gsc;
+  /* Same body width NTL uses: round(29.2 * scale); the hit test uses its
+     half. */
+  float hit_radius = 0.5f * roundf(29.2f * me->sc);
+  float thickness = fminf(4.0f, fmaxf(2.0f, 4.0f * gsc));
+  float dash = fmaxf(2.0f, 8.0f * gsc);
+  float gap = fmaxf(2.0f, 6.0f * gsc);
+
+  tp_point* paths[2] = {path_a, path_b};
+  for (int d = 0; d < 2; d++) {
+    int n = tp_simulate(me, gdata, d == 0 ? -1 : 1, paths[d]);
+    if (n < 4) continue;
+    int from = (int)floorf(0.25f * n);
+    int to = (int)floorf(0.75f * n);
+    if (to - from < 2) {
+      from = 0;
+      to = n;
+    }
+    bool hit = tp_hits_enemy(me, gdata, paths[d], n, hit_radius);
+    const float* c = hit ? usrs->turn_path_danger_color : usrs->turn_path_color;
+    ImU32 col = igColorConvertFloat4ToU32(
+        (ImVec4){c[0], c[1], c[2], c[3] * alive});
+    tp_draw_dashed(dl, paths[d], from, to, mww2, mhh2, gdata->data.view_xx,
+                   gdata->data.view_yy, gsc, col, thickness, dash, gap);
+  }
+}
+
 void ui_overlay(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -179,6 +381,15 @@ void ui_overlay(tenv* env) {
                                   15 -
                               5);
         gdata->data.cur_length = GLM_MIN(GLM_MAX(cur, 0), 999999);
+      }
+
+      if (usrs->center_ring_enabled && !me->dead) {
+        draw_center_ring(igGetWindowDrawList(), gdata, usrs, ctx, mww2, mhh2);
+      }
+
+      if (usrs->hotkeys[HOTKEY_ASSIST].active && usrs->turn_path_enabled &&
+          !me->dead && a > 0.0f) {
+        draw_turn_path(igGetWindowDrawList(), gdata, usrs, me, a, mww2, mhh2);
       }
 
       if (usrs->hotkeys[HOTKEY_ASSIST].active) {

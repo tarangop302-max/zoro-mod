@@ -248,6 +248,7 @@ void user_settings_default(user_settings* usr_settings) {
 
   memset(usr_settings->center_ring_reserved, 0,
          sizeof(usr_settings->center_ring_reserved));
+  usr_settings->center_ring_reserved[0] = 1;
   usr_settings->center_ring_enabled = true;
   usr_settings->center_ring_radius = 64.0f;
   usr_settings->center_ring_color[0] = 1.0f;
@@ -489,12 +490,36 @@ void read_user_settings(user_settings* usr_settings) {
         loaded.transparent_skin_opacity[i] > 0.85f)
       loaded.transparent_skin_opacity[i] = 0.35f;
   }
-  loaded.center_ring_enabled = loaded.center_ring_enabled ? true : false;
+  /* The centre ring is always on; center_ring_enabled and
+     turn_path_min_score are kept only so the settings file layout does not
+     change. */
+  loaded.center_ring_enabled = true;
   loaded.turn_path_enabled = loaded.turn_path_enabled ? true : false;
+  loaded.turn_path_min_score = 0;
   if (!(loaded.center_ring_radius >= 8.0f && loaded.center_ring_radius <= 2000.0f))
     loaded.center_ring_radius = 64.0f;
-  if (loaded.turn_path_min_score < 0 || loaded.turn_path_min_score > 100000)
-    loaded.turn_path_min_score = 0;
+  /* center_ring_reserved[0] is a "colours initialised" marker. A file that
+     was saved before the colours were ever set holds zeros there (black), so
+     restore the defaults once. Alpha is not user-editable. */
+  if (!loaded.center_ring_reserved[0]) {
+    user_settings d;
+    user_settings_default(&d);
+    memcpy(loaded.center_ring_color, d.center_ring_color,
+           sizeof loaded.center_ring_color);
+    memcpy(loaded.turn_path_color, d.turn_path_color,
+           sizeof loaded.turn_path_color);
+    memcpy(loaded.turn_path_danger_color, d.turn_path_danger_color,
+           sizeof loaded.turn_path_danger_color);
+    loaded.center_ring_reserved[0] = 1;
+  }
+  {
+    float* cols[3] = {loaded.center_ring_color, loaded.turn_path_color,
+                      loaded.turn_path_danger_color};
+    for (int k = 0; k < 3; ++k)
+      for (int c = 0; c < 3; ++c)
+        if (!isfinite(cols[k][c]) || cols[k][c] < 0.0f || cols[k][c] > 1.0f)
+          cols[k][c] = 1.0f;
+  }
   if (loaded.fps_limit != 0 && loaded.fps_limit != 60 &&
       loaded.fps_limit != 90 && loaded.fps_limit != 120 &&
       loaded.fps_limit != 144)

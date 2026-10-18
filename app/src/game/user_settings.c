@@ -254,7 +254,8 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->center_ring_color[0] = 1.0f;
   usr_settings->center_ring_color[1] = 0.0f;
   usr_settings->center_ring_color[2] = 0.0f;
-  usr_settings->center_ring_color[3] = 0.6f;
+  usr_settings->center_ring_color[3] = 0.35f; /* opacity */
+  usr_settings->center_ring_reserved[1] = 1;  /* opacity initialised */
   usr_settings->turn_path_enabled = true;
   usr_settings->turn_path_min_score = 0;
   usr_settings->turn_path_color[0] = 0.4f;
@@ -265,6 +266,9 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->turn_path_danger_color[1] = 0.27f;
   usr_settings->turn_path_danger_color[2] = 0.0f;
   usr_settings->turn_path_danger_color[3] = 1.0f;
+  memset(usr_settings->turn_path_reserved, 0,
+         sizeof(usr_settings->turn_path_reserved));
+  usr_settings->turn_path_width = 3.0f;
 
   usr_settings->profile_emoji_id = 0;
 
@@ -362,9 +366,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v221_prefix = offsetof(user_settings, saved_names_reserved);
   size_t v222_prefix = offsetof(user_settings, snakey_rain_ui_reserved);
   size_t v223_prefix = offsetof(user_settings, center_ring_reserved);
+  size_t v224_prefix = offsetof(user_settings, turn_path_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v224_prefix)
+    /* A file saved before the turn path width existed ends at v224_prefix
+       (it already contains the ring and turn path colours), possibly
+       followed only by compiler tail padding. Keep every saved value; the
+       width keeps its default. */
+    bytes_to_read = v224_prefix;
   else if ((size_t)file_size >= v223_prefix)
     /* A file saved before the centre ring / turn path existed ends at
        v223_prefix (it already contains the Snakey Rain panel state), possibly
@@ -512,6 +523,12 @@ void read_user_settings(user_settings* usr_settings) {
            sizeof loaded.turn_path_danger_color);
     loaded.center_ring_reserved[0] = 1;
   }
+  /* The ring's opacity is fixed (see draw_center_ring); keep the stored
+     alpha at that value. */
+  loaded.center_ring_color[3] = 0.35f;
+  if (!isfinite(loaded.turn_path_width) || loaded.turn_path_width < 1.0f ||
+      loaded.turn_path_width > 12.0f)
+    loaded.turn_path_width = 3.0f;
   {
     float* cols[3] = {loaded.center_ring_color, loaded.turn_path_color,
                       loaded.turn_path_danger_color};

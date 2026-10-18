@@ -303,7 +303,7 @@ static void draw_center_ring(ImDrawList* dl, game_data* gdata,
       dl, (ImVec2){cx, cy}, r,
       igColorConvertFloat4ToU32((ImVec4){usrs->center_ring_color[0],
                                          usrs->center_ring_color[1],
-                                         usrs->center_ring_color[2], 0.85f}),
+                                         usrs->center_ring_color[2], 0.35f}),
       64, th);
 }
 
@@ -317,9 +317,9 @@ static void draw_turn_path(ImDrawList* dl, game_data* gdata,
   /* Same body width NTL uses: round(29.2 * scale); the hit test uses its
      half. */
   float hit_radius = 0.5f * roundf(29.2f * me->sc);
-  float thickness = fminf(4.0f, fmaxf(2.0f, 4.0f * gsc));
-  float dash = fmaxf(2.0f, 8.0f * gsc);
-  float gap = fmaxf(2.0f, 6.0f * gsc);
+  float thickness = usrs->turn_path_width;
+  float dash = fmaxf(thickness * 2.5f, 8.0f * gsc);
+  float gap = fmaxf(thickness * 1.5f, 6.0f * gsc);
 
   tp_point* paths[2] = {path_a, path_b};
   for (int d = 0; d < 2; d++) {

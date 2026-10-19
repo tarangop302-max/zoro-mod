@@ -28,22 +28,25 @@ sbot_dbg g_bot_dbg;
  */
 #define BOOST_SP (SPEED_BASE * 2.4f)  /* worst-case enemy boost speed      */
 #define PATH_N 10                     /* samples on my predicted arc       */
-#define BODY_MARGIN_W 1.5f            /* keep-out gap to enemy body (w)    */
-#define BODY_HEADSIDE_EXTRA_W 1.0f    /* extra gap near an enemy's head    */
+#define BODY_MARGIN_W 0.0f            /* gap to enemy body beyond touching edges (w): edges may touch */
+#define BODY_HEADSIDE_EXTRA_W 0.15f   /* extra gap near an enemy's head    */
 #define BODY_HEADSIDE_PTS 12          /* how many body pts count as "head side" */
 #define BODY_SLOPE 0.6f               /* course limit per width of clearance */
 #define LIM_FREE 1.5f                 /* "no limit" value                  */
-#define HEAD_HOLD_M 4.0f              /* arrival margin where course holds */
-#define HEAD_FREE_M 14.0f             /* margin where head imposes nothing */
+#define HEAD_HOLD_M 2.0f              /* arrival margin where course holds */
+#define HEAD_FREE_M 14.0f             /* head imposes nothing beyond this margin: enemies INSIDE the sector below */
+#define HEAD_FREE_OUT_M 8.0f          /* same, for enemies OUTSIDE the sector (react later) */
+#define HEAD_SECTOR_DEG 50.0f         /* sector from my heading toward the outward side */
 #define HEAD_NEG_SLOPE 0.2f           /* tighten strength below HOLD       */
-#define HEAD_BOOST_RISK 0.4f          /* how much a non-boosting enemy is assumed to boost */
+#define HEAD_BOOST_RISK 0.2f          /* how much a non-boosting enemy is assumed to boost */
 #define HEAD_TURN_W 4.0f              /* enemy turn radius (in its widths) */
 #define HEADON_HOLD_M 6.0f
 #define HEADON_FREE_M 18.0f
 #define HEADON_NEG_SLOPE 0.3f
 #define HEADON_BUF_W 1.5f             /* lateral tolerance of the head-on ray */
 #define SMALL_ENEMY_FRAC 0.2f         /* heads smaller than this x my score are ignored */
-#define HEAD_LEGACY_RANGE_W 6.0f      /* old distance rule only as emergency inside this range */
+#define HEAD_LEGACY_REACH_W 5.0f      /* old head distance rule: max reach (emergency only) */
+#define BODY_LEGACY_REACH_W 2.0f      /* old body distance rule: max reach, so edges can touch */
 #define SAFE_RELAX 0.1f               /* how fast the limit relaxes (tightens instantly) */
 #define EXPAND_BONUS 0.08f            /* extra outward turn when all clear (0 = off) */
 #define BOOST_URGENT_M 0.0f           /* boost only if the enemy would arrive first */
@@ -781,7 +784,7 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
   float lim_body = fminf(lim_out, lim_in);
 
   /* ---- 2) head arrival, 3) head-on ---------------------------------- */
-  float m_head = 1e9f, m_on = 1e9f;
+  float m_head = 1e9f, m_on = 1e9f, lim_head = LIM_FREE;
   float h_te = 0, h_s = 0, o_te = 0, o_s = 0;
   v2 h_src = {0, 0}, h_q = {0, 0}, o_src = {0, 0}, o_q = {0, 0};
 
@@ -801,6 +804,16 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
     float v3 = boosting ? fmaxf(sp, BOOST_SP * 0.8f) : BOOST_SP * 0.8f;
     v2 dir = {cosf(sk->ang), sinf(sk->ang)};
 
+    /* Is this head in the sector from my heading toward the OUTWARD side?
+     * Only those can threaten the bulge soon; the rest get a shorter reach. */
+    float rx = eh.x - B.x, ry = eh.y - B.y;
+    float ang_rel = atan2f(B.ca * ry - B.sa * rx, B.ca * rx + B.sa * ry);
+    float out_sign = ((-B.sa) * close_norm.x + B.ca * close_norm.y) >= 0.0f ? 1.0f : -1.0f;
+    float ang_out = ang_rel * out_sign;
+    bool in_sector =
+        ang_out >= 0.0f && ang_out <= HEAD_SECTOR_DEG * (float)M_PI / 180.0f;
+    float head_free = in_sector ? HEAD_FREE_M : HEAD_FREE_OUT_M;
+
     for (int k = 0; k <= PATH_N; k++) {
       v2 q = R->q[k];
       float tm = R->s[k] / v_me;
@@ -811,12 +824,16 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
       float dth = angdiff_abs(atan2f(q.y - eh.y, q.x - eh.x), sk->ang);
       float te = (d_reach + dth * HEAD_TURN_W * ew) / ve;
       float m = (te - tm) * SPEED_BASE / B.width;
+      float lk = margin_to_lim(m, HEAD_HOLD_M, head_free, HEAD_NEG_SLOPE);
+      if (lk < lim_head) {
+        lim_head = lk;
+        h_src = eh;
+        h_q = q;
+      }
       if (m < m_head) {
         m_head = m;
         h_te = te;
         h_s = R->s[k];
-        h_src = eh;
-        h_q = q;
       }
 
       /* 3) straight along its heading, worst case boost */
@@ -839,7 +856,6 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
     }
   }
 
-  float lim_head = margin_to_lim(m_head, HEAD_HOLD_M, HEAD_FREE_M, HEAD_NEG_SLOPE);
   float lim_on =
       margin_to_lim(m_on, HEADON_HOLD_M, HEADON_FREE_M, HEADON_NEG_SLOPE);
 
@@ -1017,7 +1033,9 @@ static void follow_circle_self(game_data* gdata) {
 
   float target_course = cur_course + 0.25f + EXPAND_BONUS * clear_f;
 
-  float head_prox = -1.0f - (2.0f * target_far - enemy_head_dist) / B.width;
+  float head_prox =
+      -1.0f - (fminf(2.0f * target_far, HEAD_LEGACY_REACH_W * B.width) -
+               enemy_head_dist) / B.width;
   if (head_prox > 0)
     head_prox = 0.125f * head_prox * head_prox;
   else
@@ -1029,15 +1047,18 @@ static void follow_circle_self(game_data* gdata) {
    * continuing to circle. Cap the pull so a genuinely close call still
    * gets a strong reaction, but bystanders can't override circling. */
   head_prox = fmaxf(head_prox, -2.0f);
-  /* The old distance-only rule treats every direction alike, so it is now
-   * only an emergency net for heads right on top of the loop; the
-   * time-to-reach limit below handles everything farther out. */
-  if (enemy_head_dist > HEAD_LEGACY_RANGE_W * B.width) head_prox = 1.0f;
+  /* The old distance-only rule treats every direction alike, so its reach is
+   * capped (HEAD_LEGACY_REACH_W above) and it is only an emergency net for
+   * heads right on top of the loop; the time-to-reach limit handles the rest.
+   * The body rule is capped the same way (BODY_LEGACY_REACH_W) so the loop
+   * can press its edge against a neighbouring body instead of shrinking. */
   target_course = fminf(target_course, head_prox);
 
   float enemy_body_dist = sqrtf(enemy_body_d2);
 
-  float body_prox = -1.0f - (2.0f * target_far - enemy_body_dist) / B.width;
+  float body_prox =
+      -1.0f - (fminf(2.0f * target_far, BODY_LEGACY_REACH_W * B.width) -
+               enemy_body_dist) / B.width;
   if (body_prox > 0)
     body_prox = 0.125f * body_prox * body_prox;
   else

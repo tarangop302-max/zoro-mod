@@ -20,6 +20,8 @@ sbot_dbg g_bot_dbg;
 #define ACTION_FRAMES 2
 
 #define MAX_BODY_PTS 8192
+#define MAX_HULL_PTS 32
+#define MAX_INSIDE_PTS 512
 #define MAX_COLL_PTS 512
 
 typedef struct {
@@ -31,6 +33,18 @@ typedef struct {
 typedef struct {
   float x, y, a;
 } isect;
+
+typedef struct {
+  v2 pts[MAX_HULL_PTS];
+  int n;
+  float minx, maxx, miny, maxy;
+} poly_box;
+
+typedef struct {
+  v2 pts[MAX_INSIDE_PTS];
+  int n;
+  float minx, maxx, miny, maxy;
+} poly_box_large;
 
 typedef struct {
   float x, y, d2, r;
@@ -107,6 +121,93 @@ static inline float snake_width(float sc) { return roundf(sc * 29.0f); }
 static inline v2 unit_vec(v2 v) {
   float l = sqrtf(v.x * v.x + v.y * v.y);
   return l > 0 ? (v2){v.x / l, v.y / l} : (v2){0, 0};
+}
+
+static inline float cross2(v2 o, v2 a, v2 b) {
+  return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+}
+
+static int hull_cmp(const void* a, const void* b) {
+  v2 pa = *(v2*)a, pb = *(v2*)b;
+  if (pa.x != pb.x) return pa.x < pb.x ? -1 : 1;
+  return pa.y < pb.y ? -1 : pa.y > pb.y ? 1 : 0;
+}
+
+static int convex_hull(v2* pts, int n, v2* out) {
+  if (n < 2) {
+    for (int i = 0; i < n; i++) out[i] = pts[i];
+    return n;
+  }
+  qsort(pts, n, sizeof(v2), hull_cmp);
+
+  v2 stk[MAX_HULL_PTS * 2];
+  int k = 0;
+
+  for (int i = 0; i < n; i++) {
+    while (k >= 2 && cross2(stk[k - 2], stk[k - 1], pts[i]) <= 0) k--;
+    stk[k++] = pts[i];
+  }
+
+  int lo = k + 1;
+  for (int i = n - 2; i >= 0; i--) {
+    while (k >= lo && cross2(stk[k - 2], stk[k - 1], pts[i]) <= 0) k--;
+    stk[k++] = pts[i];
+  }
+  k--;
+  for (int i = 0; i < k; i++) out[i] = stk[i];
+  return k;
+}
+
+static bool point_in_poly(v2 p, const poly_box* pb) {
+  if (p.x < pb->minx || p.x > pb->maxx || p.y < pb->miny || p.y > pb->maxy)
+    return false;
+  bool c = false;
+  int l = pb->n;
+  for (int i = 0, j = l - 1; i < l; j = i++) {
+    if ((pb->pts[i].y > p.y) != (pb->pts[j].y > p.y) &&
+        p.x < (pb->pts[j].x - pb->pts[i].x) * (p.y - pb->pts[i].y) /
+                      (pb->pts[j].y - pb->pts[i].y) +
+                  pb->pts[i].x)
+      c = !c;
+  }
+  return c;
+}
+
+static bool point_in_poly_large(v2 p, const poly_box_large* pb) {
+  if (p.x < pb->minx || p.x > pb->maxx || p.y < pb->miny || p.y > pb->maxy)
+    return false;
+  bool c = false;
+  int l = pb->n;
+  for (int i = 0, j = l - 1; i < l; j = i++) {
+    if ((pb->pts[i].y > p.y) != (pb->pts[j].y > p.y) &&
+        p.x < (pb->pts[j].x - pb->pts[i].x) * (p.y - pb->pts[i].y) /
+                      (pb->pts[j].y - pb->pts[i].y) +
+                  pb->pts[i].x)
+      c = !c;
+  }
+  return c;
+}
+
+static void poly_box_aabb(poly_box* pb) {
+  pb->minx = pb->maxx = pb->pts[0].x;
+  pb->miny = pb->maxy = pb->pts[0].y;
+  for (int i = 1; i < pb->n; i++) {
+    if (pb->pts[i].x < pb->minx) pb->minx = pb->pts[i].x;
+    if (pb->pts[i].x > pb->maxx) pb->maxx = pb->pts[i].x;
+    if (pb->pts[i].y < pb->miny) pb->miny = pb->pts[i].y;
+    if (pb->pts[i].y > pb->maxy) pb->maxy = pb->pts[i].y;
+  }
+}
+
+static void poly_box_large_aabb(poly_box_large* pb) {
+  pb->minx = pb->maxx = pb->pts[0].x;
+  pb->miny = pb->maxy = pb->pts[0].y;
+  for (int i = 1; i < pb->n; i++) {
+    if (pb->pts[i].x < pb->minx) pb->minx = pb->pts[i].x;
+    if (pb->pts[i].x > pb->maxx) pb->maxx = pb->pts[i].x;
+    if (pb->pts[i].y < pb->miny) pb->miny = pb->pts[i].y;
+    if (pb->pts[i].y > pb->maxy) pb->maxy = pb->pts[i].y;
+  }
 }
 
 static bool circle_intersect(circ c1, circ c2, isect* out) {
@@ -481,6 +582,253 @@ static void determine_circle_dir(void) {
   B.circle_dir = (-dy * B.ca + dx * B.sa > 0.0f) ? -1 : +1;
 }
 
+static void body_danger_zone(float offset, v2 target_pt,
+                             v2 target_norm,
+                             float close_dist,
+                             v2 past_target, v2 close_pt, poly_box* out) {
+  int o = B.circle_dir;
+  v2 raw[10];
+  raw[0] = (v2){B.x - o * offset * B.sa, B.y + o * offset * B.ca};
+  raw[1] = (v2){B.x + B.width * B.ca + offset * (B.ca - o * B.sa),
+                B.y + B.width * B.sa + offset * (B.sa + o * B.ca)};
+  raw[2] = (v2){B.x + 1.75f * B.width * B.ca + o * 0.3f * B.width * B.sa +
+                    offset * (B.ca - o * B.sa),
+                B.y + 1.75f * B.width * B.sa - o * 0.3f * B.width * B.ca +
+                    offset * (B.sa + o * B.ca)};
+  raw[3] = (v2){B.x + 2.5f * B.width * B.ca + o * 0.7f * B.width * B.sa +
+                    offset * (B.ca - o * B.sa),
+                B.y + 2.5f * B.width * B.sa - o * 0.7f * B.width * B.ca +
+                    offset * (B.sa + o * B.ca)};
+  raw[4] = (v2){
+      B.x + 3.0f * B.width * B.ca + o * 1.2f * B.width * B.sa + offset * B.ca,
+      B.y + 3.0f * B.width * B.sa - o * 1.2f * B.width * B.ca + offset * B.sa};
+  float cpd_half = 0.5f * fmaxf(close_dist, 0.0f);
+  raw[5] = (v2){target_pt.x + target_norm.x * (offset + cpd_half),
+                target_pt.y + target_norm.y * (offset + cpd_half)};
+  raw[6] = (v2){past_target.x + target_norm.x * offset,
+                past_target.y + target_norm.y * offset};
+  raw[7] = past_target;
+  raw[8] = target_pt;
+  raw[9] = close_pt;
+
+  v2 scratch[10];
+  memcpy(scratch, raw, sizeof(raw));
+  out->n = convex_hull(scratch, 10, out->pts);
+  poly_box_aabb(out);
+}
+
+static void construct_inside_polygon(float close_t, poly_box_large* out) {
+  float start_t = 5.0f * B.width;
+  float end_t = close_t + 5.0f * B.width;
+
+  out->n = 0;
+  out->pts[out->n++] = smooth_point(end_t);
+  out->pts[out->n++] = smooth_point(start_t);
+  for (float t = start_t; t < end_t && out->n < MAX_INSIDE_PTS; t += B.width)
+    out->pts[out->n++] = smooth_point(t);
+
+  poly_box_large_aabb(out);
+}
+
+static void follow_circle_legacy(game_data* gdata) {
+  populate_pts(gdata);
+  determine_circle_dir();
+  int o = B.circle_dir;
+
+  /*
+   * The corridor/spine projection below needs enough looped body (9
+   * body-widths) to have a stable near/far reference point -- on a
+   * small or freshly-formed loop that isn't met yet. This matches the
+   * faithful original: just leave B.goal untouched and wait for the
+   * loop to grow, rather than actively steering here. An earlier
+   * version of this fix nudged the heading directly, but that nudge
+   * had no awareness of the arena center or the wall -- if this
+   * condition kept re-triggering it could walk the snake straight
+   * toward the boundary with nothing pulling it back. Freezing the
+   * goal is safe because check_collision()/check_encircle() (stage 1,
+   * run before the snake ever reaches stage 2) already handle wall
+   * and enemy avoidance reactively; this early-return only matters
+   * for the brief window right as a loop first forms.
+   */
+  if (B.bpts_len < 9.0f * B.width) return;
+
+  float close_t = closest_body_point();
+  v2 close_pt = smooth_point(close_t);
+  v2 close_next = smooth_point(close_t - B.width);
+  v2 close_tang =
+      unit_vec((v2){close_next.x - close_pt.x, close_next.y - close_pt.y});
+  v2 close_norm = (v2){-o * close_tang.y, o * close_tang.x};
+
+  float cur_course = asinf(
+      fmaxf(-1.0f, fminf(1.0f, B.ca * close_norm.x + B.sa * close_norm.y)));
+
+  float close_dist =
+      (B.x - close_pt.x) * close_norm.x + (B.y - close_pt.y) * close_norm.y;
+
+  poly_box_large inside_poly;
+  construct_inside_polygon(close_t, &inside_poly);
+
+  float target_t = close_t;
+  float target_far = 0.0f;
+  float step = B.width / 64.0f;
+  for (float h = close_dist, a = cur_course; h >= 0.125f * B.width;) {
+    target_t -= step;
+    target_far += step * cosf(a);
+    h += step * sinf(a);
+    a = fmaxf(-(float)M_PI / 4.0f, a - step / B.width);
+  }
+  v2 target_pt = smooth_point(target_t);
+  v2 past_target = smooth_point(target_t - 3.0f * B.width);
+
+  float offset_incr = 0.0625f * B.width;
+
+  /*
+   * Track the nearest enemy head and the nearest enemy body point
+   * separately, each as one plain min-distance scan (no per-point
+   * polygon-offset search -- that's what caused the earlier
+   * instability, not the general idea of reacting to proximity).
+   * Deliberately no tight "collision imminent" distance gate here: a
+   * gate tight enough to only fire once contact is nearly certain
+   * doesn't leave enough frames for target_course to actually turn the
+   * loop away in time, especially while the loop itself is actively
+   * expanding outward -- confirmed against real play, not assumed.
+   * The smooth falloff + hard cap below is what keeps this from
+   * overreacting to merely-nearby, harmless enemies; it doesn't need
+   * a hard range cutoff on top of that to behave.
+   */
+  float enemy_head_d2 = 64.0f * 64.0f * B.width * B.width;
+  float enemy_body_d2 = 64.0f * 64.0f * B.width * B.width;
+
+  int ns = tdarray_length(gdata->data.snakes);
+  for (int i = 0; i < ns; i++) {
+    snake* sk = gdata->data.snakes + i;
+    if (sk->id == B.id) continue;
+
+    v2 eh = {sk->xx, sk->yy};
+    v2 ea = {eh.x + cosf(sk->ang) * B.width, eh.y + sinf(sk->ang) * B.width};
+
+    if (!point_in_poly_large(eh, &inside_poly)) {
+      float d1 = dist2(eh.x, eh.y, target_pt.x, target_pt.y);
+      float d2_ = dist2(ea.x, ea.y, target_pt.x, target_pt.y);
+      float dm = d1 < d2_ ? d1 : d2_;
+      if (dm < enemy_head_d2) enemy_head_d2 = dm;
+    }
+
+    /*
+     * Same idea as the head check above, but for the enemy's body --
+     * catches a snake trapping the loop by parking its body nearby
+     * while its head moves elsewhere (or leaves entirely), which was
+     * invisible to head_prox alone.
+     */
+    int pn = tdarray_length(sk->pts);
+    for (int j = 0; j < pn; j++) {
+      body_part* po = sk->pts + j;
+      if (po->dying) continue;
+      v2 pt = {po->xx, po->yy};
+      if (point_in_poly_large(pt, &inside_poly)) continue;
+
+      float dbp = dist2(pt.x, pt.y, target_pt.x, target_pt.y);
+      if (dbp < enemy_body_d2) enemy_body_d2 = dbp;
+    }
+  }
+
+  float dist_to_ctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
+  bool near_wall = (gdata->data.flux_grd - dist_to_ctr) < 1000.0f;
+  float wall_od = 0.0f;
+
+  if (near_wall) {
+    float view_ang = atan2f(gdata->data.view_yy - gdata->data.grd,
+                            gdata->data.view_xx - gdata->data.grd);
+    float bpw = BORDER_PT_RADIUS * 2.0f;
+    float brad = gdata->data.flux_grd + BORDER_PT_RADIUS;
+    float wall_off = 0.5f * (B.width + BORDER_PT_RADIUS);
+    bool offset_set = false;
+    float offset = 0.0f;
+    poly_box cpolbody;
+
+    for (int k = -2; k <= 2; k++) {
+      float wa = view_ang + (k * bpw) / gdata->data.flux_grd;
+      v2 wp = {gdata->data.grd + brad * cosf(wa),
+               gdata->data.grd + brad * sinf(wa)};
+
+      while (!offset_set ||
+             (wall_od >= -B.width && point_in_poly(wp, &cpolbody))) {
+        if (!offset_set) {
+          offset_set = true;
+        } else {
+          wall_od -= offset_incr;
+        }
+        offset = wall_off + wall_od;
+        body_danger_zone(offset, target_pt, close_norm, close_dist, past_target,
+                         close_pt, &cpolbody);
+      }
+    }
+  }
+
+  float enemy_head_dist = sqrtf(enemy_head_d2);
+
+  float target_course = cur_course + 0.25f;
+
+  float head_prox = -1.0f - (2.0f * target_far - enemy_head_dist) / B.width;
+  if (head_prox > 0)
+    head_prox = 0.125f * head_prox * head_prox;
+  else
+    head_prox = -0.500f * head_prox * head_prox;
+  /* In a dense crowd, the single nearest enemy head is often just close
+   * by from sheer density, not on an actual collision line -- without a
+   * floor here, that still forces target_course arbitrarily negative,
+   * which yanks the goal toward the center of the loop instead of
+   * continuing to circle. Cap the pull so a genuinely close call still
+   * gets a strong reaction, but bystanders can't override circling. */
+  head_prox = fmaxf(head_prox, -2.0f);
+  target_course = fminf(target_course, head_prox);
+
+  float enemy_body_dist = sqrtf(enemy_body_d2);
+
+  float body_prox = -1.0f - (2.0f * target_far - enemy_body_dist) / B.width;
+  if (body_prox > 0)
+    body_prox = 0.125f * body_prox * body_prox;
+  else
+    body_prox = -0.500f * body_prox * body_prox;
+  /* Same reasoning as head_prox's cap: a body segment merely nearby in a
+   * crowd shouldn't override circling, only one actually on the
+   * approach line should pull the target hard. */
+  body_prox = fmaxf(body_prox, -2.0f);
+  target_course = fminf(target_course, body_prox);
+
+  if (near_wall) {
+    float adj_wall = (wall_od - 0.0625f * B.width) / B.width;
+    target_course = fminf(target_course, target_course + adj_wall);
+  }
+
+  float tail_behind = B.bpts_len - close_t;
+  float allow_tail = B.width * 2.0f;
+  target_course =
+      fminf(target_course,
+            (tail_behind - allow_tail + (B.width - close_dist)) / B.width);
+
+  target_course =
+      fminf(target_course, (-0.5f * (close_dist - 4.0f * B.width)) / B.width);
+
+  target_course = fmaxf(target_course, (-0.75f * close_dist) / B.width);
+  target_course = fminf(target_course, 1.0f);
+
+  v2 goal_dir = {close_tang.x * cosf(target_course) -
+                     o * close_tang.y * sinf(target_course),
+                 close_tang.y * cosf(target_course) +
+                     o * close_tang.x * sinf(target_course)};
+  v2 goal = {B.x + goal_dir.x * 4.0f * B.width,
+             B.y + goal_dir.y * 4.0f * B.width};
+
+  if (fabsf(goal.x - B.goal.x) < 1000.0f &&
+      fabsf(goal.y - B.goal.y) < 1000.0f) {
+    B.goal.x = roundf(goal.x * 0.25f + B.goal.x * 0.75f);
+    B.goal.y = roundf(goal.y * 0.25f + B.goal.y * 0.75f);
+  } else {
+    B.goal = (v2){roundf(goal.x), roundf(goal.y)};
+  }
+}
+
 /* ======================================================================
  * Circle planner (stage 2)
  *
@@ -507,10 +855,11 @@ static void determine_circle_dir(void) {
 
 #define PL_MAX_OBS 384
 #define PL_MAX_HEADS 24
-#define PL_STEPS 16
+#define PL_STEPS 12
 #define PL_PHASE_A 5
-#define PL_EM_STEPS 8
-#define PL_ESC_STEPS 12
+#define PL_EM_STEPS 5
+#define PL_VETO_STEPS 8
+#define PL_ESC_STEPS 10
 #define PL_MAX_CAND 12
 #define PL_STEP_W 0.75f
 #define PL_HARD_MARGIN_W 0.35f
@@ -527,6 +876,10 @@ static void determine_circle_dir(void) {
 #define PL_GAP_MAX_W 4.0f
 #define PL_PURSUE_RANGE_W 16.0f
 #define PL_INT_CAP 8.0f
+#define PL_COMFORT_W 0.8f
+#define PL_COMFORT_INT 2.5f
+#define PL_ESC_RUN_MAX 24
+#define PL_ESC_COOLDOWN 45
 
 typedef struct {
   float x, y, r;
@@ -561,6 +914,8 @@ typedef struct {
   bool prev_valid;
   float esc_ang;
   bool esc_valid;
+  int esc_run;
+  int esc_cool;
 } pl_state;
 
 static pl_state P;
@@ -590,7 +945,7 @@ static void pl_collect(game_data* gdata) {
   P.heads_n = 0;
   int ns = tdarray_length(gdata->data.snakes);
 
-  float head_range = 40.0f * B.width;
+  float head_range = fminf(40.0f * B.width, 2400.0f);
   float head_r2 = head_range * head_range;
   for (int i = 0; i < ns; i++) {
     snake* s = gdata->data.snakes + i;
@@ -619,7 +974,7 @@ static void pl_collect(game_data* gdata) {
 
   static const float bands[3] = {32.0f, 16.0f, 8.0f};
   for (int b = 0; b < 3; b++) {
-    float rr = bands[b] * B.width;
+    float rr = fminf(bands[b] * B.width, 2000.0f - 400.0f * (float)b);
     float rr2 = rr * rr;
     bool overflow = false;
     P.obs_n = 0;
@@ -792,7 +1147,7 @@ static void pl_roll_spine(float course, float t0, float period, pl_roll* r) {
 }
 
 /* Breakout path: turn toward an absolute heading, then run straight. */
-static void pl_roll_dir(float heading, bool boost, pl_roll* r) {
+static void pl_roll_dir(float heading, bool boost, int steps, pl_roll* r) {
   float speed = boost ? PL_BOOST_SP : P.my_sp;
   float tpd = boost ? P.turn_per_d * (P.my_sp / PL_BOOST_SP) : P.turn_per_d;
   float x = B.x, y = B.y, ang = B.ang;
@@ -806,7 +1161,7 @@ static void pl_roll_dir(float heading, bool boost, pl_roll* r) {
   r->intercept = 0.0f;
   r->n = 0;
 
-  for (int k = 0; k < PL_ESC_STEPS; k++) {
+  for (int k = 0; k < steps && k < PL_STEPS; k++) {
     float da = clampf(wrap_pi(heading - ang), -max_turn, max_turn);
     ang += da;
     x += ds * cosf(ang);
@@ -916,6 +1271,25 @@ static void pl_plan(float c_geo, float c_floor, float t0, float period,
   pl_roll roll, best_roll;
   float best_score = -1e30f, best_c = c_cap;
   bool have = false;
+
+  /* The geometry course is what has always kept the loop; stick with it
+   * whenever it is comfortably safe, and only look for alternatives
+   * when it is not. */
+  pl_roll_spine(cand[0], t0, period, &roll);
+  if (roll.fail >= PL_STEPS && roll.clear >= PL_COMFORT_W &&
+      roll.intercept < PL_COMFORT_INT) {
+    out->course = cand[0];
+    out->mode = calm_mode;
+    out->path = roll;
+    out->has_path = true;
+    P.prev_course = cand[0];
+    P.prev_valid = true;
+    P.esc_valid = false;
+    P.esc_run = 0;
+    if (P.esc_cool > 0) P.esc_cool--;
+    return;
+  }
+
   for (int i = 0; i < nc; i++) {
     pl_roll_spine(cand[i], t0, period, &roll);
     float s = pl_score_spine(&roll, cand[i], c_cap, c_floor);
@@ -934,7 +1308,8 @@ static void pl_plan(float c_geo, float c_floor, float t0, float period,
 
   /* squeezed: look for a way out in any direction.  Boost is a last
    * resort: only used if no normal-speed escape is fully clear. */
-  if (best_roll.fail < PL_EM_STEPS) {
+  if (P.esc_cool > 0) P.esc_cool--;
+  if (P.esc_cool == 0 && best_roll.fail < PL_EM_STEPS) {
     float nb_score = -1e30f, nb_h = B.ang;
     float bo_score = -1e30f, bo_h = B.ang;
     bool nb_have = false, bo_have = false;
@@ -943,7 +1318,7 @@ static void pl_plan(float c_geo, float c_floor, float t0, float period,
       float h = wrap_pi(B.ang + (2.0f * (float)M_PI * (float)a) /
                                     (float)PL_ESC_HEADINGS);
       for (int bst = 0; bst < 2; bst++) {
-        pl_roll_dir(h, bst != 0, &esc_roll);
+        pl_roll_dir(h, bst != 0, PL_ESC_STEPS, &esc_roll);
         float s = pl_score_esc(&esc_roll, h, bst != 0);
         if (bst == 0) {
           if (!nb_have || s > nb_score) {
@@ -975,11 +1350,16 @@ static void pl_plan(float c_geo, float c_floor, float t0, float period,
       P.esc_ang = out->esc_ang;
       P.esc_valid = true;
       P.prev_valid = false;
+      if (++P.esc_run >= PL_ESC_RUN_MAX) {
+        P.esc_run = 0;
+        P.esc_cool = PL_ESC_COOLDOWN;
+      }
       return;
     }
   }
 
   P.esc_valid = false;
+  P.esc_run = 0;
   P.prev_course = best_c;
   P.prev_valid = true;
   out->course = best_c;
@@ -988,25 +1368,16 @@ static void pl_plan(float c_geo, float c_floor, float t0, float period,
   out->mode = (best_c >= c_cap - 0.06f) ? calm_mode : 1;
 }
 
-static void follow_circle_self(game_data* gdata) {
-  populate_pts(gdata);
-  determine_circle_dir();
+/* Loop geometry relative to our own body: where the closest body point
+ * is, its direction, and how far outward the head may drift. */
+typedef struct {
+  float close_t;
+  v2 tang;
+  float c_geo, c_floor;
+} pl_geom;
+
+static void pl_compute_geom(pl_geom* g) {
   int o = B.circle_dir;
-  g_bot_dbg.plan_n = 0;
-  g_bot_dbg.plan_mode = 0;
-
-  /*
-   * The spine projection below needs enough looped body (9
-   * body-widths) for a stable reference point.  Until then there's no
-   * loop to follow, so fall back to the same reactive dodging the
-   * forming stage uses (wall and enemy aware) and otherwise leave the
-   * goal where it is.
-   */
-  if (B.bpts_n < 3 || B.bpts_len < 9.0f * B.width) {
-    if (!check_collision(gdata)) check_encircle(gdata);
-    return;
-  }
-
   float close_t = closest_body_point();
   v2 close_pt = smooth_point(close_t);
   v2 close_next = smooth_point(close_t - B.width);
@@ -1037,7 +1408,14 @@ static void follow_circle_self(game_data* gdata) {
   c_geo = clampf(c_geo, PL_COURSE_MIN, 1.0f);
   c_floor = fminf(clampf(c_floor, PL_COURSE_MIN, 1.0f), c_geo);
 
-  /* planner inputs */
+  g->close_t = close_t;
+  g->tang = close_tang;
+  g->c_geo = c_geo;
+  g->c_floor = c_floor;
+}
+
+/* Per-frame inputs shared by the planner and the veto check. */
+static void pl_setup(game_data* gdata) {
   snake* me = find_me(gdata);
   float mamu = gdata->data.mamu > 0.0f ? gdata->data.mamu : 0.033f;
   float scang = me ? fmaxf(me->scang, 0.2f) : 1.0f;
@@ -1046,6 +1424,30 @@ static void follow_circle_self(game_data* gdata) {
   P.turn_per_d = (mamu * scang * spang) / (P.my_sp / 4.0f);
   P.ds = PL_STEP_W * B.width;
   pl_collect(gdata);
+}
+
+static void follow_circle_planner(game_data* gdata) {
+  populate_pts(gdata);
+  determine_circle_dir();
+  int o = B.circle_dir;
+  g_bot_dbg.plan_n = 0;
+  g_bot_dbg.plan_mode = 0;
+
+  /* Too little looped body for a stable spine reference: behave exactly
+   * like the original code did (it simply keeps its last goal). */
+  if (B.bpts_n < 3 || B.bpts_len < 9.0f * B.width) {
+    follow_circle_legacy(gdata);
+    return;
+  }
+
+  pl_geom geo;
+  pl_compute_geom(&geo);
+  float close_t = geo.close_t;
+  v2 close_tang = geo.tang;
+  float c_geo = geo.c_geo;
+  float c_floor = geo.c_floor;
+
+  pl_setup(gdata);
 
   pl_result res;
   pl_plan(c_geo, c_floor, close_t, close_t, &res);
@@ -1083,6 +1485,52 @@ static void follow_circle_self(game_data* gdata) {
   } else {
     B.goal = (v2){roundf(goal.x), roundf(goal.y)};
   }
+}
+
+
+/*
+ * Circle mode (set SBOT_CIRCLE_MODE at build time, or edit here):
+ *   0 = original circling logic, untouched
+ *   1 = original logic drives; the planner only steps in when the
+ *       original path is predicted to run into something (default)
+ *   2 = planner drives all the time
+ */
+#ifndef SBOT_CIRCLE_MODE
+#define SBOT_CIRCLE_MODE 1
+#endif
+
+static void follow_circle_hybrid(game_data* gdata) {
+  g_bot_dbg.plan_n = 0;
+  g_bot_dbg.plan_mode = 0;
+  follow_circle_legacy(gdata);
+  if (B.bpts_n < 3 || B.bpts_len < 9.0f * B.width) return;
+
+  pl_setup(gdata);
+  if (P.obs_n == 0 && P.heads_n == 0 && !P.wall_on) return;
+
+  /* the course the original logic just chose, relative to our body */
+  pl_geom geo;
+  pl_compute_geom(&geo);
+  float tang_ang = atan2f(geo.tang.y, geo.tang.x);
+  float goal_ang = atan2f(B.goal.y - B.y, B.goal.x - B.x);
+  float c_leg = (float)B.circle_dir * wrap_pi(goal_ang - tang_ang);
+  if (!isfinite(c_leg)) return;
+  c_leg = clampf(c_leg, PL_COURSE_MIN, PL_COURSE_MAX);
+
+  pl_roll r;
+  pl_roll_spine(c_leg, geo.close_t, geo.close_t, &r);
+  if (r.fail >= PL_VETO_STEPS) return; /* original path is clear */
+
+  follow_circle_planner(gdata);
+}
+
+static void follow_circle_self(game_data* gdata) {
+  if (SBOT_CIRCLE_MODE == 0)
+    follow_circle_legacy(gdata);
+  else if (SBOT_CIRCLE_MODE == 2)
+    follow_circle_planner(gdata);
+  else
+    follow_circle_hybrid(gdata);
 }
 
 static void to_circle(game_data* gdata) {

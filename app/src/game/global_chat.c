@@ -113,6 +113,41 @@ static global_chat_message
 
 static int global_chat_message_count = 0;
 
+/* ---------------------------------------------------------------------
+ * Notices (system messages, joined / left, errors). These never go into
+ * the chat feed: the newest one pops up as a short toast under the panel
+ * header, and the last GC_MAX_EVENTS are kept in the Players tab under
+ * "Activity".
+ * ------------------------------------------------------------------- */
+#define GC_MAX_EVENTS 30
+#define GC_TOAST_MS 4000LL
+#define GC_TOAST_FADE_MS 600LL
+
+typedef enum {
+    GC_EV_SYSTEM = 0,
+    GC_EV_JOIN,
+    GC_EV_LEAVE,
+    GC_EV_RECONNECT
+} gc_event_kind;
+
+typedef struct {
+    char name[GLOBAL_CHAT_NAME_LEN];
+    char text[GLOBAL_CHAT_TEXT_LEN > 96 ? 96 : GLOBAL_CHAT_TEXT_LEN];
+    char time_str[9];
+    int kind;
+} gc_event;
+
+static gc_event gc_events[GC_MAX_EVENTS];
+static int gc_event_count = 0;
+static long long gc_toast_until_ms = 0;
+
+/* Show "joined / left" and system notices (toast). */
+static bool gc_show_events = true;
+
+/* Set while our own just-typed message is added, so it is not counted as
+ * unread. */
+static bool gc_adding_own = false;
+
 static char global_chat_input[GLOBAL_CHAT_TEXT_LEN] = "";
 
 static void global_chat_panel_contents(
@@ -462,6 +497,57 @@ static void global_chat_try_connect(
     tenv* env
 );
 
+static void gc_push_event(const char* name, const char* text, int kind) {
+    long long now_ms = global_chat_now_ms();
+    gc_event* e;
+
+    /* "left" right before "joined" by the same player = a reconnect blip:
+     * fold the two into one "reconnected" entry. */
+    if (
+        kind == GC_EV_JOIN &&
+        gc_event_count > 0 &&
+        gc_events[gc_event_count - 1].kind == GC_EV_LEAVE &&
+        strcmp(gc_events[gc_event_count - 1].name, name) == 0
+    ) {
+        e = &gc_events[gc_event_count - 1];
+        e->kind = GC_EV_RECONNECT;
+    } else {
+        if (gc_event_count >= GC_MAX_EVENTS) {
+            memmove(
+                &gc_events[0], &gc_events[1],
+                sizeof(gc_event) * (GC_MAX_EVENTS - 1)
+            );
+            gc_event_count = GC_MAX_EVENTS - 1;
+        }
+
+        e = &gc_events[gc_event_count++];
+        e->kind = kind;
+    }
+
+    snprintf(e->name, sizeof(e->name), "%s", name);
+
+    if (e->kind == GC_EV_JOIN) {
+        snprintf(e->text, sizeof(e->text), "%s joined", name);
+    } else if (e->kind == GC_EV_LEAVE) {
+        snprintf(e->text, sizeof(e->text), "%s left", name);
+    } else if (e->kind == GC_EV_RECONNECT) {
+        snprintf(e->text, sizeof(e->text), "%s reconnected", name);
+    } else {
+        snprintf(e->text, sizeof(e->text), "%s", text);
+    }
+
+    time_t now = time(NULL);
+    struct tm local_tm;
+#ifdef _WIN32
+    localtime_s(&local_tm, &now);
+#else
+    localtime_r(&now, &local_tm);
+#endif
+    strftime(e->time_str, sizeof(e->time_str), "%H:%M", &local_tm);
+
+    gc_toast_until_ms = now_ms + GC_TOAST_MS;
+}
+
 static void global_chat_add_message(
     const char* name,
     const char* owner,
@@ -473,6 +559,23 @@ static void global_chat_add_message(
         text[0] == '\0'
     ) {
         return;
+    }
+
+    {
+        bool ev_system =
+            strcmp(name, "[SYSTEM]") == 0 ||
+            strcmp(name, "ZORO") == 0;
+        bool ev_join = strcmp(text, "joined public chat") == 0;
+        bool ev_left = strcmp(text, "left public chat") == 0;
+
+        if (ev_system || ev_join || ev_left) {
+            gc_push_event(
+                name, text,
+                ev_join ? GC_EV_JOIN :
+                ev_left ? GC_EV_LEAVE : GC_EV_SYSTEM
+            );
+            return;
+        }
     }
 
     if (
@@ -490,7 +593,9 @@ static void global_chat_add_message(
             GLOBAL_CHAT_MAX_MESSAGES - 1;
     }
 
-    gc_total_messages++;
+    if (!gc_adding_own) {
+        gc_total_messages++;
+    }
 
     global_chat_message* message =
         &global_chat_messages[
@@ -661,6 +766,8 @@ void global_chat_init(tenv* env) {
     global_chat_open = false;
 
     global_chat_message_count = 0;
+    gc_event_count = 0;
+    gc_toast_until_ms = 0;
 
     memset(
         global_chat_input,
@@ -1219,6 +1326,43 @@ void global_chat_draw(tenv* env) {
                 IM_COL32(255, 255, 255, 255), "Open"
             );
 
+            /* Unread badge (WhatsApp style) on the top-right corner of the
+             * card. Drawn on the foreground list so the window clip does
+             * not cut it off. */
+            {
+                unsigned long unread_n = gc_total_messages - gc_seen_messages;
+
+                if (unread_n > 0) {
+                    char ub[8];
+
+                    if (unread_n > 99) {
+                        snprintf(ub, sizeof(ub), "99+");
+                    } else {
+                        snprintf(ub, sizeof(ub), "%lu", unread_n);
+                    }
+
+                    ImDrawList* fdl =
+                        igGetForegroundDrawList_ViewportPtr(viewport);
+                    float bh = 22.0f;
+                    float bw = fmaxf(bh, gc_text_w(ub) + 12.0f);
+                    ImVec2 bmx = gc_v2(p.x + sz.x - 3.0f, p.y + 3.0f + bh);
+                    ImVec2 bmn2 = gc_v2(bmx.x - bw, p.y + 3.0f);
+
+                    ImDrawList_AddRectFilled(
+                        fdl, bmn2, bmx,
+                        IM_COL32(255, 59, 78, 255), bh * 0.5f, 0
+                    );
+                    ImDrawList_AddRect(
+                        fdl, bmn2, bmx,
+                        IM_COL32(36, 22, 64, 255), bh * 0.5f, 0, 2.0f
+                    );
+                    gc_text_center(
+                        fdl, bmn2, gc_v2(bw, bh),
+                        IM_COL32(255, 255, 255, 255), ub
+                    );
+                }
+            }
+
             /* Drag handle: the whole card. It MUST be submitted after the
              * Open button: when items overlap, ImGui gives the tap to the
              * first one submitted, so the Open button claims its own area
@@ -1320,12 +1464,14 @@ static void gc_send_text_ex(tenv* env, const char* text, const char* wire) {
         nickname = "Player";
     }
 
-    /* Show it immediately for the sender. */
+    /* Show it immediately for the sender (never counts as unread). */
+    gc_adding_own = true;
     global_chat_add_message(
         nickname,
         NULL,
         text
     );
+    gc_adding_own = false;
 
     /* Relay it to everyone else. */
     if (global_chat_net != NULL) {
@@ -1403,8 +1549,6 @@ static void gc_toggle_adjust(tenv* env, global_chat_adjust_mode mode) {
  * frame from global_chat_panel_contents(). */
 static ImFont* gc_emoji_font = NULL;
 
-/* Show "joined / left public chat" notices in the message list. */
-static bool gc_show_events = true;
 
 /* True once a finger/mouse drag scrolled a list since the last press, so
  * the release of that drag is not mistaken for a tap on a row. */
@@ -2228,6 +2372,50 @@ static int gc_player_cmp(const void* a, const void* b) {
 
 /* Roster list (Players tab): avatar, owner + name + emoji, score / server,
  * ping, YOU / SOS tags. Tap a row to highlight it. */
+/* Players tab footer: the last notices (system, joined, left), newest
+ * first. */
+static void gc_draw_activity(float u, float width) {
+    igDummy(gc_v2(1.0f, u * 0.5f));
+    gc_section("Activity", width, u);
+
+    if (gc_event_count <= 0) {
+        igTextDisabled("Nothing yet.");
+        return;
+    }
+
+    ImDrawList* dl = igGetWindowDrawList();
+    float lh = igGetTextLineHeight();
+    ImU32 dim = IM_COL32(150, 142, 185, 210);
+    ImU32 dimmer = IM_COL32(120, 112, 155, 200);
+
+    for (int i = gc_event_count - 1; i >= 0; i--) {
+        const gc_event* ev = &gc_events[i];
+        ImVec2 p;
+        igGetCursorScreenPos(&p);
+
+        ImU32 dot =
+            ev->kind == GC_EV_JOIN ? IM_COL32(125, 255, 176, 255) :
+            ev->kind == GC_EV_LEAVE ? IM_COL32(242, 77, 77, 255) :
+            ev->kind == GC_EV_RECONNECT ? IM_COL32(255, 204, 77, 255) :
+                                          IM_COL32(120, 210, 255, 255);
+
+        float tw = gc_text_w(ev->time_str);
+        float max_w = width - u * 1.4f - tw - u * 0.8f;
+        char tt[96];
+        gc_clip_text(tt, sizeof(tt), ev->text, max_w);
+
+        ImDrawList_AddCircleFilled(
+            dl, gc_v2(p.x + u * 0.5f, p.y + lh * 0.5f), u * 0.22f, dot, 10
+        );
+        ImDrawList_AddText_Vec2(dl, gc_v2(p.x + u * 1.2f, p.y), dim, tt, NULL);
+        ImDrawList_AddText_Vec2(
+            dl, gc_v2(p.x + width - tw, p.y), dimmer, ev->time_str, NULL
+        );
+
+        igDummy(gc_v2(width, lh + u * 0.3f));
+    }
+}
+
 static void gc_draw_players_list(
     tenv* env, float u, float width, const char* own_name
 ) {
@@ -3640,10 +3828,11 @@ static void global_chat_panel_contents(
         char nb[8];
 
         if (t == GC_TAB_CHAT && !on && unread > 0) {
-            snprintf(
-                nb, sizeof(nb), "%lu",
-                unread > 99 ? 99UL : unread
-            );
+            if (unread > 99) {
+                snprintf(nb, sizeof(nb), "99+");
+            } else {
+                snprintf(nb, sizeof(nb), "%lu", unread);
+            }
 
             gc_badge(dl, bmn, btn, u, nb, IM_COL32(255, 74, 94, 255));
         }
@@ -3777,6 +3966,53 @@ static void global_chat_panel_contents(
 
     if (adjusting) {
         content_bot -= done_h + u * 0.5f;
+    }
+
+    /* ---------- notice toast (system / joined / left) ---------- */
+    if (gc_show_events && gc_event_count > 0) {
+        long long left_ms = gc_toast_until_ms - global_chat_now_ms();
+
+        if (left_ms > 0) {
+            float a = 1.0f;
+
+            if (left_ms < GC_TOAST_FADE_MS) {
+                a = (float)left_ms / (float)GC_TOAST_FADE_MS;
+            }
+
+            const gc_event* ev = &gc_events[gc_event_count - 1];
+            ImU32 dot =
+                ev->kind == GC_EV_JOIN ? IM_COL32(125, 255, 176, 255) :
+                ev->kind == GC_EV_LEAVE ? IM_COL32(242, 77, 77, 255) :
+                ev->kind == GC_EV_RECONNECT ? IM_COL32(255, 204, 77, 255) :
+                                              IM_COL32(120, 210, 255, 255);
+
+            ImDrawList* tdl =
+                igGetForegroundDrawList_ViewportPtr(igGetMainViewport());
+            float tlh = igGetTextLineHeight();
+            float tw = (ws.x - rail_w) - pad * 2.0f;
+            float th = tlh + u * 0.6f;
+            ImVec2 tp = gc_v2(mx + pad, wp.y + head_h + u * 0.15f);
+
+            char tt[96];
+            gc_clip_text(tt, sizeof(tt), ev->text, tw - u * 2.4f);
+
+            ImDrawList_AddRectFilled(
+                tdl, tp, gc_add(tp, tw, th),
+                IM_COL32(36, 22, 64, (int)(235.0f * a)), th * 0.5f, 0
+            );
+            ImDrawList_AddRect(
+                tdl, tp, gc_add(tp, tw, th),
+                IM_COL32(190, 160, 255, (int)(110.0f * a)), th * 0.5f, 0, 1.0f
+            );
+            ImDrawList_AddCircleFilled(
+                tdl, gc_v2(tp.x + u * 0.9f, tp.y + th * 0.5f), u * 0.24f,
+                (dot & 0x00FFFFFFu) | ((ImU32)(255.0f * a) << 24), 10
+            );
+            ImDrawList_AddText_Vec2(
+                tdl, gc_v2(tp.x + u * 1.6f, tp.y + (th - tlh) * 0.5f),
+                IM_COL32(222, 236, 255, (int)(255.0f * a)), tt, NULL
+            );
+        }
     }
 
     /* ---------- header ---------- */
@@ -4145,6 +4381,7 @@ static void global_chat_panel_contents(
         igDummy(gc_v2(1.0f, u * 0.2f));
 
         gc_draw_players_list(env, u, av.x, own_name);
+        gc_draw_activity(u, av.x);
 
         gc_end_scroll_child(
             gc_v2(area_x, content_top), area_h,
@@ -4957,6 +5194,9 @@ void global_chat_destroy(tenv* env) {
 
     global_chat_message_count =
         0;
+
+    gc_event_count = 0;
+    gc_toast_until_ms = 0;
 
     memset(
         global_chat_input,

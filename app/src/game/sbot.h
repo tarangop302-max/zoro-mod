@@ -16,7 +16,6 @@ void sbot_go(tenv* env);
 void sbot_destroy(tenv* env);
 
 #define SBOT_DBG_MAX_COLL 64
-#define SBOT_DBG_PLAN 16
 
 typedef struct {
   bool  active;
@@ -47,12 +46,6 @@ typedef struct {
   int   encircle_state;
   float encircle_r1;
   float encircle_r2;
-
-  /* circle planner: 0 calm, 1 pressured, 2 expansion locked, 3 breakout */
-  int   plan_mode;
-  int   plan_n;
-  float plan_x[SBOT_DBG_PLAN];
-  float plan_y[SBOT_DBG_PLAN];
 } sbot_dbg;
 
 extern sbot_dbg g_bot_dbg;

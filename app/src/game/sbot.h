@@ -46,6 +46,14 @@ typedef struct {
   int   encircle_state;
   float encircle_r1;
   float encircle_r2;
+
+  /* stage-2 (coil) threat debug */
+  int   thr_kind;               /* 0 none, 1 body, 2 head arrival, 3 head-on */
+  float thr_ex, thr_ey;         /* threat source */
+  float thr_qx, thr_qy;         /* point on my path it threatens */
+  int   arc_n;
+  float arc_x[12], arc_y[12];   /* predicted arc */
+  float safe_lim;
 } sbot_dbg;
 
 extern sbot_dbg g_bot_dbg;

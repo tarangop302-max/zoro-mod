@@ -44,6 +44,7 @@ typedef struct {
     char owner[GLOBAL_CHAT_NAME_LEN];
     char text[GLOBAL_CHAT_TEXT_LEN];
     char time_str[9]; /* "HH:MM:SS\0" */
+    unsigned long seq; /* unread sequence number; 0 = our own message */
 } global_chat_message;
 
 static bool global_chat_initialized = false;
@@ -147,6 +148,15 @@ static bool gc_show_events = true;
 /* Set while our own just-typed message is added, so it is not counted as
  * unread. */
 static bool gc_adding_own = false;
+
+/* Discord-style "NEW MESSAGES" divider: set when the Chat tab is opened
+ * with unread messages, placed before the first message whose seq is
+ * greater than gc_divider_after, and cleared as soon as the player leaves
+ * the Chat tab or collapses the panel. */
+static bool gc_chat_viewing = false;
+static bool gc_divider_active = false;
+static bool gc_divider_scroll = false;
+static unsigned long gc_divider_after = 0;
 
 static char global_chat_input[GLOBAL_CHAT_TEXT_LEN] = "";
 
@@ -601,6 +611,8 @@ static void global_chat_add_message(
         &global_chat_messages[
             global_chat_message_count
         ];
+
+    message->seq = gc_adding_own ? 0UL : gc_total_messages;
 
     strncpy(
         message->name,
@@ -1266,6 +1278,8 @@ void global_chat_draw(tenv* env) {
 
         if (!global_chat_open) {
             /* ---- collapsed card: "TEAM CHAT" + Open ---- */
+            gc_chat_viewing = false;
+            gc_divider_active = false;
             ImDrawList* dl = igGetWindowDrawList();
             ImVec2 p = live_pos;
             ImVec2 sz = live_size;
@@ -2998,6 +3012,8 @@ static void gc_draw_messages(
     char prev_hm[8] = "";
     const char* prev_name = NULL;
     bool prev_normal = false;
+    bool divider_drawn = false;
+    bool divider_scrolled = false;
 
     for (int i = 0; i < global_chat_message_count; i++) {
         global_chat_message* m = &global_chat_messages[i];
@@ -3007,6 +3023,50 @@ static void gc_draw_messages(
             own_name != NULL &&
             own_name[0] != '\0' &&
             strcmp(m->name, own_name) == 0;
+
+        if (
+            gc_divider_active &&
+            !divider_drawn &&
+            m->seq > gc_divider_after
+        ) {
+            divider_drawn = true;
+
+            ImVec2 dp;
+            igGetCursorScreenPos(&dp);
+
+            const char* dtxt = "NEW MESSAGES";
+            float dtw = gc_text_w(dtxt);
+            float dh = lh + u * 0.7f;
+            float dmid = dp.y + dh * 0.5f;
+            float gap = u * 0.7f;
+            float cx = dp.x + w * 0.5f;
+            ImU32 dcol = IM_COL32(242, 120, 120, 255);
+            ImU32 lcol = IM_COL32(242, 120, 120, 110);
+
+            ImDrawList_AddLine(
+                dl, gc_v2(dp.x + pad_x * 0.5f, dmid),
+                gc_v2(cx - dtw * 0.5f - gap, dmid), lcol, 1.0f
+            );
+            ImDrawList_AddLine(
+                dl, gc_v2(cx + dtw * 0.5f + gap, dmid),
+                gc_v2(dp.x + w - pad_x * 0.5f, dmid), lcol, 1.0f
+            );
+            ImDrawList_AddText_Vec2(
+                dl, gc_v2(cx - dtw * 0.5f, dp.y + (dh - lh) * 0.5f),
+                dcol, dtxt, NULL
+            );
+
+            igDummy(gc_v2(w, dh));
+
+            if (gc_divider_scroll) {
+                /* Jump so the divider sits near the top of the view. */
+                igSetScrollHereY(0.08f);
+                gc_divider_scroll = false;
+                divider_scrolled = true;
+            }
+
+            prev_normal = false;
+        }
 
         char hm[8];
         snprintf(hm, sizeof(hm), "%.5s", m->time_str);
@@ -3223,6 +3283,7 @@ static void gc_draw_messages(
     gc_draw_sos_cards(u, avail.x, own_name);
 
     if (
+        !divider_scrolled &&
         global_chat_message_count != last_seen_message_count &&
         (was_at_bottom || last_seen_message_count == 0)
     ) {
@@ -3950,7 +4011,23 @@ static void global_chat_panel_contents(
     }
 
     if (gc_tab == GC_TAB_CHAT) {
+        if (!gc_chat_viewing) {
+            /* Chat just came into view: anything unread gets a divider. */
+            gc_chat_viewing = true;
+
+            if (gc_total_messages > gc_seen_messages) {
+                gc_divider_active = true;
+                gc_divider_scroll = true;
+                gc_divider_after = gc_seen_messages;
+            } else {
+                gc_divider_active = false;
+            }
+        }
+
         gc_seen_messages = gc_total_messages;
+    } else {
+        gc_chat_viewing = false;
+        gc_divider_active = false;
     }
 
     /* ---------- main area geometry ---------- */

@@ -54,6 +54,12 @@ typedef struct {
   int   arc_n;
   float arc_x[12], arc_y[12];   /* predicted arc */
   float safe_lim;
+
+  /* coil zones: tier 1 free / 2 steady push / 3 react */
+  int   zone_tier;
+  float zone_ax, zone_ay;
+  float zone_cx, zone_cy, zone_a, zone_b;     /* red zone   */
+  float outer_cx, outer_cy, outer_a, outer_b; /* outer oval */
 } sbot_dbg;
 
 extern sbot_dbg g_bot_dbg;

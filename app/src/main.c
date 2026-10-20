@@ -763,24 +763,8 @@ void trender(tenv* env) {
     );
 
 
-    if (
-        bg_preview_visible(
-            env
-        ) &&
-
-        gdata->curr_screen ==
-            SETTINGS
-    ) {
-
-      draw_bg_preview_blur(
-          env,
-
-          usr->usrs
-              .performance_mode
-              ? 0.55f
-              : 1.0f
-      );
-    }
+    // Lobby Settings is now a popup over the live preview game (like the
+    // Controls screen), so the preview is no longer blurred behind it.
 
     // Same real (multi-tap, not just a dark scrim) blur used behind the
     // Settings screen, reused here once the death popup is about to

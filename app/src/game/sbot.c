@@ -47,11 +47,29 @@ sbot_dbg g_bot_dbg;
 #define SMALL_ENEMY_FRAC 0.2f         /* heads smaller than this x my score are ignored */
 #define HEAD_LEGACY_REACH_W 5.0f      /* old head distance rule: max reach (emergency only) */
 #define BODY_LEGACY_REACH_W 2.0f      /* old body distance rule: max reach, so edges can touch */
-#define SAFE_RELAX 0.1f               /* how fast the limit relaxes (tightens instantly) */
+#define SAFE_RELAX 0.2f               /* how fast the limit relaxes (tightens instantly) */
 #define EXPAND_BONUS 0.08f            /* extra outward turn when all clear (0 = off) */
 #define BOOST_URGENT_M 0.0f           /* boost only if the enemy would arrive first */
 #define BOOST_OK_M 1.5f               /* boost must restore at least this margin */
 #define BOOST_HOLD_FRAMES 6
+
+/*
+ * Three-tier coil zones (all in body-widths, so they scale with size/zoom).
+ * Both zones are ovals oriented along the full-bulge direction: my loop
+ * tangent rotated outward by ZONE_AXIS_COURSE.
+ *   tier 1: nobody inside the big outer oval A  -> full outward push
+ *   tier 2: someone in A but nobody in red zone Z -> steady moderate push
+ *   tier 3: someone inside Z                      -> react (body/head logic)
+ * Head-on snakes keep their own arrival-time check in every tier.
+ */
+#define ZONE_AXIS_COURSE 0.5f   /* rad, outward from the loop tangent */
+#define ZONE_FWD_W 2.5f         /* red zone centre, ahead of the head */
+#define ZONE_A_W 4.5f           /* red zone half-length               */
+#define ZONE_B_W 3.0f           /* red zone half-width                */
+#define OUTER_FWD_W 4.0f        /* outer oval centre, ahead of head   */
+#define OUTER_A_W 9.0f          /* outer oval half-length (~2x red)   */
+#define OUTER_B_W 6.0f          /* outer oval half-width  (~2x red)   */
+#define TIER2_COURSE 0.45f      /* outward course cap while in tier 2 */
 
 #define MAX_BODY_PTS 8192
 #define MAX_HULL_PTS 32
@@ -683,7 +701,18 @@ static float margin_to_lim(float m, float hold, float free_m, float neg_slope) {
   return fmaxf(-2.0f, (m - hold) * neg_slope);
 }
 
+static inline bool in_ellipse(float px, float py, float cx, float cy,
+                              float ux, float uy, float a, float b) {
+  float dx = px - cx, dy = py - cy;
+  float u = dx * ux + dy * uy, v = -dx * uy + dy * ux;
+  return (u * u) / (a * a) + (v * v) / (b * b) <= 1.0f;
+}
+
 typedef struct {
+  int tier;        /* 1 free, 2 steady push, 3 react                   */
+  float ax, ay;    /* zone axis (unit)                                 */
+  float zc_x, zc_y, za, zb;  /* red zone                               */
+  float oc_x, oc_y, oa, ob;  /* outer oval                             */
   float lim;       /* combined course limit (lower = tighten harder)   */
   float m_urgent;  /* worst head arrival margin                        */
   float te_worst;  /* enemy arrival time at that worst sample          */
@@ -704,7 +733,8 @@ typedef struct {
  * outward this frame.
  */
 static void scan_threats(game_data* gdata, const poly_box_large* inside,
-                         v2 target_pt, v2 close_norm, threat_res* R) {
+                         v2 target_pt, v2 close_norm, v2 close_tang, int o,
+                         threat_res* R) {
   R->lim = LIM_FREE;
   R->m_urgent = 1e9f;
   R->te_worst = 0.0f;
@@ -729,14 +759,64 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
   float path_len = R->s[PATH_N];
   float v_me = fmaxf(B.speed_mult * SPEED_BASE, SPEED_BASE);
 
+  /* ---- zones and tier ---------------------------------------------- */
+  float zcs = cosf(ZONE_AXIS_COURSE), zsn = sinf(ZONE_AXIS_COURSE);
+  v2 zax = {close_tang.x * zcs - o * close_tang.y * zsn,
+            close_tang.y * zcs + o * close_tang.x * zsn};
+  R->ax = zax.x;
+  R->ay = zax.y;
+  R->zc_x = B.x + zax.x * ZONE_FWD_W * B.width;
+  R->zc_y = B.y + zax.y * ZONE_FWD_W * B.width;
+  R->za = ZONE_A_W * B.width;
+  R->zb = ZONE_B_W * B.width;
+  R->oc_x = B.x + zax.x * OUTER_FWD_W * B.width;
+  R->oc_y = B.y + zax.y * OUTER_FWD_W * B.width;
+  R->oa = OUTER_A_W * B.width;
+  R->ob = OUTER_B_W * B.width;
+  float outer_reach = (OUTER_FWD_W + OUTER_A_W + 1.0f) * B.width;
+  float outer_reach2 = outer_reach * outer_reach;
+
+  int ns = tdarray_length(gdata->data.snakes);
+  int tier = 1;
+  for (int i = 0; i < ns && tier < 3; i++) {
+    snake* sk = gdata->data.snakes + i;
+    if (sk->id == B.id || sk->dead) continue;
+    float er = snake_width(sk->sc) * 0.5f;
+    v2 eh = {sk->xx, sk->yy};
+    if (!point_in_poly_large(eh, inside)) {
+      if (in_ellipse(eh.x, eh.y, R->zc_x, R->zc_y, zax.x, zax.y, R->za + er,
+                     R->zb + er))
+        tier = 3;
+      else if (in_ellipse(eh.x, eh.y, R->oc_x, R->oc_y, zax.x, zax.y,
+                          R->oa + er, R->ob + er))
+        tier = 2;
+    }
+    int pn = tdarray_length(sk->pts);
+    for (int j = 0; j < pn && tier < 3; j++) {
+      body_part* po = sk->pts + j;
+      if (po->dying) continue;
+      if (dist2(B.x, B.y, po->xx, po->yy) > outer_reach2) continue;
+      v2 pt = {po->xx, po->yy};
+      if (point_in_poly_large(pt, inside)) continue;
+      if (in_ellipse(pt.x, pt.y, R->zc_x, R->zc_y, zax.x, zax.y, R->za + er,
+                     R->zb + er))
+        tier = 3;
+      else if (tier < 2 &&
+               in_ellipse(pt.x, pt.y, R->oc_x, R->oc_y, zax.x, zax.y,
+                          R->oa + er, R->ob + er))
+        tier = 2;
+    }
+  }
+  R->tier = tier;
+  bool react = (tier == 3);
+
   /* ---- 1) body clearance ------------------------------------------- */
   float reach = path_len + 10.0f * B.width;
   float reach2 = reach * reach;
   float bc_out = 1e9f, bc_in = 1e9f, bc_best = 1e9f;
   v2 b_src = {0, 0}, b_q = {0, 0};
 
-  int ns = tdarray_length(gdata->data.snakes);
-  for (int i = 0; i < ns; i++) {
+  for (int i = 0; react && i < ns; i++) {
     snake* sk = gdata->data.snakes + i;
     if (sk->id == B.id || sk->dead) continue;
     float er = snake_width(sk->sc) * 0.5f;
@@ -747,6 +827,9 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
       v2 pt = {po->xx, po->yy};
       if (dist2(B.x, B.y, pt.x, pt.y) > reach2) continue;
       if (point_in_poly_large(pt, inside)) continue;
+      if (!in_ellipse(pt.x, pt.y, R->oc_x, R->oc_y, zax.x, zax.y, R->oa + er,
+                      R->ob + er))
+        continue;
 
       float md2 = 1e30f;
       int kmin = 0;
@@ -813,11 +896,15 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
     bool in_sector =
         ang_out >= 0.0f && ang_out <= HEAD_SECTOR_DEG * (float)M_PI / 180.0f;
     float head_free = in_sector ? HEAD_FREE_M : HEAD_FREE_OUT_M;
+    bool do_head =
+        react && in_ellipse(eh.x, eh.y, R->oc_x, R->oc_y, zax.x, zax.y,
+                            R->oa + er, R->ob + er);
 
     for (int k = 0; k <= PATH_N; k++) {
       v2 q = R->q[k];
       float tm = R->s[k] / v_me;
 
+      if (do_head) {
       /* 2) time to reach, including the turn it needs to face the point */
       float dq = sqrtf(dist2(q.x, q.y, eh.x, eh.y));
       float d_reach = fmaxf(0.0f, dq - er - B.radius);
@@ -834,6 +921,7 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
         m_head = m;
         h_te = te;
         h_s = R->s[k];
+      }
       }
 
       /* 3) straight along its heading, worst case boost */
@@ -860,6 +948,7 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
       margin_to_lim(m_on, HEADON_HOLD_M, HEADON_FREE_M, HEADON_NEG_SLOPE);
 
   R->lim = fminf(lim_body, fminf(lim_head, lim_on));
+  if (tier == 2) R->lim = fminf(R->lim, TIER2_COURSE);
   if (m_on < m_head) {
     R->m_urgent = m_on;
     R->te_worst = o_te;
@@ -870,7 +959,7 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
     R->s_worst = h_s;
   }
 
-  if (R->lim < LIM_FREE) {
+  if (R->lim < LIM_FREE && !(tier == 2 && R->lim == TIER2_COURSE)) {
     if (R->lim == lim_on && lim_on < LIM_FREE) {
       R->kind = 3;
       R->tx = o_src.x; R->ty = o_src.y; R->qx = o_q.x; R->qy = o_q.y;
@@ -1024,9 +1113,9 @@ static void follow_circle_self(game_data* gdata) {
   /* New: predicted-arc body clearance, head time-to-reach, head-on check.
    * Tightens instantly, relaxes slowly (no flip-flopping). */
   threat_res th;
-  scan_threats(gdata, &inside_poly, target_pt, close_norm, &th);
-  if (th.lim < B.safe_lim)
-    B.safe_lim = th.lim;
+  scan_threats(gdata, &inside_poly, target_pt, close_norm, close_tang, o, &th);
+  if (th.lim < B.safe_lim || th.tier == 1)
+    B.safe_lim = th.lim; /* tighten at once; free space snaps back to full push */
   else
     B.safe_lim += (th.lim - B.safe_lim) * SAFE_RELAX;
   float clear_f = clampf(B.safe_lim, 0.0f, 1.0f);
@@ -1103,6 +1192,17 @@ static void follow_circle_self(game_data* gdata) {
   }
 
   g_bot_dbg.safe_lim = B.safe_lim;
+  g_bot_dbg.zone_tier = th.tier;
+  g_bot_dbg.zone_ax = th.ax;
+  g_bot_dbg.zone_ay = th.ay;
+  g_bot_dbg.zone_cx = th.zc_x;
+  g_bot_dbg.zone_cy = th.zc_y;
+  g_bot_dbg.zone_a = th.za;
+  g_bot_dbg.zone_b = th.zb;
+  g_bot_dbg.outer_cx = th.oc_x;
+  g_bot_dbg.outer_cy = th.oc_y;
+  g_bot_dbg.outer_a = th.oa;
+  g_bot_dbg.outer_b = th.ob;
   g_bot_dbg.thr_kind = th.kind;
   g_bot_dbg.thr_ex = th.tx;
   g_bot_dbg.thr_ey = th.ty;

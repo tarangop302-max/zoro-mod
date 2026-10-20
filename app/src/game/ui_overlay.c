@@ -1511,6 +1511,28 @@ void ui_overlay(tenv* env) {
           IM_COL32(255, 40, 40, 255), 12);
       }
 
+      /* 6a. coil zones: outer oval (yellow) and red zone (red) */
+      if (g_bot_dbg.arc_n > 1) {
+        for (int _e = 0; _e < 2; _e++) {
+          float ecx = _e ? g_bot_dbg.zone_cx : g_bot_dbg.outer_cx;
+          float ecy = _e ? g_bot_dbg.zone_cy : g_bot_dbg.outer_cy;
+          float ea_ = _e ? g_bot_dbg.zone_a : g_bot_dbg.outer_a;
+          float eb_ = _e ? g_bot_dbg.zone_b : g_bot_dbg.outer_b;
+          ImU32 ecol = _e ? IM_COL32(255, 60, 60, 200)
+                          : IM_COL32(255, 220, 0, 110);
+          ImVec2 eprev = {0.0f, 0.0f};
+          for (int _k = 0; _k <= 32; _k++) {
+            float eang = (float)_k / 32.0f * 6.2831853f;
+            float lu = ea_ * cosf(eang), lv = eb_ * sinf(eang);
+            float wx = ecx + lu * g_bot_dbg.zone_ax - lv * g_bot_dbg.zone_ay;
+            float wy = ecy + lu * g_bot_dbg.zone_ay + lv * g_bot_dbg.zone_ax;
+            ImVec2 ecur = {W2SX(wx), W2SY(wy)};
+            if (_k > 0) ImDrawList_AddLine(bdl, eprev, ecur, ecol, 1.5f);
+            eprev = ecur;
+          }
+        }
+      }
+
       /* 6b. coil: predicted arc (cyan) + the threat it reacts to */
       if (g_bot_dbg.arc_n > 1) {
         for (int _i = 0; _i + 1 < g_bot_dbg.arc_n; _i++)
@@ -1569,7 +1591,7 @@ void ui_overlay(tenv* env) {
       float badge_y = mhh2 * 0.08f;
       ImDrawList_AddRectFilled(bdl,
         (ImVec2){badge_x - 6, badge_y - 4},
-        (ImVec2){badge_x + 170, badge_y + 46},
+        (ImVec2){badge_x + 170, badge_y + 68},
         IM_COL32(0,0,0,160), 4.0f, 0);
       ImDrawList_AddText_FontPtr(bdl, NULL, 18.0f,
         (ImVec2){badge_x, badge_y}, stage_col, stage_lbl, NULL, 0, NULL);
@@ -1578,6 +1600,16 @@ void ui_overlay(tenv* env) {
                                          : IM_COL32(160,160,160,180);
       ImDrawList_AddText_FontPtr(bdl, NULL, 16.0f,
         (ImVec2){badge_x, badge_y + 24}, accel_col, accel_lbl, NULL, 0, NULL);
+      if (g_bot_dbg.arc_n > 1) {
+        const char* tier_lbl = g_bot_dbg.zone_tier == 3 ? "  zone: REACT"
+                             : g_bot_dbg.zone_tier == 2 ? "  zone: push"
+                             :                            "  zone: free";
+        ImU32 tier_col = g_bot_dbg.zone_tier == 3 ? IM_COL32(255, 80, 80, 255)
+                       : g_bot_dbg.zone_tier == 2 ? IM_COL32(255, 220, 50, 255)
+                       :                            IM_COL32(80, 255, 120, 255);
+        ImDrawList_AddText_FontPtr(bdl, NULL, 16.0f,
+          (ImVec2){badge_x, badge_y + 44}, tier_col, tier_lbl, NULL, 0, NULL);
+      }
 
 #undef PULSE
 #undef W2SX

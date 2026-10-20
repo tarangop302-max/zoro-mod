@@ -96,7 +96,8 @@ void ui_controls(tenv* env) {
           igGetContentRegionAvail(&avail);
           float half_w = (avail.x - style->ItemSpacing.x) / 2.0f;
 
-          if (!usrs->ctrl_mode_trackpad) {
+          const bool joy_active = !usrs->ctrl_mode_trackpad;
+          if (joy_active) {
             igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.168f, 0.468f, 0.768f, 1.0f});
             igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0.268f, 0.568f, 0.868f, 1.0f});
             igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0.068f, 0.368f, 0.668f, 1.0f});
@@ -104,11 +105,12 @@ void ui_controls(tenv* env) {
           if (igButton("Joystick", (ImVec2){half_w, 0.0f})) {
             usrs->ctrl_mode_trackpad = false;
           }
-          if (!usrs->ctrl_mode_trackpad) igPopStyleColor(3);
+          if (joy_active) igPopStyleColor(3);
 
           igSameLine(0, -1);
 
-          if (usrs->ctrl_mode_trackpad) {
+          const bool arrow_active = usrs->ctrl_mode_trackpad;
+          if (arrow_active) {
             igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.068f, 0.568f, 0.368f, 1.0f});
             igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0.168f, 0.668f, 0.468f, 1.0f});
             igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0.0f, 0.468f, 0.268f, 1.0f});
@@ -116,7 +118,7 @@ void ui_controls(tenv* env) {
           if (igButton("Arrow", (ImVec2){half_w, 0.0f})) {
             usrs->ctrl_mode_trackpad = true;
           }
-          if (usrs->ctrl_mode_trackpad) igPopStyleColor(3);
+          if (arrow_active) igPopStyleColor(3);
         }
         igSpacing();
 #endif
@@ -133,7 +135,8 @@ void ui_controls(tenv* env) {
         {
           ImVec2 avail;
           igGetContentRegionAvail(&avail);
-          if (swapped) {
+          const bool swap_pushed = swapped;
+          if (swap_pushed) {
             igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.30f, 0.55f, 0.88f, 0.65f});
             igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0.40f, 0.65f, 0.98f, 0.75f});
             igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0.20f, 0.45f, 0.78f, 0.80f});
@@ -143,7 +146,7 @@ void ui_controls(tenv* env) {
             usrs->ctrl_swap_sides = !usrs->ctrl_swap_sides;
             swapped = usrs->ctrl_swap_sides;
           }
-          if (swapped) igPopStyleColor(3);
+          if (swap_pushed) igPopStyleColor(3);
         }
         igSpacing();
 

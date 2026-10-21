@@ -193,6 +193,8 @@ static const char gc_qm_tag[GC_QM_COUNT][GC_QM_TAG_LEN + 1] = {
 static char gc_qm_label[GC_QM_COUNT][GC_QM_LABEL_LEN];
 static char gc_qm_text[GC_QM_COUNT][GC_QM_TEXT_LEN];
 static bool gc_qm_sound = true;
+/* SOS beep on/off (saved in the same quick_msgs.txt as "sos_sound="). */
+static bool gc_sos_sound = true;
 static bool gc_qm_loaded = false;
 
 static void gc_qm_defaults(void) {
@@ -230,6 +232,7 @@ static void gc_qm_save(void) {
     }
 
     fprintf(f, "sound=%d\n", gc_qm_sound ? 1 : 0);
+    fprintf(f, "sos_sound=%d\n", gc_sos_sound ? 1 : 0);
 
     for (int i = 0; i < GC_QM_COUNT; i++) {
         char l[GC_QM_LABEL_LEN];
@@ -284,6 +287,11 @@ static void gc_qm_ensure_loaded(void) {
             continue;
         }
 
+        if (strncmp(line, "sos_sound=", 10) == 0) {
+            gc_sos_sound = line[10] != '0';
+            continue;
+        }
+
         if (slot >= GC_QM_COUNT) {
             break;
         }
@@ -312,6 +320,18 @@ static void gc_play_quick_sound(int id) {
     (void)id;
 #endif
 }
+
+/* SOS beep. kind 0 = urgent alert (a teammate just sent SOS),
+ * kind 1 = short confirmation (we sent / are testing our own). */
+static void gc_play_sos_beep(int kind) {
+#ifdef ANDROID
+    android_jni_play_sos_beep(kind);
+#else
+    (void)kind;
+#endif
+}
+
+static void gc_sos_alert_tick(const char* own_name);
 
 /* =====================================================================
  * TEAM CHAT "Tabbed Hub" look -- small drawing helpers.
@@ -967,6 +987,27 @@ void global_chat_update(tenv* env) {
         ] = '\0';
     }
 
+    /* Beep when a teammate newly turns SOS on. */
+    {
+        static float sos_alert_timer = 0.0f;
+        sos_alert_timer += 1.0f / 60.0f;
+
+        if (sos_alert_timer >= 0.25f) {
+            sos_alert_timer = 0.0f;
+
+            const char* own = NULL;
+
+            if (
+                env != NULL && env->usr != NULL &&
+                env->usr->usrs.nickname[0] != '\0'
+            ) {
+                own = env->usr->usrs.nickname;
+            }
+
+            gc_sos_alert_tick(own);
+        }
+    }
+
     /*
      * Broadcast our own position roughly twice a second
      * while actually playing, so other Public Chat players
@@ -1538,6 +1579,10 @@ static void gc_toggle_sos(void) {
         global_chat_set_sos(
             global_chat_now_ms() + 5LL * 60LL * 1000LL
         );
+
+        if (gc_sos_sound) {
+            gc_play_sos_beep(1);
+        }
     }
 }
 
@@ -2088,6 +2133,55 @@ static int gc_others_sos_count(const char* own_name) {
     }
 
     return count;
+}
+
+/* Called ~4x/second. Plays the SOS alert beep once for each teammate
+ * whose SOS has just turned on (not repeatedly while it stays on). */
+static void gc_sos_alert_tick(const char* own_name) {
+    static char prev[GC_MAX_LOCS][32];
+    static int prev_n = 0;
+
+    gc_qm_ensure_loaded();
+
+    gc_loc locs[GC_MAX_LOCS];
+    int n = gc_load_locs(locs);
+
+    char now[GC_MAX_LOCS][32];
+    int now_n = 0;
+    bool fresh = false;
+
+    for (int i = 0; i < n; i++) {
+        if (!locs[i].sos) {
+            continue;
+        }
+
+        if (own_name != NULL && strcmp(own_name, locs[i].name) == 0) {
+            continue;
+        }
+
+        snprintf(now[now_n], sizeof(now[now_n]), "%s", locs[i].name);
+        now_n++;
+
+        bool was_on = false;
+
+        for (int j = 0; j < prev_n; j++) {
+            if (strcmp(prev[j], locs[i].name) == 0) {
+                was_on = true;
+                break;
+            }
+        }
+
+        if (!was_on) {
+            fresh = true;
+        }
+    }
+
+    memcpy(prev, now, sizeof(prev));
+    prev_n = now_n;
+
+    if (fresh && gc_sos_sound) {
+        gc_play_sos_beep(0);
+    }
 }
 
 /* Small round-cornered count badge on the top-right of a rail button. */
@@ -4612,7 +4706,33 @@ static void global_chat_panel_contents(
         );
 
         igSetCursorScreenPos(p);
-        igDummy(gc_v2(av.x, bh + u * 0.7f));
+        igDummy(gc_v2(av.x, bh + u * 0.5f));
+
+        /* SOS beep on/off (tap while turning on to hear a test beep). */
+        {
+            ImVec2 bp;
+            igGetCursorScreenPos(&bp);
+
+            float tbh = u * 2.3f;
+
+            if (
+                gc_pill_button(
+                    "##gc_sos_sound", bp, gc_v2(av.x, tbh),
+                    gc_sos_sound ? "SOS BEEP: ON" : "SOS BEEP: OFF",
+                    gc_sos_sound, u
+                )
+            ) {
+                gc_sos_sound = !gc_sos_sound;
+                gc_qm_save();
+
+                if (gc_sos_sound) {
+                    gc_play_sos_beep(0);
+                }
+            }
+
+            igSetCursorScreenPos(bp);
+            igDummy(gc_v2(av.x, tbh + u * 0.6f));
+        }
 
         gc_section("Teammates asking for help", av.x, u);
 

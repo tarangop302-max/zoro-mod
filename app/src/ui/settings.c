@@ -79,7 +79,7 @@ static void popup_touch_scroll(tenv* env, int idx) {
   last_y = t->y;
 }
 
-/* Shared with controls.c so its tabs can drag-scroll on touch screens. */
+/* Shared with controls.c so its panel can drag-scroll on touch screens. */
 void ui_touch_scroll(tenv* env, int idx) { popup_touch_scroll(env, idx); }
 
 void ui_settings(tenv* env) {
@@ -92,14 +92,19 @@ void ui_settings(tenv* env) {
   /* Popup mode: opened mid-match with the Open settings hotkey. It is drawn
      as a compact, touchable window (tabs instead of 4 columns, small font,
      small buttons) that sits inside the area reserved for it on screen. */
-  const bool popup = gdata->settings_popup;
+  const bool ingame_popup = gdata->settings_popup;
+  /* The lobby's Settings button now opens this same popup panel (a bit
+     larger than the in-game one) over the live background-preview game,
+     instead of a fullscreen page. */
+  const bool lobby_popup = !ingame_popup && gdata->curr_screen == SETTINGS;
+  const bool popup = ingame_popup || lobby_popup;
   static int popup_tab = 0;
 
   int base_font = popup ? FONT_SIZE_SMALL : usrs->ui_font_size;
   igPushFont(usr->imgui_data.regular_font[base_font],
              usr->imgui_data.regular_font[base_font]->LegacySize);
 
-  if (!gdata->settings_popup) {
+  if (!popup) {
     usr->r->global.bg_opacity = 0;
     usr->r->global.bd_opacity = 0;
     usr->r->global.minimap_opacity = 0;
@@ -114,9 +119,10 @@ void ui_settings(tenv* env) {
   }
 
   if (popup) {
-    /* Popup rect: centered box, ~42% x 76% of the screen. */
-    float pw = ctx->size[0] * 0.42f;
-    float ph = ctx->size[1] * 0.76f;
+    /* Popup rect: centered box, ~42% x 76% of the screen in-game; the
+       lobby version is a little bigger (~52% x 88%). */
+    float pw = ctx->size[0] * (lobby_popup ? 0.52f : 0.42f);
+    float ph = ctx->size[1] * (lobby_popup ? 0.88f : 0.76f);
     igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 14.0f);
     igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){12 * ui_s, 10 * ui_s});
     /* Roomier frames/spacing = bigger touch targets that are easy to hit. */
@@ -229,7 +235,11 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Show snake scores");
       igAlignTextToFramePadding();
+      igText("Smooth zoom");
+      igAlignTextToFramePadding();
       igText("Ping / FPS graph");
+      igAlignTextToFramePadding();
+      igText("Zoom step");
       igAlignTextToFramePadding();
       igText("Border color");
       igAlignTextToFramePadding();
@@ -295,7 +305,11 @@ void ui_settings(tenv* env) {
                       (int*)&usrs->snake_names_font_size,
                       (const char*[]){"Small", "Regular", "Large"}, 3, -1);
       igCheckbox("##snake scores", &usrs->snake_scores);
+      igCheckbox("##smooth zoom", &usrs->smooth_zoom);
       igCheckbox("##net graph", &usrs->show_net_graph);
+      igSetNextItemWidth(-1);
+      igSliderFloat("##zoom step", &usrs->zoom_step, 0.05f, 0.5f, "%.2f",
+                    ImGuiSliderFlags_AlwaysClamp);
       igSetNextItemWidth(-1);
       igColorEdit3("##border color", usrs->bd_color, ImGuiColorEditFlags_None);
       igBeginDisabled(popup); /* leaves the match, so not from the popup */

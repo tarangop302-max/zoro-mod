@@ -3628,4 +3628,4 @@ static void gc_draw_emoji_grid(
         igSetCursorScreenPos(p);
 
         char id[16];
-        snprintf(id, sizeof(id), "##gcem%d", k);
+        snprintf(id, sizeof(id)

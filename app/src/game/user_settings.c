@@ -703,9 +703,25 @@ void read_user_settings(user_settings* usr_settings) {
   }
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     if (loaded.key_btn_shape[i] > 1) loaded.key_btn_shape[i] = 0;
-    if (!isfinite(loaded.key_btn_wmul[i]) || loaded.key_btn_wmul[i] < 0.4f ||
-        loaded.key_btn_wmul[i] > 4.0f)
+    if (!isfinite(loaded.key_btn_wmul[i]) || loaded.key_btn_wmul[i] < 0.1f ||
+        loaded.key_btn_wmul[i] > 10.0f)
       loaded.key_btn_wmul[i] = 1.0f;
+  }
+  /* One-time migration (key_geom_reserved[0] == 0): key width used to follow
+     the key size. It is now independent, taken from a fixed 0.06 reference
+     times key_btn_wmul, so fold each key's old size into its width to keep
+     every existing key looking exactly as it did. */
+  if (!loaded.key_geom_reserved[0]) {
+    for (int i = 0; i < MAX_KEY_BTNS; ++i) {
+      if (!loaded.key_btns[i].active || !isfinite(loaded.key_btns[i].rel_size))
+        continue;
+      loaded.key_btn_wmul[i] *= loaded.key_btns[i].rel_size / 0.060f;
+    }
+    loaded.key_geom_reserved[0] = 1;
+  }
+  for (int i = 0; i < MAX_KEY_BTNS; ++i) {
+    if (loaded.key_btn_wmul[i] < 0.5f) loaded.key_btn_wmul[i] = 0.5f;
+    if (loaded.key_btn_wmul[i] > 2.0f) loaded.key_btn_wmul[i] = 2.0f;
   }
   if (!isfinite(loaded.zslider_thick) || loaded.zslider_thick < 0.5f ||
       loaded.zslider_thick > 3.0f)

@@ -969,14 +969,16 @@ void ui_overlay(tenv* env) {
   extern bool g_ctrl_swap_sides;
   g_ctrl_swap_sides = usrs->ctrl_swap_sides;
 
-  if (gdata->data.follow_view || gdata->curr_screen == CONTROLS) {
+  if (gdata->data.follow_view || gdata->curr_screen == CONTROLS ||
+      gdata->curr_screen == KEYBOARD_EDITOR) {
     /* Normally these draw on the foreground layer (always on top, as
        real gameplay controls should be). While a hidden background
        preview snake is running behind the Settings/Controls screen,
        that would paint over the actual adjustment sliders — so draw
        to the background layer instead, underneath the real UI, purely
        as an ambient look-behind preview. */
-    bool panel_preview = (gdata->curr_screen == CONTROLS);
+    bool panel_preview = (gdata->curr_screen == CONTROLS ||
+                          gdata->curr_screen == KEYBOARD_EDITOR);
     ImDrawList* dl  = (gdata->preview_active || panel_preview)
                           ? igGetBackgroundDrawList(igGetMainViewport())
                           : igGetForegroundDrawList_ViewportPtr(igGetMainViewport());
@@ -1270,7 +1272,8 @@ void ui_overlay(tenv* env) {
     }
   }
 
-  if (gdata->data.follow_view || gdata->curr_screen == CONTROLS) {
+  if (gdata->data.follow_view || gdata->curr_screen == CONTROLS ||
+      gdata->curr_screen == KEYBOARD_EDITOR) {
 
     extern float g_zslider_left, g_zslider_top, g_zslider_right, g_zslider_bottom;
     extern float g_zslider_half_h;
@@ -1280,13 +1283,16 @@ void ui_overlay(tenv* env) {
     float sh2 = (float)ctx->size[1];
 
     float zs_half_h = sh2 * usrs->zslider_rel_h;
-    float zs_half_w = sh2 * 0.022f;
+    float zs_thick  = usrs->zslider_thick;
+    if (!(zs_thick >= 0.5f && zs_thick <= 3.0f)) zs_thick = 1.0f;
+    float zs_half_w = sh2 * 0.022f * zs_thick;
     float zs_cx     = sw2 * usrs->zslider_rel_x;
     float zs_cy     = sh2 * usrs->zslider_rel_y;
 
     g_zslider_horizontal = usrs->zslider_horizontal;
 
-    bool preview_controls = (gdata->curr_screen == CONTROLS);
+    bool preview_controls = (gdata->curr_screen == CONTROLS ||
+                             gdata->curr_screen == KEYBOARD_EDITOR);
     if (usrs->zslider_hidden && !preview_controls) {
 
       g_zslider_left = g_zslider_right = g_zslider_top = g_zslider_bottom = 0;

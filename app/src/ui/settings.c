@@ -79,6 +79,9 @@ static void popup_touch_scroll(tenv* env, int idx) {
   last_y = t->y;
 }
 
+/* Shared with controls.c so its panel can drag-scroll on touch screens. */
+void ui_touch_scroll(tenv* env, int idx) { popup_touch_scroll(env, idx); }
+
 void ui_settings(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -264,6 +267,8 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Turn path danger colour");
       igAlignTextToFramePadding();
+      igText("Show bot thinking");
+      igAlignTextToFramePadding();
       igText("Bot circle after score");
       igAlignTextToFramePadding();
       igText("Bot radius multiplier");
@@ -337,6 +342,7 @@ void ui_settings(tenv* env) {
       igSetNextItemWidth(-1);
       igColorEdit3("##turn path danger colour", usrs->turn_path_danger_color,
                    ImGuiColorEditFlags_None);
+      igCheckbox("##bot vis", &usrs->bot_vis);
                   igSetNextItemWidth(-1);
       igSliderInt("##circle after", &usrs->bot_follow_circle_score, 1000, 6000, "%d",
                   ImGuiSliderFlags_AlwaysClamp);

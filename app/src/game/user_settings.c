@@ -270,6 +270,11 @@ void user_settings_default(user_settings* usr_settings) {
          sizeof(usr_settings->turn_path_reserved));
   usr_settings->turn_path_width = 3.0f;
 
+  memset(usr_settings->key_geom_reserved, 0,
+         sizeof(usr_settings->key_geom_reserved));
+  for (int i = 0; i < MAX_KEY_BTNS; i++) usr_settings->key_btn_wmul[i] = 1.0f;
+  usr_settings->zslider_thick = 1.0f;
+
   usr_settings->profile_emoji_id = 0;
 
   usr_settings->show_net_graph = true;
@@ -367,9 +372,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v222_prefix = offsetof(user_settings, snakey_rain_ui_reserved);
   size_t v223_prefix = offsetof(user_settings, center_ring_reserved);
   size_t v224_prefix = offsetof(user_settings, turn_path_reserved);
+  size_t v225_prefix = offsetof(user_settings, key_geom_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v225_prefix)
+    /* A file saved before the key width / zoom thickness fields existed ends
+       at v225_prefix (it already contains the turn path width), possibly
+       followed only by compiler tail padding. Keep every saved value; the new
+       fields keep their defaults. */
+    bytes_to_read = v225_prefix;
   else if ((size_t)file_size >= v224_prefix)
     /* A file saved before the turn path width existed ends at v224_prefix
        (it already contains the ring and turn path colours), possibly
@@ -691,7 +703,29 @@ void read_user_settings(user_settings* usr_settings) {
   }
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     if (loaded.key_btn_shape[i] > 1) loaded.key_btn_shape[i] = 0;
+    if (!isfinite(loaded.key_btn_wmul[i]) || loaded.key_btn_wmul[i] < 0.1f ||
+        loaded.key_btn_wmul[i] > 10.0f)
+      loaded.key_btn_wmul[i] = 1.0f;
   }
+  /* One-time migration (key_geom_reserved[0] == 0): key width used to follow
+     the key size. It is now independent, taken from a fixed 0.06 reference
+     times key_btn_wmul, so fold each key's old size into its width to keep
+     every existing key looking exactly as it did. */
+  if (!loaded.key_geom_reserved[0]) {
+    for (int i = 0; i < MAX_KEY_BTNS; ++i) {
+      if (!loaded.key_btns[i].active || !isfinite(loaded.key_btns[i].rel_size))
+        continue;
+      loaded.key_btn_wmul[i] *= loaded.key_btns[i].rel_size / 0.060f;
+    }
+    loaded.key_geom_reserved[0] = 1;
+  }
+  for (int i = 0; i < MAX_KEY_BTNS; ++i) {
+    if (loaded.key_btn_wmul[i] < 0.5f) loaded.key_btn_wmul[i] = 0.5f;
+    if (loaded.key_btn_wmul[i] > 2.0f) loaded.key_btn_wmul[i] = 2.0f;
+  }
+  if (!isfinite(loaded.zslider_thick) || loaded.zslider_thick < 0.5f ||
+      loaded.zslider_thick > 3.0f)
+    loaded.zslider_thick = 1.0f;
   if (!profile_emoji_valid(loaded.profile_emoji_id))
     loaded.profile_emoji_id = 0;
   if (!isfinite(loaded.net_graph_rel_x) || loaded.net_graph_rel_x < -0.25f ||

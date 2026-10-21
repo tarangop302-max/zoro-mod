@@ -441,6 +441,18 @@ typedef struct user_settings {
      strictly larger than the previous release (see v224_prefix). */
   uint8_t turn_path_reserved[16];
   float   turn_path_width;
+
+  /* v2.25 extension: per-slot width multiplier for custom keyboard buttons
+     (key_btn_wmul, 1.0 = the old width; height still comes from
+     custom_key_btn.rel_size) and a thickness multiplier for the zoom slider
+     (zslider_thick, 1.0 = the old thickness). Edited in the keyboard / HUD
+     editor. Appended after turn_path_width so every earlier file stays a
+     compatible prefix (see v225_prefix in read_user_settings). The reserved
+     block keeps sizeof(user_settings) strictly larger than the previous
+     release. */
+  uint8_t key_geom_reserved[16];
+  float   key_btn_wmul[MAX_KEY_BTNS];
+  float   zslider_thick;
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {

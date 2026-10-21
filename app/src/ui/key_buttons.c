@@ -1,5 +1,6 @@
 #include "key_buttons.h"
 
+#include "crystal_theme.h"
 #include "../user.h"
 #include "../game/game_data.h"
 #ifdef ANDROID
@@ -85,6 +86,9 @@ static const key_row KEY_ROWS[] = {
 };
 static const int KEY_ROWS_COUNT = ROW_COUNT(KEY_ROWS);
 
+/* What is currently selected / being dragged in the editor. */
+enum { SEL_NONE = 0, SEL_KEY, SEL_BOOST, SEL_JOY, SEL_ZOOM };
+
 static struct {
   bool editor_open;
   bool picker_open;
@@ -93,6 +97,13 @@ static struct {
   int drag_idx;
   float drag_off_x;
   float drag_off_y;
+  int sel_kind;  /* SEL_* of the selected item (selected_idx = key slot) */
+  int drag_kind; /* SEL_* of the item being dragged */
+  /* Last-frame screen rects of the editor's own windows (tap filtering). */
+  bool panel_valid;
+  float panel_x0, panel_y0, panel_x1, panel_y1;
+  bool bar_valid;
+  float bar_x0, bar_y0, bar_x1, bar_y1;
 
 #ifdef ANDROID
   tenv *env;
@@ -116,13 +127,19 @@ static struct {
   .drag_idx = -1
 };
 
-static void button_extents(const custom_key_btn *b, float screen_h,
+static float sane_wmul(float w) {
+  return (isfinite(w) && w >= 0.4f && w <= 4.0f) ? w : 1.0f;
+}
+
+/* wmul stretches the key's width only (height comes from rel_size). */
+static void button_extents(const custom_key_btn *b, float screen_h, float wmul,
                            float *half_w, float *half_h) {
   float size = b->rel_size * screen_h;
   float label_extra = (float)strlen(b->label) * size * 0.08f;
   *half_w = size * 1.10f + label_extra;
   *half_h = size * 0.66f;
   if (*half_w < *half_h * 1.35f) *half_w = *half_h * 1.35f;
+  *half_w *= wmul;
 }
 
 static int find_free_slot(user_settings *usrs) {
@@ -151,6 +168,7 @@ static int add_key_btn(user_settings *usrs, int glfw_key, const char *label) {
   b->rel_size = 0.060f;
   b->opacity = 0.85f;
   usrs->key_btn_shape[idx] = 0;
+  usrs->key_btn_wmul[idx] = 1.0f;
   KBLOG("added keyboard button idx=%d key=%d label=%s", idx, glfw_key, label);
   return idx;
 }
@@ -178,7 +196,11 @@ static bool native_hit_render_space(const custom_key_btn *b, int i,
   float cx = b->rel_x * render_w;
   float cy = b->rel_y * render_h;
   float hw, hh;
-  button_extents(b, render_h, &hw, &hh);
+  float wm = 1.0f;
+  if (s_kb.env && s_kb.env->usr &&
+      s_kb.env->usr->usrs.key_btn_shape[i] != 1)
+    wm = sane_wmul(s_kb.env->usr->usrs.key_btn_wmul[i]);
+  button_extents(b, render_h, wm, &hw, &hh);
   hw *= 1.28f;
   hh *= (b->rel_y < 0.35f ? 1.55f : 1.32f);
   if (x >= cx - hw && x <= cx + hw && y >= cy - hh && y <= cy + hh)
@@ -332,6 +354,8 @@ void ui_key_buttons_open_editor(tenv *env) {
   s_kb.picker_changes_selected = false;
   s_kb.selected_idx = -1;
   s_kb.drag_idx = -1;
+  s_kb.sel_kind = SEL_NONE;
+  s_kb.drag_kind = SEL_NONE;
   env->usr->gdata.curr_screen = KEYBOARD_EDITOR;
 }
 
@@ -343,6 +367,8 @@ static void close_editor(tenv *env) {
   s_kb.picker_changes_selected = false;
   s_kb.selected_idx = -1;
   s_kb.drag_idx = -1;
+  s_kb.sel_kind = SEL_NONE;
+  s_kb.drag_kind = SEL_NONE;
   env->usr->gdata.curr_screen = CONTROLS;
 }
 
@@ -374,11 +400,11 @@ static void read_pointer(tenv *env, bool *down, bool *clicked, bool *released,
 
 static void draw_button(ImDrawList *dl, custom_key_btn *b, float sw, float sh,
                         bool editor, bool selected, bool pressed, bool circle,
-                        ImVec2 *p0, ImVec2 *p1) {
+                        float wmul, ImVec2 *p0, ImVec2 *p1) {
   float cx = b->rel_x * sw;
   float cy = b->rel_y * sh;
   float hw, hh;
-  button_extents(b, sh, &hw, &hh);
+  button_extents(b, sh, circle ? 1.0f : wmul, &hw, &hh);
   ImVec2 ts;
   igCalcTextSize(&ts, b->label, NULL, false, -1.0f);
   float radius = hw > hh ? hw : hh;
@@ -396,9 +422,9 @@ static void draw_button(ImDrawList *dl, custom_key_btn *b, float sw, float sh,
   ImU32 bg;
   ImU32 border;
   if (editor) {
-    bg = IM_COL32(55, 70, 95, alpha);
-    border = selected ? IM_COL32(255, 205, 70, 255)
-                      : IM_COL32(145, 170, 210, alpha);
+    bg = IM_COL32(70, 48, 128, alpha);
+    border = selected ? IM_COL32(222, 196, 255, 255)
+                      : IM_COL32(165, 135, 240, alpha);
   } else if (pressed) {
     bg = IM_COL32(45, 170, 95, alpha);
     border = IM_COL32(110, 255, 165, alpha);
@@ -439,7 +465,8 @@ static void draw_gameplay_buttons(tenv *env) {
     if (!b->active) continue;
     ImVec2 p0, p1;
     draw_button(dl, b, sw, sh, false, false, s_kb.pressed[i],
-                usrs->key_btn_shape[i] == 1, &p0, &p1);
+                usrs->key_btn_shape[i] == 1,
+                sane_wmul(usrs->key_btn_wmul[i]), &p0, &p1);
 #ifdef ANDROID
     float pad = sh * 0.018f;
     s_kb.hit_x0[i] = p0.x - pad;
@@ -478,36 +505,424 @@ static void draw_gameplay_buttons(tenv *env) {
   (void)mouse_down;
 }
 
+/* ======================================================================== */
+/* Themed editor: keys + boost button + joystick ring + zoom slider.        */
+/* Same crystal-purple look as the Settings popup.                          */
+/* ======================================================================== */
+
 static bool point_in_rect(float x, float y, float x0, float y0,
                           float x1, float y1) {
   return x >= x0 && x <= x1 && y >= y0 && y <= y1;
 }
 
-static void draw_key_picker(tenv *env, float sw, float sh) {
+#define KB_TXT_PURPLE ((ImVec4){0.80f, 0.72f, 1.0f, 1.0f})
+#define KB_SEL        ((ImVec4){0.510f, 0.294f, 0.910f, 0.95f})
+#define KB_SEL_H      ((ImVec4){0.569f, 0.353f, 0.960f, 0.98f})
+#define KB_SEL_A      ((ImVec4){0.450f, 0.243f, 0.850f, 1.00f})
+
+typedef struct kb_circle {
+  float cx, cy, r;
+} kb_circle;
+
+typedef struct kb_elem {
+  int kind; /* SEL_KEY / SEL_BOOST / SEL_JOY / SEL_ZOOM */
+  int idx;  /* key slot for SEL_KEY */
+  bool circle;
+  float cx, cy, r;
+  ImVec2 p0, p1, badge;
+} kb_elem;
+
+static void clear_selection(void) {
+  s_kb.sel_kind = SEL_NONE;
+  s_kb.selected_idx = -1;
+  s_kb.drag_kind = SEL_NONE;
+  s_kb.drag_idx = -1;
+}
+
+static void select_item(int kind, int idx) {
+  s_kb.sel_kind = kind;
+  s_kb.selected_idx = (kind == SEL_KEY) ? idx : -1;
+}
+
+/* Same geometry as ui_overlay.c, so what you drag here is what you get. */
+static kb_circle boost_geom(const user_settings *u, float sw, float sh) {
+  kb_circle g;
+  float margin = sw * 0.025f;
+  if (u->boost_pos_custom) {
+    g.r = sh * u->boost_rel_size;
+    g.cx = sw * u->boost_rel_x;
+    g.cy = sh * u->boost_rel_y;
+  } else {
+    g.r = sh * 0.125f;
+    g.cx = u->ctrl_swap_sides ? (g.r + margin) : (sw - g.r - margin);
+    g.cy = sh - g.r - margin;
+  }
+  return g;
+}
+
+static kb_circle joy_geom(const user_settings *u, float sw, float sh) {
+  kb_circle g;
+  float margin = sw * 0.025f;
+  if (u->joy_pos_custom) {
+    g.r = sh * u->joy_rel_size;
+    g.cx = sw * u->joy_rel_x;
+    g.cy = sh * u->joy_rel_y;
+  } else {
+    g.r = sh * 0.175f;
+    g.cx = u->ctrl_swap_sides ? (sw - g.r - margin) : (g.r + margin);
+    g.cy = sh - g.r - margin;
+  }
+  return g;
+}
+
+static void zoom_geom(const user_settings *u, float sw, float sh, float *x0,
+                      float *y0, float *x1, float *y1, float *cx, float *cy) {
+  float thick = u->zslider_thick;
+  if (!(thick >= 0.5f && thick <= 3.0f)) thick = 1.0f;
+  float half_l = sh * u->zslider_rel_h;
+  float half_t = sh * 0.022f * thick;
+  *cx = sw * u->zslider_rel_x;
+  *cy = sh * u->zslider_rel_y;
+  if (u->zslider_horizontal) {
+    *x0 = *cx - half_l;
+    *x1 = *cx + half_l;
+    *y0 = *cy - half_t * 1.5f;
+    *y1 = *cy + half_t * 1.5f;
+  } else {
+    *x0 = *cx - half_t * 1.5f;
+    *x1 = *cx + half_t * 1.5f;
+    *y0 = *cy - half_l;
+    *y1 = *cy + half_l;
+  }
+}
+
+/* A circle control that still follows the default (swap-aware) spot becomes
+   "custom" the first time it is dragged or resized, starting from where it
+   currently is, so it never jumps. */
+static void circle_ensure(bool *custom, float *rx, float *ry, float *rs,
+                          kb_circle g, float sw, float sh) {
+  if (*custom) return;
+  *custom = true;
+  *rx = g.cx / sw;
+  *ry = g.cy / sh;
+  *rs = g.r / sh;
+}
+
+/* ---- form helpers (label | widget rows) ---- */
+
+static bool form_begin(const char *id) {
+  if (!igBeginTable(id, 2, ImGuiTableFlags_None, (ImVec2){0.0f, 0.0f}, 0.0f))
+    return false;
+  igTableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed,
+                     igGetFontSize() * 5.6f, 0);
+  igTableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 1.0f, 0);
+  return true;
+}
+
+static void form_row(const char *label) {
+  igTableNextRow(ImGuiTableRowFlags_None, 0.0f);
+  igTableSetColumnIndex(0);
+  igAlignTextToFramePadding();
+  igText("%s", label);
+  igTableSetColumnIndex(1);
+}
+
+static bool form_slider(const char *label, const char *id, float *v, float mn,
+                        float mx, const char *fmt) {
+  form_row(label);
+  igSetNextItemWidth(-1);
+  return igSliderFloat(id, v, mn, mx, fmt, ImGuiSliderFlags_AlwaysClamp);
+}
+
+static bool form_check(const char *label, const char *id, bool *v) {
+  form_row(label);
+  return igCheckbox(id, v);
+}
+
+static bool tinted_button(const char *label, ImVec2 size, ImVec4 c, ImVec4 ch,
+                          ImVec4 ca) {
+  igPushStyleColor_Vec4(ImGuiCol_Button, c);
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, ch);
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive, ca);
+  bool pressed = igButton(label, size);
+  igPopStyleColor(3);
+  return pressed;
+}
+
+static bool purple_button(const char *label, ImVec2 size) {
+  return tinted_button(label, size, KB_SEL, KB_SEL_H, KB_SEL_A);
+}
+
+static bool danger_button(const char *label, ImVec2 size) {
+  return tinted_button(label, size, (ImVec4){0.62f, 0.14f, 0.20f, 0.95f},
+                       (ImVec4){0.72f, 0.20f, 0.27f, 1.0f},
+                       (ImVec4){0.52f, 0.10f, 0.16f, 1.0f});
+}
+
+/* Bottom row shared by every edit panel: [secondary] [Done]. */
+static void panel_bottom_row(const char *left_label, bool left_danger,
+                             bool *left_pressed, bool *done) {
+  igSpacing();
+  ImVec2 av;
+  igGetContentRegionAvail(&av);
+  float gap = igGetStyle()->ItemSpacing.x;
+  float bw = (av.x - gap) * 0.5f;
+  float bh = igGetFrameHeight() * 1.15f;
+  *left_pressed = left_danger ? danger_button(left_label, (ImVec2){bw, bh})
+                              : igButton(left_label, (ImVec2){bw, bh});
+  igSameLine(0, gap);
+  *done = purple_button("Done", (ImVec2){bw, bh});
+}
+
+/* ---- floating edit panel ----
+   It only exists while something is selected, sits on the side of the screen
+   opposite to the selected item, and turns into a faint, click-through ghost
+   while you drag, so it never blocks placing anything. */
+
+static bool panel_begin(const char *id, float sw, float sh, float ui_s,
+                        float elem_cx, bool dragging) {
+  float pw = sw * 0.30f;
+  if (pw < 270.0f * ui_s) pw = 270.0f * ui_s;
+  if (pw > 400.0f * ui_s) pw = 400.0f * ui_s;
+  float margin = 14.0f * ui_s;
+  bool right = elem_cx < sw * 0.5f;
+  igSetNextWindowPos(
+      (ImVec2){right ? sw - margin : margin, sh * 0.5f}, ImGuiCond_Always,
+      (ImVec2){right ? 1.0f : 0.0f, 0.5f});
+  igSetNextWindowSizeConstraints((ImVec2){pw, 0.0f},
+                                 (ImVec2){pw, sh * 0.92f}, NULL, NULL);
+  igPushStyleVar_Float(ImGuiStyleVar_Alpha, dragging ? 0.28f : 1.0f);
+  ImGuiWindowFlags fl = ImGuiWindowFlags_AlwaysAutoResize |
+                        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+                        ImGuiWindowFlags_NoNav |
+                        ImGuiWindowFlags_NoSavedSettings;
+  if (dragging) fl |= ImGuiWindowFlags_NoInputs;
+  bool open = igBegin(id, NULL, fl);
+  if (open && !dragging) {
+    ImVec2 p, s;
+    igGetWindowPos(&p);
+    igGetWindowSize(&s);
+    s_kb.panel_x0 = p.x;
+    s_kb.panel_y0 = p.y;
+    s_kb.panel_x1 = p.x + s.x;
+    s_kb.panel_y1 = p.y + s.y;
+    s_kb.panel_valid = true;
+  }
+  return open;
+}
+
+static void panel_end(void) {
+  igEnd();
+  igPopStyleVar(1);
+}
+
+static void panel_key(tenv *env, float sw, float sh, float ui_s,
+                      bool dragging) {
+  user_settings *u = &env->usr->usrs;
+  int i = s_kb.selected_idx;
+  if (i < 0 || i >= MAX_KEY_BTNS || !u->key_btns[i].active) {
+    clear_selection();
+    return;
+  }
+  custom_key_btn *b = &u->key_btns[i];
+  bool circle = u->key_btn_shape[i] == 1;
+  if (panel_begin("##kb_edit_key", sw, sh, ui_s, b->rel_x * sw, dragging)) {
+    igTextColored(KB_TXT_PURPLE, "EDIT KEY");
+    igSameLine(0, 10.0f * ui_s);
+    igText("%s", b->label);
+    if (igButton("Change key", (ImVec2){-1, 0})) {
+      s_kb.picker_open = true;
+      s_kb.picker_changes_selected = true;
+    }
+    if (form_begin("kbk_tbl")) {
+      if (!circle)
+        form_slider("Width", "##kb_w", &u->key_btn_wmul[i], 0.4f, 4.0f,
+                    "%.2fx");
+      form_slider(circle ? "Size" : "Height", "##kb_h", &b->rel_size, 0.030f,
+                  0.140f, "%.3f");
+      form_slider("Opacity", "##kb_op", &b->opacity, 0.10f, 1.0f, "%.2f");
+      bool circ = circle;
+      if (form_check("Circle", "##kb_circle", &circ))
+        u->key_btn_shape[i] = circ ? 1 : 0;
+      igEndTable();
+    }
+    if (igCollapsingHeader_TreeNodeFlags("Fine position", 0)) {
+      if (form_begin("kbk_pos")) {
+        form_slider("X", "##kb_x", &b->rel_x, 0.03f, 0.97f, "%.2f");
+        form_slider("Y", "##kb_y", &b->rel_y, 0.05f, 0.95f, "%.2f");
+        igEndTable();
+      }
+    }
+    bool del, done;
+    panel_bottom_row("Delete", true, &del, &done);
+    if (del) {
+#ifdef ANDROID
+      if (s_kb.native_pointer[i] >= 0) native_release_slot_now(i);
+#endif
+      memset(b, 0, sizeof(*b));
+      u->key_btn_shape[i] = 0;
+      u->key_btn_wmul[i] = 1.0f;
+      clear_selection();
+    } else if (done) {
+      clear_selection();
+    }
+  }
+  panel_end();
+}
+
+static void panel_circle(const char *id, const char *title, bool *custom,
+                         float *rx, float *ry, float *rs, float *op,
+                         kb_circle g, float sz_min, float sz_max, float sw,
+                         float sh, float ui_s, bool dragging, bool *reset,
+                         bool *done) {
+  *reset = false;
+  *done = false;
+  if (panel_begin(id, sw, sh, ui_s, g.cx, dragging)) {
+    igTextColored(KB_TXT_PURPLE, "%s", title);
+    if (form_begin("c_tbl")) {
+      float sz = g.r / sh;
+      if (form_slider("Size", "##c_size", &sz, sz_min, sz_max, "%.3f")) {
+        circle_ensure(custom, rx, ry, rs, g, sw, sh);
+        *rs = sz;
+      }
+      form_slider("Opacity", "##c_op", op, 0.0f, 1.0f, "%.2f");
+      igEndTable();
+    }
+    if (igCollapsingHeader_TreeNodeFlags("Fine position", 0)) {
+      if (form_begin("c_pos")) {
+        float fx = g.cx / sw, fy = g.cy / sh;
+        if (form_slider("X", "##c_x", &fx, 0.05f, 0.95f, "%.2f")) {
+          circle_ensure(custom, rx, ry, rs, g, sw, sh);
+          *rx = fx;
+        }
+        if (form_slider("Y", "##c_y", &fy, 0.05f, 0.98f, "%.2f")) {
+          circle_ensure(custom, rx, ry, rs, g, sw, sh);
+          *ry = fy;
+        }
+        igEndTable();
+      }
+    }
+    panel_bottom_row("Reset", false, reset, done);
+  }
+  panel_end();
+}
+
+static void panel_zoom(user_settings *u, float sw, float sh, float ui_s,
+                       bool dragging) {
+  if (!(u->zslider_thick >= 0.5f && u->zslider_thick <= 3.0f))
+    u->zslider_thick = 1.0f;
+  if (panel_begin("##kb_edit_zoom", sw, sh, ui_s, u->zslider_rel_x * sw,
+                  dragging)) {
+    igTextColored(KB_TXT_PURPLE, "EDIT ZOOM SLIDER");
+    if (form_begin("z_tbl")) {
+      form_slider("Length", "##z_len", &u->zslider_rel_h, 0.08f, 0.48f, "%.2f");
+      form_slider("Thickness", "##z_thick", &u->zslider_thick, 0.5f, 3.0f,
+                  "%.2fx");
+      form_slider("Opacity", "##z_op", &u->zslider_opacity, 0.0f, 1.0f, "%.2f");
+      form_check("Horizontal", "##z_hor", &u->zslider_horizontal);
+      igEndTable();
+    }
+    if (igCollapsingHeader_TreeNodeFlags("Fine position", 0)) {
+      if (form_begin("z_pos")) {
+        form_slider("X", "##z_x", &u->zslider_rel_x, 0.02f, 0.98f, "%.2f");
+        form_slider("Y", "##z_y", &u->zslider_rel_y, 0.10f, 0.90f, "%.2f");
+        igEndTable();
+      }
+    }
+    bool hide, done;
+    panel_bottom_row("Hide bar", false, &hide, &done);
+    if (hide) {
+      u->zslider_hidden = true;
+      clear_selection();
+    } else if (done) {
+      clear_selection();
+    }
+  }
+  panel_end();
+}
+
+static void draw_edit_panel(tenv *env, float sw, float sh, float ui_s,
+                            bool dragging) {
+  user_settings *u = &env->usr->usrs;
+  bool reset, done;
+  switch (s_kb.sel_kind) {
+    case SEL_KEY:
+      panel_key(env, sw, sh, ui_s, dragging);
+      break;
+    case SEL_BOOST: {
+      kb_circle g = boost_geom(u, sw, sh);
+      panel_circle("##kb_edit_boost", "EDIT BOOST BUTTON", &u->boost_pos_custom,
+                   &u->boost_rel_x, &u->boost_rel_y, &u->boost_rel_size,
+                   &u->boost_opacity, g, 0.06f, 0.22f, sw, sh, ui_s, dragging,
+                   &reset, &done);
+      if (reset) {
+        u->boost_pos_custom = false;
+        u->boost_rel_x = u->ctrl_swap_sides ? 0.125f : 0.875f;
+        u->boost_rel_y = 0.875f;
+        u->boost_rel_size = 0.125f;
+      }
+      if (done) clear_selection();
+      break;
+    }
+    case SEL_JOY: {
+      kb_circle g = joy_geom(u, sw, sh);
+      panel_circle("##kb_edit_joy", "EDIT JOYSTICK", &u->joy_pos_custom,
+                   &u->joy_rel_x, &u->joy_rel_y, &u->joy_rel_size,
+                   &u->joy_opacity, g, 0.08f, 0.28f, sw, sh, ui_s, dragging,
+                   &reset, &done);
+      if (reset) {
+        u->joy_pos_custom = false;
+        u->joy_rel_x = u->ctrl_swap_sides ? 0.875f : 0.125f;
+        u->joy_rel_y = 0.825f;
+        u->joy_rel_size = 0.175f;
+      }
+      if (done) clear_selection();
+      break;
+    }
+    case SEL_ZOOM:
+      panel_zoom(u, sw, sh, ui_s, dragging);
+      break;
+    default:
+      break;
+  }
+}
+
+static void draw_key_picker(tenv *env, float sw, float sh, float ui_s) {
   user_settings *usrs = &env->usr->usrs;
   float pw = sw * 0.94f;
-  float ph = sh * 0.72f;
+  float ph = sh * 0.76f;
   float px = (sw - pw) * 0.5f;
-  float py = sh * 0.12f;
-#ifdef ANDROID
-  android_ui_capture_rect(px, py, px + pw, py + ph);
-#endif
+  float py = sh * 0.10f;
   igSetNextWindowPos((ImVec2){px, py}, ImGuiCond_Always, (ImVec2){});
   igSetNextWindowSize((ImVec2){pw, ph}, ImGuiCond_Always);
-  igSetNextWindowBgAlpha(0.985f);
+  igSetNextWindowBgAlpha(0.97f);
   if (igBegin("##keyboard_picker", NULL,
               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
-              ImGuiWindowFlags_NoSavedSettings)) {
-    igTextColored((ImVec4){0.45f, 0.90f, 0.58f, 1.0f},
-                  s_kb.picker_changes_selected ? "Choose the replacement key"
-                                               : "Choose a key to add");
-    igSameLine(0, -1);
+                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
+                  ImGuiWindowFlags_NoSavedSettings)) {
+    igAlignTextToFramePadding();
+    igTextColored(KB_TXT_PURPLE, s_kb.picker_changes_selected
+                                     ? "CHOOSE THE REPLACEMENT KEY"
+                                     : "CHOOSE A KEY TO ADD");
+    igSameLine(0, 14.0f * ui_s);
     if (igButton("Back##picker", (ImVec2){0, 0})) {
       s_kb.picker_open = false;
       s_kb.picker_changes_selected = false;
     }
+    if (!s_kb.picker_changes_selected && usrs->zslider_hidden) {
+      igSameLine(0, 14.0f * ui_s);
+      if (purple_button("Show zoom slider", (ImVec2){0, 0})) {
+        usrs->zslider_hidden = false;
+        s_kb.picker_open = false;
+        select_item(SEL_ZOOM, -1);
+      }
+    }
     igSeparator();
+    bool no_slot = !s_kb.picker_changes_selected && find_free_slot(usrs) < 0;
+    if (no_slot)
+      igTextColored((ImVec4){1.0f, 0.55f, 0.35f, 1.0f},
+                    "Maximum buttons reached");
+    igBeginDisabled(no_slot);
     float row_h = sh * 0.065f;
     if (row_h < 34.0f) row_h = 34.0f;
     if (row_h > 62.0f) row_h = 62.0f;
@@ -531,7 +946,7 @@ static void draw_key_picker(tenv *env, float sw, float sh) {
             } else {
               int idx = add_key_btn(usrs, row->keys[k].glfw,
                                     row->keys[k].label);
-              if (idx >= 0) s_kb.selected_idx = idx;
+              if (idx >= 0) select_item(SEL_KEY, idx);
             }
             s_kb.picker_open = false;
             s_kb.picker_changes_selected = false;
@@ -541,76 +956,28 @@ static void draw_key_picker(tenv *env, float sw, float sh) {
         igEndTable();
       }
     }
+    igEndDisabled();
   }
   igEnd();
 }
 
-static void draw_edit_panel(tenv *env, float sw, float sh) {
-  if (s_kb.selected_idx < 0 || s_kb.selected_idx >= MAX_KEY_BTNS) return;
-  custom_key_btn *b = &env->usr->usrs.key_btns[s_kb.selected_idx];
-  if (!b->active) {
-    s_kb.selected_idx = -1;
-    return;
-  }
-  float pw = sw * 0.25f;
-  if (pw < 280.0f) pw = 280.0f;
-  if (pw > 390.0f) pw = 390.0f;
-  float ph = sh * 0.70f;
-  float px = sw - pw - 18.0f;
-  float py = (sh - ph) * 0.5f;
-#ifdef ANDROID
-  android_ui_capture_rect(px, py, px + pw, py + ph);
-#endif
-  igSetNextWindowPos((ImVec2){px, py}, ImGuiCond_Always, (ImVec2){});
-  igSetNextWindowSize((ImVec2){pw, ph}, ImGuiCond_Always);
-  igSetNextWindowBgAlpha(0.97f);
-  if (igBegin("##keyboard_button_edit", NULL,
-              ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
-              ImGuiWindowFlags_NoSavedSettings)) {
-    igTextColored((ImVec4){0.50f, 0.78f, 1.0f, 1.0f}, "Edit keyboard button");
-    igSeparator();
-    igText("Key: %s", b->label);
-    if (igButton("Change key", (ImVec2){-1, 0})) {
-      s_kb.picker_open = true;
-      s_kb.picker_changes_selected = true;
-    }
-    igSpacing();
-    igText("Position X");
-    igSetNextItemWidth(-1);
-    igSliderFloat("##kb_x", &b->rel_x, 0.03f, 0.97f, "%.2f",
-                  ImGuiSliderFlags_AlwaysClamp);
-    igText("Position Y");
-    igSetNextItemWidth(-1);
-    igSliderFloat("##kb_y", &b->rel_y, 0.05f, 0.95f, "%.2f",
-                  ImGuiSliderFlags_AlwaysClamp);
-    igText("Size");
-    igSetNextItemWidth(-1);
-    igSliderFloat("##kb_size", &b->rel_size, 0.030f, 0.140f, "%.3f",
-                  ImGuiSliderFlags_AlwaysClamp);
-    igText("Opacity");
-    igSetNextItemWidth(-1);
-    igSliderFloat("##kb_opacity", &b->opacity, 0.10f, 1.0f, "%.2f",
-                  ImGuiSliderFlags_AlwaysClamp);
-    bool circle_button = env->usr->usrs.key_btn_shape[s_kb.selected_idx] == 1;
-    if (igCheckbox("Circle button", &circle_button))
-      env->usr->usrs.key_btn_shape[s_kb.selected_idx] = circle_button ? 1 : 0;
-    igSpacing();
-    igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.62f, 0.12f, 0.12f, 1.0f});
-    if (igButton("Delete", (ImVec2){-1, 0})) {
-#ifdef ANDROID
-      if (s_kb.native_pointer[s_kb.selected_idx] >= 0)
-        native_release_slot_now(s_kb.selected_idx);
-#endif
-      memset(b, 0, sizeof(*b));
-      env->usr->usrs.key_btn_shape[s_kb.selected_idx] = 0;
-      s_kb.selected_idx = -1;
-    }
-    igPopStyleColor(1);
-    if (s_kb.selected_idx >= 0 && igButton("Close editor", (ImVec2){-1, 0}))
-      s_kb.selected_idx = -1;
-  }
-  igEnd();
+static void draw_circle_proxy(ImDrawList *dl, kb_circle g, float opacity,
+                              const char *label, bool selected, bool ring) {
+  int a = (int)(opacity * 255.0f);
+  if (a < 70) a = 70;
+  ImVec2 c = {g.cx, g.cy};
+  ImDrawList_AddCircleFilled(dl, c, g.r, IM_COL32(110, 70, 205, a / 3), 48);
+  ImDrawList_AddCircle(dl, c, g.r,
+                       selected ? IM_COL32(222, 196, 255, 255)
+                                : IM_COL32(165, 135, 240, a),
+                       48, selected ? 3.0f : 1.8f);
+  if (ring)
+    ImDrawList_AddCircle(dl, c, g.r * 0.32f, IM_COL32(165, 135, 240, a / 2),
+                         32, 1.5f);
+  ImVec2 ts;
+  igCalcTextSize(&ts, label, NULL, false, -1.0f);
+  ImDrawList_AddText_Vec2(dl, (ImVec2){g.cx - ts.x * 0.5f, g.cy - ts.y * 0.5f},
+                          IM_COL32(255, 255, 255, 235), label, NULL);
 }
 
 static void draw_editor(tenv *env) {
@@ -622,131 +989,281 @@ static void draw_editor(tenv *env) {
   s_kb.env = env;
   android_ui_capture_rect(0, 0, sw, sh);
 #endif
-  /* The editor canvas must be on the background layer. Drawing on the
-     foreground layer hides every ImGui window (toolbar and picker/edit
-     panel) even though the custom-drawn keys remain visible.
 
-     This used to be a fully opaque black fill, which is why the real
-     leaderboard/minimap/teammates list were never visible here even
-     though HUD_LAYOUT_EDITOR (this screen's sibling) already rendered
-     the real game underneath its own overlay. Now that KEYBOARD_EDITOR
-     also renders the real game first (see main.c), this only needs to
-     be a dimming scrim -- enough to keep the white title/edit-badge
-     text readable, not enough to hide where the HUD actually sits. */
+  float ui_s = (sw < sh ? sw : sh) / 720.0f;
+  if (ui_s < 0.75f) ui_s = 0.75f;
+  if (ui_s > 1.30f) ui_s = 1.30f;
+
+  /* Everything below draws on the background layer so ImGui windows stay on
+     top; the real game (see bg_preview.c) is dimmed behind it. */
   ImDrawList *bg = igGetBackgroundDrawList(igGetMainViewport());
   ImDrawList_AddRectFilled(bg, (ImVec2){0, 0}, (ImVec2){sw, sh},
-                           IM_COL32(0, 0, 0, 130), 0, 0);
+                           IM_COL32(8, 5, 20, 150), 0, 0);
 
   bool mouse_down, mouse_clicked, mouse_released;
   float mx, my;
   read_pointer(env, &mouse_down, &mouse_clicked, &mouse_released, &mx, &my);
 
-  /* Keep the primary controls in the top-left safe area so they are visible
-     above Android gesture/navigation insets on every aspect ratio. */
-  const float panel_x0 = 18.0f;
-  const float panel_y0 = 18.0f;
-  const float panel_x1 = 286.0f;
-  const float panel_y1 = 200.0f;
-  bool pointer_on_panel = point_in_rect(mx, my, panel_x0, panel_y0,
-                                        panel_x1, panel_y1);
-  if (s_kb.selected_idx >= 0) {
-    float epw = sw * 0.25f;
-    if (epw < 280.0f) epw = 280.0f;
-    if (epw > 390.0f) epw = 390.0f;
-    pointer_on_panel = pointer_on_panel ||
-      point_in_rect(mx, my, sw - epw - 18.0f, sh * 0.15f,
-                    sw - 18.0f, sh * 0.85f);
-  }
-  if (s_kb.picker_open) pointer_on_panel = true;
+  const bool dragging = s_kb.drag_kind != SEL_NONE && mouse_down;
 
-  ImVec2 title_size;
-  const char *title = "Adjust keyboard buttons";
-  igCalcTextSize(&title_size, title, NULL, false, -1.0f);
-  ImDrawList_AddText_Vec2(bg, (ImVec2){sw * 0.5f - title_size.x * 0.5f, 18.0f},
-                          IM_COL32(255, 255, 255, 235), title, NULL);
-  const char *hint = "Tap a button to edit it.";
-  ImVec2 hint_size;
-  igCalcTextSize(&hint_size, hint, NULL, false, -1.0f);
-  ImDrawList_AddText_Vec2(bg,
-      (ImVec2){sw * 0.5f - hint_size.x * 0.5f, 45.0f},
-      IM_COL32(170, 170, 175, 220), hint, NULL);
+  /* Where UI windows were last frame: taps there are not canvas taps. */
+  bool on_ui = s_kb.picker_open;
+  if (s_kb.bar_valid &&
+      point_in_rect(mx, my, s_kb.bar_x0, s_kb.bar_y0, s_kb.bar_x1,
+                    s_kb.bar_y1))
+    on_ui = true;
+  if (s_kb.panel_valid && s_kb.sel_kind != SEL_NONE && !dragging &&
+      point_in_rect(mx, my, s_kb.panel_x0, s_kb.panel_y0, s_kb.panel_x1,
+                    s_kb.panel_y1))
+    on_ui = true;
+  s_kb.panel_valid = false; /* set again if a panel is drawn this frame */
+
+  float badge_r = sh * 0.022f;
+  if (badge_r < 15.0f) badge_r = 15.0f;
+
+  /* ---- build + draw every editable item ---- */
+  kb_elem el[MAX_KEY_BTNS + 3];
+  int n = 0;
 
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     custom_key_btn *b = &usrs->key_btns[i];
     if (!b->active) continue;
+    bool circ = usrs->key_btn_shape[i] == 1;
     ImVec2 p0, p1;
-    draw_button(bg, b, sw, sh, true, s_kb.selected_idx == i, false,
-                usrs->key_btn_shape[i] == 1, &p0, &p1);
-    float badge_r = sh * 0.022f;
-    if (badge_r < 15.0f) badge_r = 15.0f;
-    float ex = p1.x;
-    float ey = p0.y;
-    ImDrawList_AddCircleFilled(bg, (ImVec2){ex, ey}, badge_r,
-                               IM_COL32(165, 45, 45, 245), 20);
-    const char *edit_label = "Edit";
-    ImVec2 es;
-    igCalcTextSize(&es, edit_label, NULL, false, -1.0f);
-    ImDrawList_AddText_Vec2(bg, (ImVec2){ex - es.x * 0.5f, ey - es.y * 0.5f},
-                            IM_COL32(255,255,255,255), edit_label, NULL);
+    draw_button(bg, b, sw, sh, true,
+                s_kb.sel_kind == SEL_KEY && s_kb.selected_idx == i, false, circ,
+                sane_wmul(usrs->key_btn_wmul[i]), &p0, &p1);
+    kb_elem *e = &el[n++];
+    e->kind = SEL_KEY;
+    e->idx = i;
+    e->circle = false;
+    e->p0 = p0;
+    e->p1 = p1;
+    e->badge = (ImVec2){p1.x, p0.y};
+  }
 
-    if (mouse_clicked && !pointer_on_panel) {
-      float edx = mx - ex, edy = my - ey;
-      if (edx * edx + edy * edy <= badge_r * badge_r * 1.25f) {
-        s_kb.selected_idx = i;
-        s_kb.drag_idx = -1;
-        continue;
+  {
+    kb_circle g = boost_geom(usrs, sw, sh);
+    draw_circle_proxy(bg, g, usrs->boost_opacity, "BOOST",
+                      s_kb.sel_kind == SEL_BOOST, false);
+    kb_elem *e = &el[n++];
+    e->kind = SEL_BOOST;
+    e->idx = -1;
+    e->circle = true;
+    e->cx = g.cx;
+    e->cy = g.cy;
+    e->r = g.r;
+    e->badge = (ImVec2){g.cx + g.r * 0.7071f, g.cy - g.r * 0.7071f};
+  }
+
+  /* The joystick ring only exists in the Joystick scheme. */
+  if (!usrs->ctrl_mode_trackpad) {
+    kb_circle g = joy_geom(usrs, sw, sh);
+    draw_circle_proxy(bg, g, usrs->joy_opacity, "JOYSTICK",
+                      s_kb.sel_kind == SEL_JOY, true);
+    kb_elem *e = &el[n++];
+    e->kind = SEL_JOY;
+    e->idx = -1;
+    e->circle = true;
+    e->cx = g.cx;
+    e->cy = g.cy;
+    e->r = g.r;
+    e->badge = (ImVec2){g.cx + g.r * 0.7071f, g.cy - g.r * 0.7071f};
+  }
+
+  if (!usrs->zslider_hidden) {
+    float x0, y0, x1, y1, zcx, zcy;
+    zoom_geom(usrs, sw, sh, &x0, &y0, &x1, &y1, &zcx, &zcy);
+    bool sel = s_kb.sel_kind == SEL_ZOOM;
+    int a = (int)(usrs->zslider_opacity * 255.0f);
+    if (a < 70) a = 70;
+    float rr = (x1 - x0 < y1 - y0 ? x1 - x0 : y1 - y0) * 0.5f;
+    ImDrawList_AddRectFilled(bg, (ImVec2){x0, y0}, (ImVec2){x1, y1},
+                             IM_COL32(110, 70, 205, a / 3), rr, 0);
+    ImDrawList_AddRect(bg, (ImVec2){x0, y0}, (ImVec2){x1, y1},
+                       sel ? IM_COL32(222, 196, 255, 255)
+                           : IM_COL32(165, 135, 240, a),
+                       rr, 0, sel ? 3.0f : 1.8f);
+    ImVec2 ts;
+    igCalcTextSize(&ts, "ZOOM", NULL, false, -1.0f);
+    ImDrawList_AddText_Vec2(bg, (ImVec2){zcx - ts.x * 0.5f, y0 - ts.y - 4.0f},
+                            IM_COL32(255, 255, 255, 235), "ZOOM", NULL);
+    kb_elem *e = &el[n++];
+    e->kind = SEL_ZOOM;
+    e->idx = -1;
+    e->circle = false;
+    e->p0 = (ImVec2){x0, y0};
+    e->p1 = (ImVec2){x1, y1};
+    e->badge = (ImVec2){x1, y0};
+  }
+
+  /* Edit badges. */
+  for (int k = 0; k < n; ++k) {
+    ImDrawList_AddCircleFilled(bg, el[k].badge, badge_r,
+                               IM_COL32(130, 75, 232, 245), 20);
+    ImVec2 es;
+    igCalcTextSize(&es, "Edit", NULL, false, -1.0f);
+    ImDrawList_AddText_Vec2(
+        bg, (ImVec2){el[k].badge.x - es.x * 0.5f, el[k].badge.y - es.y * 0.5f},
+        IM_COL32(255, 255, 255, 255), "Edit", NULL);
+  }
+
+  /* ---- tap / drag handling ---- */
+  if (mouse_clicked && !on_ui) {
+    int hit = -1;
+    bool hit_badge = false;
+    for (int k = 0; k < n; ++k) {
+      float bx = mx - el[k].badge.x, by = my - el[k].badge.y;
+      bool on_badge = bx * bx + by * by <= badge_r * badge_r * 1.25f;
+      bool on_body;
+      if (el[k].circle) {
+        float dx = mx - el[k].cx, dy = my - el[k].cy;
+        on_body = dx * dx + dy * dy <= el[k].r * el[k].r;
+      } else {
+        on_body = point_in_rect(mx, my, el[k].p0.x, el[k].p0.y, el[k].p1.x,
+                                el[k].p1.y);
       }
-      if (point_in_rect(mx, my, p0.x, p0.y, p1.x, p1.y)) {
-        /* The full button is the edit target. It also becomes the drag
-           target, matching the floating-button editor's old behaviour. */
-        s_kb.selected_idx = i;
-        s_kb.drag_idx = i;
-        s_kb.drag_off_x = mx - b->rel_x * sw;
-        s_kb.drag_off_y = my - b->rel_y * sh;
+      if (on_badge || on_body) {
+        hit = k;
+        hit_badge = on_badge;
+      }
+    }
+    if (hit < 0) {
+      clear_selection();
+    } else {
+      kb_elem *e = &el[hit];
+      select_item(e->kind, e->idx);
+      s_kb.drag_kind = SEL_NONE;
+      s_kb.drag_idx = -1;
+      if (!hit_badge) {
+        s_kb.drag_kind = e->kind;
+        s_kb.drag_idx = e->idx;
+        float ccx, ccy;
+        if (e->kind == SEL_KEY) {
+          ccx = usrs->key_btns[e->idx].rel_x * sw;
+          ccy = usrs->key_btns[e->idx].rel_y * sh;
+        } else if (e->kind == SEL_BOOST) {
+          kb_circle g = boost_geom(usrs, sw, sh);
+          circle_ensure(&usrs->boost_pos_custom, &usrs->boost_rel_x,
+                        &usrs->boost_rel_y, &usrs->boost_rel_size, g, sw, sh);
+          ccx = usrs->boost_rel_x * sw;
+          ccy = usrs->boost_rel_y * sh;
+        } else if (e->kind == SEL_JOY) {
+          kb_circle g = joy_geom(usrs, sw, sh);
+          circle_ensure(&usrs->joy_pos_custom, &usrs->joy_rel_x,
+                        &usrs->joy_rel_y, &usrs->joy_rel_size, g, sw, sh);
+          ccx = usrs->joy_rel_x * sw;
+          ccy = usrs->joy_rel_y * sh;
+        } else {
+          ccx = usrs->zslider_rel_x * sw;
+          ccy = usrs->zslider_rel_y * sh;
+        }
+        s_kb.drag_off_x = mx - ccx;
+        s_kb.drag_off_y = my - ccy;
       }
     }
   }
 
-  if (s_kb.drag_idx >= 0 && mouse_down && !s_kb.picker_open) {
-    custom_key_btn *b = &usrs->key_btns[s_kb.drag_idx];
-    b->rel_x = (mx - s_kb.drag_off_x) / sw;
-    b->rel_y = (my - s_kb.drag_off_y) / sh;
-    float hw, hh;
-    button_extents(b, sh, &hw, &hh);
-    float rx = hw / sw;
-    float ry = hh / sh;
-    if (b->rel_x < rx) b->rel_x = rx;
-    if (b->rel_x > 1.0f - rx) b->rel_x = 1.0f - rx;
-    if (b->rel_y < ry + 0.06f) b->rel_y = ry + 0.06f;
-    if (b->rel_y > 1.0f - ry) b->rel_y = 1.0f - ry;
+  if (s_kb.drag_kind != SEL_NONE && mouse_down && !s_kb.picker_open) {
+    float nx = (mx - s_kb.drag_off_x) / sw;
+    float ny = (my - s_kb.drag_off_y) / sh;
+    if (s_kb.drag_kind == SEL_KEY && s_kb.drag_idx >= 0) {
+      custom_key_btn *b = &usrs->key_btns[s_kb.drag_idx];
+      b->rel_x = nx;
+      b->rel_y = ny;
+      float hw, hh;
+      button_extents(b, sh,
+                     usrs->key_btn_shape[s_kb.drag_idx] == 1
+                         ? 1.0f
+                         : sane_wmul(usrs->key_btn_wmul[s_kb.drag_idx]),
+                     &hw, &hh);
+      float rx = hw / sw;
+      float ry = hh / sh;
+      if (b->rel_x < rx) b->rel_x = rx;
+      if (b->rel_x > 1.0f - rx) b->rel_x = 1.0f - rx;
+      if (b->rel_y < ry + 0.06f) b->rel_y = ry + 0.06f;
+      if (b->rel_y > 1.0f - ry) b->rel_y = 1.0f - ry;
+    } else if (s_kb.drag_kind == SEL_BOOST || s_kb.drag_kind == SEL_JOY) {
+      bool boost = s_kb.drag_kind == SEL_BOOST;
+      float *rx_p = boost ? &usrs->boost_rel_x : &usrs->joy_rel_x;
+      float *ry_p = boost ? &usrs->boost_rel_y : &usrs->joy_rel_y;
+      float rs = boost ? usrs->boost_rel_size : usrs->joy_rel_size;
+      float rx = rs * sh / sw;
+      if (nx < rx) nx = rx;
+      if (nx > 1.0f - rx) nx = 1.0f - rx;
+      if (ny < rs) ny = rs;
+      if (ny > 1.0f - rs) ny = 1.0f - rs;
+      *rx_p = nx;
+      *ry_p = ny;
+    } else if (s_kb.drag_kind == SEL_ZOOM) {
+      if (nx < 0.02f) nx = 0.02f;
+      if (nx > 0.98f) nx = 0.98f;
+      if (ny < 0.10f) ny = 0.10f;
+      if (ny > 0.90f) ny = 0.90f;
+      usrs->zslider_rel_x = nx;
+      usrs->zslider_rel_y = ny;
+    }
   }
-  if (mouse_released) s_kb.drag_idx = -1;
+  if (mouse_released) {
+    s_kb.drag_kind = SEL_NONE;
+    s_kb.drag_idx = -1;
+  }
 
-  igSetNextWindowPos((ImVec2){panel_x0, panel_y0}, ImGuiCond_Always,
-                     (ImVec2){});
-  igSetNextWindowSize((ImVec2){panel_x1 - panel_x0, panel_y1 - panel_y0},
-                      ImGuiCond_Always);
-  igSetNextWindowBgAlpha(0.97f);
-  if (igBegin("##keyboard_editor_controls", NULL,
-              ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
-              ImGuiWindowFlags_NoSavedSettings)) {
-    int free_slot = find_free_slot(usrs);
-    if (free_slot < 0) igBeginDisabled(true);
-    if (igButton("Add new button", (ImVec2){-1, 48.0f})) {
+  /* ---- themed windows ---- */
+  igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 14.0f);
+  igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 1.0f);
+  igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding,
+                      (ImVec2){12 * ui_s, 10 * ui_s});
+  igPushStyleVar_Vec2(ImGuiStyleVar_FramePadding, (ImVec2){8 * ui_s, 7 * ui_s});
+  igPushStyleVar_Vec2(ImGuiStyleVar_ItemSpacing, (ImVec2){8 * ui_s, 8 * ui_s});
+  igPushStyleColor_Vec4(ImGuiCol_WindowBg, (ImVec4){0.070f, 0.050f, 0.120f, 0.94f});
+  igPushStyleColor_Vec4(ImGuiCol_Border, (ImVec4){0.690f, 0.580f, 0.960f, 0.55f});
+  crystal_push_theme();
+
+  /* Slim toolbar pill, top-centre: title + Add + Done. */
+  igSetNextWindowPos((ImVec2){sw * 0.5f, 12.0f * ui_s}, ImGuiCond_Always,
+                     (ImVec2){0.5f, 0.0f});
+  if (igBegin("##kb_toolbar", NULL,
+              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
+                  ImGuiWindowFlags_NoScrollbar |
+                  ImGuiWindowFlags_NoSavedSettings)) {
+    igAlignTextToFramePadding();
+    igTextColored(KB_TXT_PURPLE, "ADJUST CONTROLS");
+    igSameLine(0, 12.0f * ui_s);
+    if (igButton("+ Add", (ImVec2){0, 0})) {
       s_kb.picker_open = true;
       s_kb.picker_changes_selected = false;
     }
-    if (free_slot < 0) igEndDisabled();
-    if (free_slot < 0)
-      igTextColored((ImVec4){1.0f,0.55f,0.35f,1.0f}, "Maximum buttons reached");
-    if (igButton("Back", (ImVec2){-1, 48.0f})) close_editor(env);
+    igSameLine(0, 8.0f * ui_s);
+    if (purple_button("Done", (ImVec2){0, 0})) close_editor(env);
+    ImVec2 p, s;
+    igGetWindowPos(&p);
+    igGetWindowSize(&s);
+    s_kb.bar_x0 = p.x;
+    s_kb.bar_y0 = p.y;
+    s_kb.bar_x1 = p.x + s.x;
+    s_kb.bar_y1 = p.y + s.y;
+    s_kb.bar_valid = true;
   }
   igEnd();
 
-  if (s_kb.selected_idx >= 0)
-    draw_edit_panel(env, sw, sh);
-  if (s_kb.picker_open) draw_key_picker(env, sw, sh);
+  if (s_kb.bar_valid && s_kb.sel_kind == SEL_NONE && !s_kb.picker_open) {
+    const char *hint = "Tap an item to edit it, drag to move it.";
+    ImVec2 hs;
+    igCalcTextSize(&hs, hint, NULL, false, -1.0f);
+    ImDrawList_AddText_Vec2(
+        bg, (ImVec2){sw * 0.5f - hs.x * 0.5f, s_kb.bar_y1 + 6.0f},
+        IM_COL32(200, 190, 235, 210), hint, NULL);
+  }
+
+  if (s_kb.sel_kind != SEL_NONE && !s_kb.picker_open)
+    draw_edit_panel(env, sw, sh, ui_s, dragging);
+  if (s_kb.picker_open) draw_key_picker(env, sw, sh, ui_s);
+
+  crystal_pop_theme();
+  igPopStyleColor(2);
+  igPopStyleVar(5);
 }
 
 void ui_key_buttons(tenv *env) {

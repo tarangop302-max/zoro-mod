@@ -123,6 +123,7 @@ static void reset_tab(user_settings* usrs, int tab) {
       usrs->zslider_rel_x = 0.968f;
       usrs->zslider_rel_y = 0.500f;
       usrs->zslider_rel_h = 0.280f;
+      usrs->zslider_thick = 1.0f;
       usrs->zslider_opacity = 1.0f;
       usrs->zslider_horizontal = false;
       usrs->zslider_hidden = false;
@@ -203,10 +204,12 @@ static void tab_layout(tenv* env, user_settings* usrs, ImGuiStyle* style,
   igEndDisabled();
 
   card_next();
-  igSeparatorText("Keyboard buttons");
-  igTextWrapped("Create and arrange only the keyboard buttons you need.");
+  igSeparatorText("Layout editor");
+  igTextWrapped(
+      "Add keyboard buttons and drag keys, boost, joystick and zoom slider "
+      "into place. Resize keys with width and height.");
   igSpacing();
-  if (igButton("Adjust keyboard buttons", (ImVec2){-1, frame_height * 1.4f})) {
+  if (igButton("Open layout editor", (ImVec2){-1, frame_height * 1.4f})) {
     save_user_settings(usrs);
     ui_key_buttons_open_editor(env);
   }
@@ -216,16 +219,13 @@ static void tab_layout(tenv* env, user_settings* usrs, ImGuiStyle* style,
 
 static void tab_aim(tuser_data* usr, user_settings* usrs, ImGuiStyle* style,
                     bool arrow_mode) {
-  if (!arrow_mode)
-    igTextDisabled(
-        "Arrow settings apply to the Arrow scheme. Switch scheme in the "
-        "Layout tab.");
   igBeginDisabled(!arrow_mode);
 
   if (igBeginTable("aim_cards", card_cols(), ImGuiTableFlags_None,
                    (ImVec2){0.0f, 0.0f}, 0.0f)) {
     card_next();
     igSeparatorText("Touch arrow");
+    if (!arrow_mode) igTextDisabled("Only used with the Arrow scheme.");
     if (form_begin("arrow_tbl")) {
       form_check("Instant aim", "##arrow instant aim", &usrs->ctrl_trackpad_direct);
       form_slider("Size", "##arrow size", &usrs->arrow_size, 0.40f, 2.50f, "%.2f");
@@ -245,6 +245,7 @@ static void tab_aim(tuser_data* usr, user_settings* usrs, ImGuiStyle* style,
 
     card_next();
     igSeparatorText("Arrow design");
+    if (!arrow_mode) igTextDisabled("Only used with the Arrow scheme.");
     {
       int shown = usrs->arrow_style;
       if (shown < 0 || shown >= ARROW_STYLE_COUNT) shown = 0;
@@ -295,6 +296,7 @@ static void tab_zoom(user_settings* usrs) {
     form_slider("X position", "##zoom x", &usrs->zslider_rel_x, 0.02f, 0.98f, "%.2f");
     form_slider("Y position", "##zoom y", &usrs->zslider_rel_y, 0.10f, 0.90f, "%.2f");
     form_slider("Height", "##zoom h", &usrs->zslider_rel_h, 0.08f, 0.48f, "%.2f");
+    form_slider("Thickness", "##zoom thick", &usrs->zslider_thick, 0.5f, 3.0f, "%.2fx");
     form_slider("Opacity", "##zoom opacity", &usrs->zslider_opacity, 0.0f, 1.0f, "%.2f");
     form_slider("Speed", "##zoom speed", &usrs->zoom_sensitivity, 0.2f, 3.0f, "%.1f");
     form_check("Horizontal", "##zoom horizontal", &usrs->zslider_horizontal);

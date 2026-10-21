@@ -260,7 +260,16 @@ cleanup2:
     if (did_attach) (*vm)->DetachCurrentThread(vm);
 }
 
-void android_jni_play_quick_sound(int id) {
+/*
+ * Calls a static (Landroid/app/Activity;I)V method on the running
+ * activity's class. The class is taken from the activity INSTANCE
+ * (GetObjectClass) rather than FindClass("com/vlither/GameActivity"):
+ * on a native thread FindClass uses the system class loader, which
+ * cannot see app classes, so the lookup silently fails and nothing is
+ * ever played. GetStaticMethodID also searches superclasses, so this
+ * works for GameActivity2..5 (which extend GameActivity) too.
+ */
+static void ajni_call_activity_int(const char* method, int arg) {
     if (!g_android_app || !g_android_app->activity ||
         !g_android_app->activity->vm) {
         return;
@@ -274,36 +283,44 @@ void android_jni_play_quick_sound(int id) {
     int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
     if (status == JNI_EDETACHED) {
         if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
-            AJNI_LOG("play_quick_sound: AttachCurrentThread failed");
+            AJNI_LOG("%s: AttachCurrentThread failed", method);
             return;
         }
         did_attach = true;
     } else if (status != JNI_OK || !env) {
-        AJNI_LOG("play_quick_sound: GetEnv failed status=%d", status);
+        AJNI_LOG("%s: GetEnv failed status=%d", method, status);
         return;
     }
 
-    jclass cls = (*env)->FindClass(env, "com/vlither/GameActivity");
+    jclass cls = (*env)->GetObjectClass(env, obj);
     if (!cls) {
-        AJNI_LOG("play_quick_sound: GameActivity class not found");
+        AJNI_LOG("%s: GetObjectClass failed", method);
         (*env)->ExceptionClear(env);
-        goto cleanup_qs;
+        goto cleanup_ai;
     }
 
     {
         jmethodID mid = (*env)->GetStaticMethodID(
-            env, cls, "playQuickSound", "(Landroid/app/Activity;I)V");
+            env, cls, method, "(Landroid/app/Activity;I)V");
         if (!mid) {
-            AJNI_LOG("play_quick_sound: method not found");
+            AJNI_LOG("%s: method not found", method);
             (*env)->ExceptionClear(env);
-            goto cleanup_qs;
+            goto cleanup_ai;
         }
-        (*env)->CallStaticVoidMethod(env, cls, mid, obj, (jint)id);
+        (*env)->CallStaticVoidMethod(env, cls, mid, obj, (jint)arg);
         if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
     }
 
-cleanup_qs:
+cleanup_ai:
     if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
+void android_jni_play_quick_sound(int id) {
+    ajni_call_activity_int("playQuickSound", id);
+}
+
+void android_jni_play_sos_beep(int kind) {
+    ajni_call_activity_int("playSosBeep", kind);
 }
 
 void android_jni_open_url(const char* url) {

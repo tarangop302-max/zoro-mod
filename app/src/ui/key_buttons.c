@@ -127,19 +127,36 @@ static struct {
   .drag_idx = -1
 };
 
+/* Keys are sized by two independent numbers:
+     width  = KEY_REF_SIZE-based width * key_btn_wmul   (0.5x - 2.0x)
+     height = rel_size                                  (0.5x - 1.5x of
+                                                         KEY_REF_SIZE)
+   so the Height slider changes only the height and the Width slider only the
+   width. Circle keys have no separate width: their size follows rel_size. */
+#define KEY_REF_SIZE 0.060f
+#define KEY_W_MIN 0.5f
+#define KEY_W_MAX 2.0f
+#define KEY_H_MIN 0.5f
+#define KEY_H_MAX 1.5f
+
 static float sane_wmul(float w) {
-  return (isfinite(w) && w >= 0.4f && w <= 4.0f) ? w : 1.0f;
+  return (isfinite(w) && w >= KEY_W_MIN && w <= KEY_W_MAX) ? w : 1.0f;
 }
 
-/* wmul stretches the key's width only (height comes from rel_size). */
 static void button_extents(const custom_key_btn *b, float screen_h, float wmul,
-                           float *half_w, float *half_h) {
+                           bool circle, float *half_w, float *half_h) {
   float size = b->rel_size * screen_h;
-  float label_extra = (float)strlen(b->label) * size * 0.08f;
-  *half_w = size * 1.10f + label_extra;
   *half_h = size * 0.66f;
-  if (*half_w < *half_h * 1.35f) *half_w = *half_h * 1.35f;
-  *half_w *= wmul;
+  if (circle) {
+    /* Circles scale as a whole with rel_size. */
+    float label_extra = (float)strlen(b->label) * size * 0.08f;
+    *half_w = size * 1.10f + label_extra;
+    return;
+  }
+  /* Width no longer follows the height: it comes from a fixed reference. */
+  float ref = KEY_REF_SIZE * screen_h;
+  float label_extra = (float)strlen(b->label) * ref * 0.08f;
+  *half_w = (ref * 1.10f + label_extra) * wmul;
 }
 
 static int find_free_slot(user_settings *usrs) {
@@ -197,10 +214,12 @@ static bool native_hit_render_space(const custom_key_btn *b, int i,
   float cy = b->rel_y * render_h;
   float hw, hh;
   float wm = 1.0f;
-  if (s_kb.env && s_kb.env->usr &&
-      s_kb.env->usr->usrs.key_btn_shape[i] != 1)
+  bool circ = false;
+  if (s_kb.env && s_kb.env->usr) {
+    circ = s_kb.env->usr->usrs.key_btn_shape[i] == 1;
     wm = sane_wmul(s_kb.env->usr->usrs.key_btn_wmul[i]);
-  button_extents(b, render_h, wm, &hw, &hh);
+  }
+  button_extents(b, render_h, wm, circ, &hw, &hh);
   hw *= 1.28f;
   hh *= (b->rel_y < 0.35f ? 1.55f : 1.32f);
   if (x >= cx - hw && x <= cx + hw && y >= cy - hh && y <= cy + hh)
@@ -404,7 +423,7 @@ static void draw_button(ImDrawList *dl, custom_key_btn *b, float sw, float sh,
   float cx = b->rel_x * sw;
   float cy = b->rel_y * sh;
   float hw, hh;
-  button_extents(b, sh, circle ? 1.0f : wmul, &hw, &hh);
+  button_extents(b, sh, wmul, circle, &hw, &hh);
   ImVec2 ts;
   igCalcTextSize(&ts, b->label, NULL, false, -1.0f);
   float radius = hw > hh ? hw : hh;
@@ -736,10 +755,12 @@ static void panel_key(tenv *env, float sw, float sh, float ui_s,
     }
     if (form_begin("kbk_tbl")) {
       if (!circle)
-        form_slider("Width", "##kb_w", &u->key_btn_wmul[i], 0.4f, 4.0f,
-                    "%.2fx");
-      form_slider(circle ? "Size" : "Height", "##kb_h", &b->rel_size, 0.030f,
-                  0.140f, "%.3f");
+        form_slider("Width", "##kb_w", &u->key_btn_wmul[i], KEY_W_MIN,
+                    KEY_W_MAX, "%.2fx");
+      float hm = b->rel_size / KEY_REF_SIZE;
+      if (form_slider(circle ? "Size" : "Height", "##kb_h", &hm, KEY_H_MIN,
+                      KEY_H_MAX, "%.2fx"))
+        b->rel_size = hm * KEY_REF_SIZE;
       form_slider("Opacity", "##kb_op", &b->opacity, 0.10f, 1.0f, "%.2f");
       bool circ = circle;
       if (form_check("Circle", "##kb_circle", &circ))
@@ -1172,11 +1193,8 @@ static void draw_editor(tenv *env) {
       b->rel_x = nx;
       b->rel_y = ny;
       float hw, hh;
-      button_extents(b, sh,
-                     usrs->key_btn_shape[s_kb.drag_idx] == 1
-                         ? 1.0f
-                         : sane_wmul(usrs->key_btn_wmul[s_kb.drag_idx]),
-                     &hw, &hh);
+      button_extents(b, sh, sane_wmul(usrs->key_btn_wmul[s_kb.drag_idx]),
+                     usrs->key_btn_shape[s_kb.drag_idx] == 1, &hw, &hh);
       float rx = hw / sw;
       float ry = hh / sh;
       if (b->rel_x < rx) b->rel_x = rx;

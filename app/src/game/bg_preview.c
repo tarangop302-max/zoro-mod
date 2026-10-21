@@ -69,7 +69,8 @@ static bool bg_preview_wanted(tenv* env) {
   game_data* gdata = &usr->gdata;
 
   return gdata->curr_screen == SETTINGS || gdata->curr_screen == CONTROLS ||
-         gdata->curr_screen == HUD_LAYOUT_EDITOR;
+         gdata->curr_screen == HUD_LAYOUT_EDITOR ||
+         gdata->curr_screen == KEYBOARD_EDITOR;
 }
 
 /* Minimal stand-in for game/input.c's input(), used only while the
@@ -230,7 +231,8 @@ void bg_preview_update(tenv* env) {
            so the player can see exactly where each one lands as
            they adjust it. */
         if (gdata->curr_screen == CONTROLS ||
-            gdata->curr_screen == HUD_LAYOUT_EDITOR)
+            gdata->curr_screen == HUD_LAYOUT_EDITOR ||
+            gdata->curr_screen == KEYBOARD_EDITOR)
           ui_overlay(env);
 
         if (gdata->closed) {

@@ -15,6 +15,9 @@ void android_jni_notify_game_ready(void);
    0-3, each slot has its own tone). Fire-and-forget. */
 void android_jni_play_quick_sound(int id);
 
+/* SOS beep: kind 0 = urgent alert (teammate sent SOS), 1 = short confirm. */
+void android_jni_play_sos_beep(int kind);
+
 void android_jni_open_url(const char* url);
 
 const char* android_jni_get_clipboard_text(void);

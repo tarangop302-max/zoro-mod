@@ -45,6 +45,18 @@
    the server to echo the turn back. Server echoes are reconciled afterwards.
    0 = old behaviour. */
 #define STEER_PREDICT 1
+/* How the local head shows our own turns (only used when STEER_PREDICT is 1):
+   1 = start turning the instant the packet is sent. Feels instant, but the
+       server only starts that turn one-way-delay later, so the head on screen
+       is ahead of the real one ("looks fully turned, real head still turning,
+       dies").
+   2 = start the local turn when the server will actually receive the packet
+       (sent time + one-way delay). The head you see is then where the real
+       head is, so what you see is what can hit you. Turns look ~ping/2 later
+       than mode 1 but never lie. */
+#define STEER_PREDICT_MODE 2
+/* Longest delay mode 2 will hold a turn back (ms). */
+#define STEER_SERVER_MATCH_MAX_MS 120.0f
 /* While a locally-predicted turn is still "in flight", server echoes about our
    own heading are not allowed to yank it backwards. The window is
    2 * one-way-delay + 50 ms, clamped to this range. */
@@ -58,6 +70,12 @@
    the server has them now. 0 = off, 1 = full estimate. */
 #define NET_LEAD_FACTOR 1.0f
 #define NET_LEAD_MAX_MS 100.0f
+/* Extra extrapolation (ms) on top of the network delay. A frame is read up to
+   one frame after its packet arrived and reaches the screen ~1-2 frames after
+   it is drawn, none of which the ping covers -- at 90 Hz that is roughly 10-20
+   ms. If enemy heads look too far ahead of their bodies lower this; if you
+   still die before touching, raise it (try 0 / 10 / 20). */
+#define NET_LEAD_EXTRA_MS 10.0f
 
 /* Lag-spike handling. A spike shorter than LAG_START_MS is simply ridden out by
    dead-reckoning at full speed (no slow-down). Past that the world eases down

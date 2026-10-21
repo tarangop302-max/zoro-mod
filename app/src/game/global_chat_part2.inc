@@ -2574,39 +2574,6 @@ void global_chat_draw_minimap_markers(
         y + radius
     };
 
-    /* Our own world position + minimap point (for the SOS guide line
-     * and distance). */
-    bool have_own = false;
-    float own_wx = 0.0f, own_wy = 0.0f;
-    ImVec2 own_p = {0.0f, 0.0f};
-
-    {
-        int sl = tdarray_length(g->data.snakes);
-
-        for (int si = 0; si < sl; si++) {
-            snake* sn = g->data.snakes + si;
-
-            if (sn->id == g->data.snake_id) {
-                own_wx = sn->xx + sn->fx;
-                own_wy = sn->yy + sn->fy;
-
-                float orx = (own_wx - g->data.grd) / g->data.flux_grd;
-                float ory = (own_wy - g->data.grd) / g->data.flux_grd;
-                float od = sqrtf(orx * orx + ory * ory);
-
-                if (od > 1.0f) {
-                    orx /= od;
-                    ory /= od;
-                }
-
-                own_p.x = center.x + orx * map_radius;
-                own_p.y = center.y + ory * map_radius;
-                have_own = true;
-                break;
-            }
-        }
-    }
-
     int count =
         jsr_network_location_count(
             global_chat_net
@@ -2692,119 +2659,29 @@ void global_chat_draw_minimap_markers(
         );
 
         if (sos) {
-            /* SOS beacon: steady red ring + two expanding radar ripples
-             * (so it's visible from across the map), a dashed line from
-             * our own dot, an arrow when they're past the map edge, and
-             * an "SOS <distance>" tag above the dot. All driven by
-             * wall-clock time, so no per-frame animation state. */
+            /* SOS glow: a compact, softly pulsing red halo hugging the
+             * dot (layered translucent discs + a thin ring). Small on
+             * purpose, so it never covers the map. */
             float t = (float)global_chat_now_ms() * 0.001f;
             float m = u->usrs.ntl_marker_size;
-            float pulse = 0.5f + 0.5f * sinf(t * 6.0f);
+            float pulse = 0.5f + 0.5f * sinf(t * 5.0f);
+            float grow = 1.0f + 0.25f * pulse;
 
-            /* Dashed guide line from our own dot to theirs. */
-            if (have_own) {
-                float dx = p.x - own_p.x;
-                float dy = p.y - own_p.y;
-                float len = sqrtf(dx * dx + dy * dy);
+            for (int k = 0; k < 4; k++) {
+                float r = m + (1.5f + (float)(3 - k) * 2.0f) * grow;
 
-                if (len > m * 3.0f) {
-                    float ux = dx / len;
-                    float uy = dy / len;
-                    float from = m * 1.6f;
-                    float to = len - m * 1.6f;
-
-                    for (float d = from; d < to; d += 8.0f) {
-                        float e = fminf(d + 4.0f, to);
-
-                        ImDrawList_AddLine(
-                            dl,
-                            (ImVec2){own_p.x + ux * d, own_p.y + uy * d},
-                            (ImVec2){own_p.x + ux * e, own_p.y + uy * e},
-                            IM_COL32(255, 70, 55, 150),
-                            1.5f
-                        );
-                    }
-                }
-            }
-
-            /* Expanding ripples. */
-            for (int k = 0; k < 2; k++) {
-                float ph = fmodf(t * 0.9f + (float)k * 0.5f, 1.0f);
-
-                ImDrawList_AddCircle(
-                    dl, p,
-                    m + 4.0f + ph * m * 3.5f,
-                    IM_COL32(255, 60, 45, (int)((1.0f - ph) * 210.0f)),
-                    0, 2.0f
+                ImDrawList_AddCircleFilled(
+                    dl, p, r,
+                    IM_COL32(255, 50, 36, (int)(26.0f + pulse * 18.0f)),
+                    24
                 );
             }
 
-            /* Steady ring. */
             ImDrawList_AddCircle(
-                dl, p,
-                m + 3.0f + pulse * 2.0f,
-                IM_COL32(255, 40, 30, 235),
-                0, 2.5f
+                dl, p, m + 2.0f + pulse,
+                IM_COL32(255, 80, 64, (int)(170.0f + pulse * 85.0f)),
+                0, 1.6f
             );
-
-            /* Off-map arrow: they're beyond the minimap circle, so the
-             * dot is clamped to the edge -- point outward. */
-            if (dist > 1.0f) {
-                float ol = sqrtf(rx * rx + ry * ry);
-                float ox = ol > 0.0f ? rx / ol : 0.0f;
-                float oy = ol > 0.0f ? ry / ol : -1.0f;
-                float bx = p.x + ox * (m + 6.0f);
-                float by = p.y + oy * (m + 6.0f);
-
-                ImDrawList_AddTriangleFilled(
-                    dl,
-                    (ImVec2){bx + ox * 9.0f, by + oy * 9.0f},
-                    (ImVec2){bx - oy * 5.0f, by + ox * 5.0f},
-                    (ImVec2){bx + oy * 5.0f, by - ox * 5.0f},
-                    IM_COL32(255, 60, 45, 240)
-                );
-            }
-
-            /* "SOS" tag (+ distance in thousands of game units). */
-            {
-                char tag[24];
-
-                if (have_own) {
-                    float wx = lx - own_wx;
-                    float wy = ly - own_wy;
-
-                    snprintf(
-                        tag, sizeof(tag), "SOS %.1fk",
-                        sqrtf(wx * wx + wy * wy) / 1000.0f
-                    );
-                } else {
-                    snprintf(tag, sizeof(tag), "SOS");
-                }
-
-                igPushFont(
-                    u->imgui_data.mono_font[FONT_SIZE_SMALL],
-                    u->imgui_data.mono_font[
-                        FONT_SIZE_SMALL
-                    ]->LegacySize
-                );
-
-                ImVec2 ts;
-                igCalcTextSize(&ts, tag, NULL, false, -1.0f);
-
-                float py = p.y - m - 6.0f - ts.y;
-                ImVec2 bmin = {p.x - ts.x * 0.5f - 4.0f, py - 1.0f};
-                ImVec2 bmax = {p.x + ts.x * 0.5f + 4.0f, py + ts.y + 1.0f};
-
-                ImDrawList_AddRectFilled(
-                    dl, bmin, bmax, IM_COL32(210, 40, 32, 235), 4.0f, 0
-                );
-                ImDrawList_AddText_Vec2(
-                    dl, (ImVec2){p.x - ts.x * 0.5f, py},
-                    IM_COL32(255, 255, 255, 255), tag, NULL
-                );
-
-                igPopFont();
-            }
         }
 
         if (u->usrs.ntl_marker_labels) {

@@ -211,6 +211,11 @@ typedef struct game_data {
     double rt_last_accel_ms;     /* last boost packet sent                  */
     double steer_pred_until_ms;  /* local steering wins over echoes till now */
     float  owd_ms;               /* smoothed one-way network delay estimate  */
+    /* Steering packets already sent but not yet "received" by the server,
+       as the local head sees them (STEER_PREDICT_MODE 2, see input.c). */
+    double steer_q_due_ms[16];   /* when the server is expected to get it    */
+    int    steer_q_ang[16];      /* the angle byte that was sent             */
+    int    steer_q_n;            /* how many are pending (oldest at [0])     */
 
     int lsxm;
     int lsym;

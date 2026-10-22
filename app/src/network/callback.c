@@ -51,7 +51,7 @@ static float net_lead_units(game_data* gdata, snake* o) {
   if (gdata->data.owd_ms <= 0) return 0.0f; /* no ping measured yet */
   float lead_ms = gdata->data.owd_ms * NET_LEAD_FACTOR;
   if (lead_ms > NET_LEAD_MAX_MS) lead_ms = NET_LEAD_MAX_MS;
-  lead_ms += NET_LEAD_EXTRA_MS;
+  if (gdata->data.lat_comp) lead_ms += NET_LEAD_EXTRA_MS;
   float units = o->sp * lead_ms / 32.0f; /* sp/4 per 8 ms, same as oef() */
   float cap = 0.9f * o->msl;
   return units > cap ? cap : units;

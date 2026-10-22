@@ -56,6 +56,52 @@ class GameActivity : NativeActivity() {
         private var overlayRef: FrameLayout? = null
         private var scanAnimator: ObjectAnimator? = null
 
+        /* ---- Beeps for SOS / quick messages (called from native code) ----
+           Signatures must stay (Activity, Int)V: android_jni.c looks them up
+           with GetStaticMethodID(..., "(Landroid/app/Activity;I)V"). */
+        private var toneGen: android.media.ToneGenerator? = null
+        private val toneLock = Any()
+
+        private fun beep(tone: Int, durationMs: Int) {
+            Thread {
+                try {
+                    synchronized(toneLock) {
+                        if (toneGen == null) {
+                            toneGen = android.media.ToneGenerator(
+                                android.media.AudioManager.STREAM_MUSIC, 100)
+                        }
+                        toneGen?.startTone(tone, durationMs)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "beep error: ${e.message}")
+                    synchronized(toneLock) {
+                        try { toneGen?.release() } catch (_: Exception) {}
+                        toneGen = null
+                    }
+                }
+            }.start()
+        }
+
+        /** kind 0 = urgent alert (teammate sent SOS), 1 = short confirm. */
+        @JvmStatic
+        fun playSosBeep(activity: Activity, kind: Int) {
+            if (kind == 0) beep(android.media.ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 600)
+            else beep(android.media.ToneGenerator.TONE_PROP_BEEP2, 200)
+        }
+
+        /** Quick message sent; id = slot number, used to vary the pitch. */
+        @JvmStatic
+        fun playQuickSound(activity: Activity, id: Int) {
+            val tones = intArrayOf(
+                android.media.ToneGenerator.TONE_PROP_BEEP,
+                android.media.ToneGenerator.TONE_PROP_ACK,
+                android.media.ToneGenerator.TONE_PROP_PROMPT,
+                android.media.ToneGenerator.TONE_DTMF_1,
+                android.media.ToneGenerator.TONE_DTMF_5,
+                android.media.ToneGenerator.TONE_DTMF_9)
+            beep(tones[((id % tones.size) + tones.size) % tones.size], 150)
+        }
+
         private const val IME_EVENT_TEXT: Byte = 1
         private const val IME_EVENT_KEY: Byte = 2
         private const val IME_EVENT_COMPOSITION: Byte = 3

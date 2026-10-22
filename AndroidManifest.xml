@@ -32,7 +32,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
-        android:label="Vlither"
+        android:label="JSR Vlither"
         android:hasCode="true"
         android:extractNativeLibs="true"
         android:hardwareAccelerated="true"
@@ -53,7 +53,7 @@
         <!-- MainActivity: ad gate — this is the LAUNCHER entry point -->
         <activity
             android:name=".MainActivity"
-            android:label="Vlither"
+            android:label="JSR Vlither"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
             android:screenOrientation="sensorLandscape"
             android:exported="true"
@@ -77,7 +77,7 @@
         <!-- GameActivity: NativeActivity subclass — launched by MainActivity -->
         <activity
             android:name=".GameActivity"
-            android:label="Vlither"
+            android:label="JSR Vlither"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation"
             android:screenOrientation="sensorLandscape"
             android:immersive="true"

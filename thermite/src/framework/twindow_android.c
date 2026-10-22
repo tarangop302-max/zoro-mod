@@ -243,6 +243,7 @@ static void imgui_touch_event(float x, float y, int button /* -1 none, 0 up, 1 d
     if (!igGetCurrentContext()) return;
     ImGuiIO* io = igGetIO_Nil();
     if (!io) return;
+    ImGuiIO_AddMouseSourceEvent(io, ImGuiMouseSource_TouchScreen);
     ImGuiIO_AddMousePosEvent(io, x, y);
     if (button >= 0) ImGuiIO_AddMouseButtonEvent(io, 0, button == 1);
 }
@@ -413,6 +414,18 @@ static int32_t handle_input(struct android_app* app, AInputEvent* event) {
                 float x   = AMotionEvent_getX(event, 0);
                 float y   = AMotionEvent_getY(event, 0);
                 int   pid = (int)AMotionEvent_getPointerId(event, 0);
+
+                /* ACTION_DOWN is only sent for the FIRST finger, so no other
+                   pointer can still be down. If a previous UI touch is still
+                   marked down, its UP was lost; begin_ui_touch() would then
+                   ignore this tap entirely (the "spam clicks" bug). Release
+                   the stale touch first so this tap always registers. */
+                if (wnd->ui_touch.down) {
+                    imgui_touch_event(wnd->ui_touch.x, wnd->ui_touch.y, 0);
+                    wnd->ui_touch.down = false;
+                    wnd->ui_touch.move_ptr_id = -1;
+                }
+                g_ui_owned_pointer_mask = 0;
 
                 if (g_panel_open || android_ui_capture_contains(x, y)) {
                     set_ui_pointer_owned(pid, true);

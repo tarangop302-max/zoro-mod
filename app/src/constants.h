@@ -45,6 +45,12 @@
    the server to echo the turn back. Server echoes are reconciled afterwards.
    0 = old behaviour. */
 #define STEER_PREDICT 1
+/* Latency compensation is a runtime setting (Settings > General): when ON,
+   our own turns are shown when the server will receive them (sent time +
+   one-way delay) instead of the instant they are sent, so the head on screen
+   is where the real head is. */
+/* Longest delay the ON mode will hold a turn back (ms). */
+#define STEER_SERVER_MATCH_MAX_MS 120.0f
 /* While a locally-predicted turn is still "in flight", server echoes about our
    own heading are not allowed to yank it backwards. The window is
    2 * one-way-delay + 50 ms, clamped to this range. */
@@ -58,6 +64,12 @@
    the server has them now. 0 = off, 1 = full estimate. */
 #define NET_LEAD_FACTOR 1.0f
 #define NET_LEAD_MAX_MS 100.0f
+/* Extra extrapolation (ms) on top of the network delay. A frame is read up to
+   one frame after its packet arrived and reaches the screen ~1-2 frames after
+   it is drawn, none of which the ping covers -- at 90 Hz that is roughly 10-20
+   ms. If enemy heads look too far ahead of their bodies lower this; if you
+   still die before touching, raise it (try 0 / 10 / 20). */
+#define NET_LEAD_EXTRA_MS 10.0f
 
 /* Lag-spike handling. A spike shorter than LAG_START_MS is simply ridden out by
    dead-reckoning at full speed (no slow-down). Past that the world eases down

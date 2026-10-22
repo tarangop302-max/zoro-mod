@@ -45,17 +45,11 @@
    the server to echo the turn back. Server echoes are reconciled afterwards.
    0 = old behaviour. */
 #define STEER_PREDICT 1
-/* How the local head shows our own turns (only used when STEER_PREDICT is 1):
-   1 = start turning the instant the packet is sent. Feels instant, but the
-       server only starts that turn one-way-delay later, so the head on screen
-       is ahead of the real one ("looks fully turned, real head still turning,
-       dies").
-   2 = start the local turn when the server will actually receive the packet
-       (sent time + one-way delay). The head you see is then where the real
-       head is, so what you see is what can hit you. Turns look ~ping/2 later
-       than mode 1 but never lie. */
-#define STEER_PREDICT_MODE 2
-/* Longest delay mode 2 will hold a turn back (ms). */
+/* Latency compensation is a runtime setting (Settings > General): when ON,
+   our own turns are shown when the server will receive them (sent time +
+   one-way delay) instead of the instant they are sent, so the head on screen
+   is where the real head is. */
+/* Longest delay the ON mode will hold a turn back (ms). */
 #define STEER_SERVER_MATCH_MAX_MS 120.0f
 /* While a locally-predicted turn is still "in flight", server echoes about our
    own heading are not allowed to yank it backwards. The window is

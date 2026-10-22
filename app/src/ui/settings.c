@@ -371,7 +371,7 @@ void ui_settings(tenv* env) {
     igSpacing();
     igTextWrapped("FPS limit is a maximum, not a forced refresh rate. Actual FPS cannot exceed your phone's active display refresh rate. Android Auto mode may keep the screen at 60 Hz; select 90/120/144 Hz in the phone's Display settings to use a matching Vlither limit.");
     igTextDisabled("VSync can also cap rendering to the current display mode.");
-    igTextWrapped("Latency compensation: your own turns appear on screen when the server actually receives them, and other snakes' heads are drawn where the server has them now. What you see is what can hit you, at the cost of your turns showing about half your ping later. Turn delay sets how much of that wait is applied: 0% shows your turns instantly (the old behaviour), 100% shows them exactly when the server gets them. Keep it at 100% for a true picture: lowering it makes turns look faster than they really are.");
+    igTextWrapped("%s", "Latency compensation: your own turns appear on screen when the server actually receives them, and other snakes' heads are drawn where the server has them now. What you see is what can hit you, at the cost of your turns showing about half your ping later. Turn delay sets how much of that wait is applied: 0% shows your turns instantly (the old behaviour), 100% shows them exactly when the server gets them. Keep it at 100% for a true picture: lowering it makes turns look faster than they really are.");
     igEndChild();
     }
 

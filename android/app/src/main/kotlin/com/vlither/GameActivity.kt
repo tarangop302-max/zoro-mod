@@ -47,7 +47,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-open class GameActivity : NativeActivity() {
+class GameActivity : NativeActivity() {
 
     companion object {
         private const val TAG = "VlitherGame"
@@ -639,105 +639,6 @@ open class GameActivity : NativeActivity() {
                     })
                     .start()
             }
-        }
-
-        /**
-         * Called from C via JNI (android_jni.c) when a Team Chat quick
-         * message is sent or received. Plays a short built-in tone (no
-         * audio asset needed); each of the 4 quick-message slots has its
-         * own tone. Signature used in android_jni.c: (Landroid/app/Activity;I)V
-         */
-        @JvmStatic
-        fun playQuickSound(activity: Activity, id: Int) {
-            try {
-                val tones = intArrayOf(
-                    android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
-                    android.media.ToneGenerator.TONE_PROP_ACK,
-                    android.media.ToneGenerator.TONE_PROP_BEEP2,
-                    android.media.ToneGenerator.TONE_CDMA_PIP
-                )
-                val durs = intArrayOf(450, 220, 260, 160)
-                val i = ((id % 4) + 4) % 4
-                val tg = android.media.ToneGenerator(
-                    android.media.AudioManager.STREAM_MUSIC, 90
-                )
-                tg.startTone(tones[i], durs[i])
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
-                    { tg.release() },
-                    (durs[i] + 300).toLong()
-                )
-            } catch (e: Exception) {
-                Log.w(TAG, "playQuickSound failed", e)
-            }
-        }
-
-        /**
-         * Called from C via JNI (android_jni.c) for Team Chat SOS.
-         * kind 0 = urgent alert when a teammate sends SOS (three rising
-         * beeps), kind 1 = short confirmation when we send our own.
-         * The beep is synthesized as raw PCM and played through
-         * AudioTrack, so it does not depend on ToneGenerator's tone
-         * tables (some devices play nothing for certain tones).
-         * Signature used in android_jni.c: (Landroid/app/Activity;I)V
-         */
-        @JvmStatic
-        fun playSosBeep(activity: Activity, kind: Int) {
-            Thread {
-                try {
-                    val rate = 22050
-                    // (frequency Hz, duration ms, silence after ms)
-                    val notes: Array<IntArray> = if (kind == 1) {
-                        arrayOf(intArrayOf(1320, 140, 0))
-                    } else {
-                        arrayOf(
-                            intArrayOf(1000, 130, 60),
-                            intArrayOf(1250, 130, 60),
-                            intArrayOf(1500, 220, 0)
-                        )
-                    }
-
-                    var total = 0
-                    for (n in notes) total += (rate * (n[1] + n[2]) / 1000)
-                    val pcm = ShortArray(total)
-
-                    var pos = 0
-                    for (n in notes) {
-                        val len = rate * n[1] / 1000
-                        val fade = (rate / 200).coerceAtLeast(1) // 5 ms ramp, avoids clicks
-                        for (i in 0 until len) {
-                            var amp = 0.8
-                            if (i < fade) amp *= i.toDouble() / fade
-                            if (i > len - fade) amp *= (len - i).toDouble() / fade
-                            val v = Math.sin(2.0 * Math.PI * n[0] * i / rate) * amp
-                            pcm[pos + i] = (v * Short.MAX_VALUE).toInt().toShort()
-                        }
-                        pos += len + rate * n[2] / 1000
-                    }
-
-                    val attrs = android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_GAME)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                    val format = android.media.AudioFormat.Builder()
-                        .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(rate)
-                        .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                    val track = android.media.AudioTrack(
-                        attrs, format, pcm.size * 2,
-                        android.media.AudioTrack.MODE_STATIC,
-                        android.media.AudioManager.AUDIO_SESSION_ID_GENERATE
-                    )
-                    track.write(pcm, 0, pcm.size)
-                    track.play()
-
-                    val playMs = (pcm.size * 1000L / rate) + 250L
-                    Thread.sleep(playMs)
-                    track.release()
-                } catch (e: Exception) {
-                    Log.w(TAG, "playSosBeep failed", e)
-                }
-            }.start()
         }
     }
 

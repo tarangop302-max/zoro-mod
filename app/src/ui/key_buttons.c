@@ -101,6 +101,8 @@ static struct {
   int drag_kind; /* SEL_* of the item being dragged */
   /* Last-frame screen rects of the editor's own windows (tap filtering). */
   bool panel_valid;
+  bool panel_hidden; /* edit panel collapsed to a small tab */
+  int panel_side;    /* 0 = auto (opposite the item), 1 = left, 2 = right */
   float panel_x0, panel_y0, panel_x1, panel_y1;
   bool bar_valid;
   float bar_x0, bar_y0, bar_x1, bar_y1;
@@ -128,16 +130,27 @@ static struct {
 };
 
 /* Keys are sized by two independent numbers:
-     width  = KEY_REF_SIZE-based width * key_btn_wmul   (0.5x - 2.0x)
+     width  = KEY_REF_SIZE-based width * key_btn_wmul   (0.5x - 3.0x)
      height = rel_size                                  (0.5x - 1.5x of
                                                          KEY_REF_SIZE)
    so the Height slider changes only the height and the Width slider only the
    width. Circle keys have no separate width: their size follows rel_size. */
 #define KEY_REF_SIZE 0.060f
 #define KEY_W_MIN 0.5f
-#define KEY_W_MAX 2.0f
+#define KEY_W_MAX 3.0f
 #define KEY_H_MIN 0.5f
 #define KEY_H_MAX 1.5f
+
+/* Height limit: a (non-circle) key may be at most 80% as tall as it is wide.
+   Returns the largest Height-slider value (in KEY_REF_SIZE units) allowed for
+   this key at width multiplier wmul. */
+#define KEY_H_MAX_RATIO 0.80f
+static float key_h_limit(const custom_key_btn *b, float wmul) {
+  float label_extra = (float)strlen(b->label) * 0.08f;
+  float half_w_in_ref = (1.10f + label_extra) * wmul;
+  float lim = KEY_H_MAX_RATIO * half_w_in_ref / 0.66f;
+  return lim < KEY_H_MIN ? KEY_H_MIN : lim;
+}
 
 static float sane_wmul(float w) {
   return (isfinite(w) && w >= KEY_W_MIN && w <= KEY_W_MAX) ? w : 1.0f;
@@ -556,6 +569,7 @@ static void clear_selection(void) {
   s_kb.selected_idx = -1;
   s_kb.drag_kind = SEL_NONE;
   s_kb.drag_idx = -1;
+  s_kb.panel_hidden = false;
 }
 
 static void select_item(int kind, int idx) {
@@ -705,18 +719,54 @@ static bool panel_begin(const char *id, float sw, float sh, float ui_s,
   if (pw > 400.0f * ui_s) pw = 400.0f * ui_s;
   float margin = 14.0f * ui_s;
   bool right = elem_cx < sw * 0.5f;
-  igSetNextWindowPos(
-      (ImVec2){right ? sw - margin : margin, sh * 0.5f}, ImGuiCond_Always,
-      (ImVec2){right ? 1.0f : 0.0f, 0.5f});
-  igSetNextWindowSizeConstraints((ImVec2){pw, 0.0f},
-                                 (ImVec2){pw, sh * 0.92f}, NULL, NULL);
+  if (s_kb.panel_side == 1) right = false;
+  if (s_kb.panel_side == 2) right = true;
   igPushStyleVar_Float(ImGuiStyleVar_Alpha, dragging ? 0.28f : 1.0f);
   ImGuiWindowFlags fl = ImGuiWindowFlags_AlwaysAutoResize |
                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
                         ImGuiWindowFlags_NoNav |
                         ImGuiWindowFlags_NoSavedSettings;
   if (dragging) fl |= ImGuiWindowFlags_NoInputs;
+
+  if (s_kb.panel_hidden) {
+    /* Collapsed: just a small tab so the whole screen is free for placing
+       keys. Tap it to bring the full panel back. */
+    igSetNextWindowPos(
+        (ImVec2){right ? sw - margin : margin, sh * 0.5f}, ImGuiCond_Always,
+        (ImVec2){right ? 1.0f : 0.0f, 0.5f});
+    igSetNextWindowSizeConstraints((ImVec2){0.0f, 0.0f},
+                                   (ImVec2){sw, sh}, NULL, NULL);
+    bool open = igBegin(id, NULL, fl);
+    if (open) {
+      if (igButton("Show panel", (ImVec2){0, 0})) s_kb.panel_hidden = false;
+      if (!dragging) {
+        ImVec2 p, sz;
+        igGetWindowPos(&p);
+        igGetWindowSize(&sz);
+        s_kb.panel_x0 = p.x;
+        s_kb.panel_y0 = p.y;
+        s_kb.panel_x1 = p.x + sz.x;
+        s_kb.panel_y1 = p.y + sz.y;
+        s_kb.panel_valid = true;
+      }
+    }
+    return false; /* caller skips its content; panel_end() still runs */
+  }
+
+  igSetNextWindowPos(
+      (ImVec2){right ? sw - margin : margin, sh * 0.5f}, ImGuiCond_Always,
+      (ImVec2){right ? 1.0f : 0.0f, 0.5f});
+  igSetNextWindowSizeConstraints((ImVec2){pw, 0.0f},
+                                 (ImVec2){pw, sh * 0.92f}, NULL, NULL);
   bool open = igBegin(id, NULL, fl);
+  if (open) {
+    /* Layout helpers: hide the panel, or swap it to the other side of the
+       screen, so any spot on the canvas can be used for a key. */
+    if (igButton("Hide", (ImVec2){0, 0})) s_kb.panel_hidden = true;
+    igSameLine(0, 8.0f * ui_s);
+    if (igButton(right ? "Move left" : "Move right", (ImVec2){0, 0}))
+      s_kb.panel_side = right ? 1 : 2;
+  }
   if (open && !dragging) {
     ImVec2 p, s;
     igGetWindowPos(&p);
@@ -758,8 +808,14 @@ static void panel_key(tenv *env, float sw, float sh, float ui_s,
         form_slider("Width", "##kb_w", &u->key_btn_wmul[i], KEY_W_MIN,
                     KEY_W_MAX, "%.2fx");
       float hm = b->rel_size / KEY_REF_SIZE;
+      float hmax = circle ? KEY_H_MAX
+                          : key_h_limit(b, sane_wmul(u->key_btn_wmul[i]));
+      if (!circle && hm > hmax) { /* width was reduced: keep height <= 80% */
+        hm = hmax;
+        b->rel_size = hm * KEY_REF_SIZE;
+      }
       if (form_slider(circle ? "Size" : "Height", "##kb_h", &hm, KEY_H_MIN,
-                      KEY_H_MAX, "%.2fx"))
+                      hmax, "%.2fx"))
         b->rel_size = hm * KEY_REF_SIZE;
       form_slider("Opacity", "##kb_op", &b->opacity, 0.10f, 1.0f, "%.2f");
       bool circ = circle;

@@ -463,6 +463,33 @@ static inline hotkey* usr_hotkey(user_settings* u, int i) {
 
 void user_settings_default(user_settings* usr_settings);
 void read_user_settings(user_settings* usr_settings);
+/* Latency compensation (server-synced steering + extra head lead). Stored in
+   the first spare byte of net_graph_reserved so the file layout is unchanged;
+   the byte holds 1 when the option is OFF, so existing files default to ON. */
+static inline bool user_settings_latency_comp(const user_settings* s) {
+  return s->net_graph_reserved[0] == 0;
+}
+static inline void user_settings_set_latency_comp(user_settings* s, bool on) {
+  s->net_graph_reserved[0] = on ? 0 : 1;
+}
+
+/* How much of the one-way delay our own turns are held back on screen while
+   Latency compensation is ON: 0 = show the turn instantly (old behaviour),
+   100 = show it exactly when the server receives it. Stored in the second spare
+   byte of net_graph_reserved as percent+1, so 0 (old files) means the default,
+   100 (what you see is what the server has). */
+static inline int user_settings_turn_delay_pct(const user_settings* s) {
+  int v = s->net_graph_reserved[1];
+  if (v == 0) return 100;
+  v -= 1;
+  return v > 100 ? 100 : v;
+}
+static inline void user_settings_set_turn_delay_pct(user_settings* s, int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  s->net_graph_reserved[1] = (uint8_t)(pct + 1);
+}
+
 void save_user_settings(user_settings* usr_settings);
 /* Remember a nickname in the previous-names list. Ignores empty names and
    names already in the list. Returns true if the list changed. */

@@ -10,12 +10,12 @@
 /*
  * Steering prediction. The server only starts turning the snake when our
  * steering packet reaches it, and we only see the turn when its echo comes
- * back a full round trip later. STEER_PREDICT_MODE (constants.h) picks what
+ * back a full round trip later. The "Latency compensation" setting picks what
  * the local head does meanwhile:
- *   1 = turn the instant the packet is sent (feels instant, but the on-screen
- *       head is ahead of the real one by one-way delay);
- *   2 = turn when the server will receive the packet, so the head on screen
- *       is where the real head is.
+ *   OFF = turn the instant the packet is sent (feels instant, but the
+ *         on-screen head is ahead of the real one by one-way delay);
+ *   ON  = turn when the server will receive the packet, so the head on screen
+ *         is where the real head is.
  * Server echoes about our own heading are held back for a short window (see
  * callback.c) so they can't drag the head back to where it was a round trip
  * ago; once the window closes the normal smoothing reconciles any leftover.
@@ -51,8 +51,8 @@ static void steer_predict(game_data* gdata, snake* me, int sang,
                           double now_ms) {
 #if STEER_PREDICT
   if (me->dead) return;
-#if STEER_PREDICT_MODE == 2
-  float delay = gdata->data.owd_ms;
+  if (gdata->data.lat_comp) {
+  float delay = gdata->data.owd_ms * gdata->data.turn_delay_frac;
   if (delay > STEER_SERVER_MATCH_MAX_MS) delay = STEER_SERVER_MATCH_MAX_MS;
   if (delay < 1.0f) { /* no ping measured yet */
     steer_turn_now(gdata, me, sang, now_ms);
@@ -74,9 +74,9 @@ static void steer_predict(game_data* gdata, snake* me, int sang,
   double hold = delay + steer_window_ms(gdata);
   if (hold > STEER_PRED_MAX_WINDOW_MS) hold = STEER_PRED_MAX_WINDOW_MS;
   gdata->data.steer_pred_until_ms = now_ms + hold;
-#else
+  return;
+  }
   steer_turn_now(gdata, me, sang, now_ms);
-#endif
 #else
   (void)gdata; (void)me; (void)sang; (void)now_ms;
 #endif
@@ -84,12 +84,16 @@ static void steer_predict(game_data* gdata, snake* me, int sang,
 
 /* Every frame: apply the queued turns the server has "received" by now. */
 static void steer_apply_due(game_data* gdata, snake* me, double now_ms) {
-#if STEER_PREDICT && STEER_PREDICT_MODE == 2
+#if STEER_PREDICT
   int n = gdata->data.steer_q_n;
   if (n <= 0) return;
   if (me->dead) { gdata->data.steer_q_n = 0; return; }
   int due = 0;
-  while (due < n && gdata->data.steer_q_due_ms[due] <= now_ms) due++;
+  /* Switched off mid-game: apply whatever is still waiting right away. */
+  if (!gdata->data.lat_comp) due = n;
+  /* Frames are ~11 ms apart: a turn due within half a frame is applied now
+     rather than a whole frame late. */
+  else while (due < n && gdata->data.steer_q_due_ms[due] <= now_ms + 5.0) due++;
   if (due == 0) return;
   steer_turn_now(gdata, me, gdata->data.steer_q_ang[due - 1], now_ms);
   for (int i = due; i < n; i++) {
@@ -108,6 +112,8 @@ void input(tenv* env) {
   game_data* gdata = &usr->gdata;    
   user_settings* usrs = &usr->usrs;    
   struct mg_connection* connection = gdata->connection;    
+  gdata->data.lat_comp = user_settings_latency_comp(usrs);
+  gdata->data.turn_delay_frac = user_settings_turn_delay_pct(usrs) / 100.0f;
     
   if (!gdata->data.wfpr) {    
     if (gdata->data.ctm - gdata->data.last_ping_mtm > 250) {    

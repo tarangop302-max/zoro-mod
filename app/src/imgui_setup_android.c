@@ -229,6 +229,7 @@ void imgui_init(tenv* env) {
     style->DockingSeparatorSize = 1;
     style->ScrollbarPadding = 1.0f * ui_scale;
     style->CellPadding.x    = 2.0f * ui_scale;
+    style->TouchExtraPadding = (ImVec2){4.0f * ui_scale, 4.0f * ui_scale};
 
     igStyleColorsDark(style);
     style->Colors[ImGuiCol_Text]       = (ImVec4){0.89f, 0.89f, 0.89f, 1.00f};

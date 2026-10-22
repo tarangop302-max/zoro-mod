@@ -723,7 +723,7 @@ void read_user_settings(user_settings* usr_settings) {
   }
   for (int i = 0; i < MAX_KEY_BTNS; ++i) {
     if (loaded.key_btn_wmul[i] < 0.5f) loaded.key_btn_wmul[i] = 0.5f;
-    if (loaded.key_btn_wmul[i] > 2.0f) loaded.key_btn_wmul[i] = 2.0f;
+    if (loaded.key_btn_wmul[i] > 3.0f) loaded.key_btn_wmul[i] = 3.0f;
   }
   if (!isfinite(loaded.zslider_thick) || loaded.zslider_thick < 0.5f ||
       loaded.zslider_thick > 3.0f)

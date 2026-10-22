@@ -223,6 +223,10 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Performance mode");
       igAlignTextToFramePadding();
+      igText("Latency compensation");
+      igAlignTextToFramePadding();
+      igText("Turn delay");
+      igAlignTextToFramePadding();
       igText("Cursor size");
       igAlignTextToFramePadding();
       igText("UI font size");
@@ -288,6 +292,18 @@ void ui_settings(tenv* env) {
                                           "120 FPS", "144 FPS"}, 5, -1))
         usrs->fps_limit = fps_values[fps_index];
       igCheckbox("##performance mode", &usrs->performance_mode);
+      {
+        bool lat_on = user_settings_latency_comp(usrs);
+        if (igCheckbox("##latency comp", &lat_on))
+          user_settings_set_latency_comp(usrs, lat_on);
+        int delay_pct = user_settings_turn_delay_pct(usrs);
+        igBeginDisabled(!lat_on);
+        igSetNextItemWidth(-1);
+        if (igSliderInt("##turn delay", &delay_pct, 0, 100, "%d%%",
+                        ImGuiSliderFlags_AlwaysClamp))
+          user_settings_set_turn_delay_pct(usrs, delay_pct);
+        igEndDisabled();
+      }
       igSetNextItemWidth(-1);
       igSliderInt("##cursor size", &usrs->cursor_size, 16, 64, "%d px",
                   ImGuiSliderFlags_AlwaysClamp);
@@ -355,6 +371,7 @@ void ui_settings(tenv* env) {
     igSpacing();
     igTextWrapped("FPS limit is a maximum, not a forced refresh rate. Actual FPS cannot exceed your phone's active display refresh rate. Android Auto mode may keep the screen at 60 Hz; select 90/120/144 Hz in the phone's Display settings to use a matching Vlither limit.");
     igTextDisabled("VSync can also cap rendering to the current display mode.");
+    igTextWrapped("Latency compensation: your own turns appear on screen when the server actually receives them, and other snakes' heads are drawn where the server has them now. What you see is what can hit you, at the cost of your turns showing about half your ping later. Turn delay sets how much of that wait is applied: 0% shows your turns instantly (the old behaviour), 100% shows them exactly when the server gets them. Keep it at 100% for a true picture: lowering it makes turns look faster than they really are.");
     igEndChild();
     }
 

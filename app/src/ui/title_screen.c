@@ -375,7 +375,7 @@ void ui_title_screen(tenv* env) {
   }
   crystal_sheen();
   igSameLine(0, -1);
-  if (igButton("Chat",
+  if (igButton("TEAM CHAT",
                (ImVec2){logo_size / 2 - style->ItemSpacing.x / 2})) {
     usr->gdata.curr_screen = NTL_PANEL;
   }
@@ -384,19 +384,6 @@ void ui_title_screen(tenv* env) {
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 6 +
                   frame_height * 5);
-  /* Voice Chat: matches Vlither's panel layout. Vlither's button opens a
-     full voice-chat screen backed by mic capture/network code this repo
-     doesn't have yet, so for now this opens the existing team chat panel
-     instead of a dead button. Swap the target screen here once/if a real
-     voice backend is ported. */
-  if (igButton("Voice Chat", (ImVec2){logo_size})) {
-    usr->gdata.curr_screen = NTL_PANEL;
-  }
-  crystal_sheen();
-
-  igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
-  igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 7 +
-                  frame_height * 6);
   if (igButton("\ue90c Kill Shots", (ImVec2){logo_size})) {
     /* ui_kills_gallery_init()/_destroy() are only ever called once each,
        at app startup/shutdown (see main.c's tinit/tdestroy) -- so the
@@ -412,8 +399,8 @@ void ui_title_screen(tenv* env) {
   crystal_sheen();
 
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
-  igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 8 +
-                  frame_height * 7);
+  igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 7 +
+                  frame_height * 6);
   if (igButton("\ue90c Clips", (ImVec2){logo_size})) {
     /* Same fix as Kill Shots above -- clips_gallery.c's s_scanned flag
        only ever got reset at app shutdown, so a clip saved after the

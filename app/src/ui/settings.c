@@ -229,6 +229,8 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Cursor size");
       igAlignTextToFramePadding();
+      igText("Dynamic minimap");
+      igAlignTextToFramePadding();
       igText("UI font size");
       igAlignTextToFramePadding();
       igText("Stats font size");
@@ -307,6 +309,11 @@ void ui_settings(tenv* env) {
       igSetNextItemWidth(-1);
       igSliderInt("##cursor size", &usrs->cursor_size, 16, 64, "%d px",
                   ImGuiSliderFlags_AlwaysClamp);
+      {
+        bool dyn_mm = user_settings_dynamic_minimap(usrs);
+        if (igCheckbox("##dynamic minimap", &dyn_mm))
+          user_settings_set_dynamic_minimap(usrs, dyn_mm);
+      }
       igSetNextItemWidth(-1);
       igCombo_Str_arr("##ui font size", (int*)&usrs->ui_font_size,
                       (const char*[]){"Small", "Regular", "Large"}, 3, -1);

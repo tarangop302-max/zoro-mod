@@ -9,6 +9,7 @@
 #include "../user.h"
 #include "../game/screenshot.h"
 #include "../game/snakey_rain.h"
+#include "../game/lifetime_stats.h"
 #include "crystal_theme.h"
 #include "kills_gallery.h"
 #include "clips_gallery.h"
@@ -127,6 +128,13 @@ void ui_title_screen(tenv* env) {
   igTextColored((ImVec4){0.85f, 0.80f, 1.0f, 0.55f}, "\ueaeb");
   igSameLine(0, -1);
   igTextColored((ImVec4){0.85f, 0.80f, 1.0f, 0.55f}, "%d", usrs->kills);
+  {
+    int best_kills = lifetime_stats_best_match_kills();
+    if (best_kills < usrs->kills) best_kills = usrs->kills;
+    igSameLine(0, -1);
+    igTextColored((ImVec4){1, 0.85f, 0.4f, 0.7f}, "  Best %d  Total %d",
+                  best_kills, lifetime_stats_total_kills());
+  }
 
   igSetCursorPosX(stats_margin_x);
   igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 2);
@@ -144,7 +152,10 @@ void ui_title_screen(tenv* env) {
   igSetCursorPosY(ctx->size[1] - stats_margin_y - stats_row * 1);
   igTextColored((ImVec4){1, 0.85f, 0.4f, 0.7f}, "\ue99e");
   igSameLine(0, -1);
-  igTextColored((ImVec4){1, 0.85f, 0.4f, 0.7f}, "Best %d", usrs->best_length);
+  igTextColored((ImVec4){1, 0.85f, 0.4f, 0.7f}, "Best %d",
+                lifetime_stats_best_length() > usrs->best_length
+                    ? lifetime_stats_best_length()
+                    : usrs->best_length);
 
   igPopFont();
 

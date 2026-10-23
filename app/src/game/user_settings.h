@@ -490,6 +490,16 @@ static inline void user_settings_set_turn_delay_pct(user_settings* s, int pct) {
   s->net_graph_reserved[1] = (uint8_t)(pct + 1);
 }
 
+/* Dynamic minimap (minimap shrinks slightly as the arena shrinks). Stored in
+   the third spare byte of net_graph_reserved so the file layout is unchanged;
+   the byte holds 1 when the option is OFF, so existing files default to ON. */
+static inline bool user_settings_dynamic_minimap(const user_settings* s) {
+  return s->net_graph_reserved[2] == 0;
+}
+static inline void user_settings_set_dynamic_minimap(user_settings* s, bool on) {
+  s->net_graph_reserved[2] = on ? 0 : 1;
+}
+
 void save_user_settings(user_settings* usr_settings);
 /* Remember a nickname in the previous-names list. Ignores empty names and
    names already in the list. Returns true if the list changed. */

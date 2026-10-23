@@ -11,6 +11,7 @@
 #include "../game/eyes_back.h"
 #include "../game/snake.h"
 #include "../game/snakey_rain.h"
+#include "../game/lifetime_stats.h"
 #include "../user.h"
 
 void snl(game_data* gdata, snake* o) {
@@ -1352,6 +1353,10 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
     }
   } else if (cmd == 'k') {
     gdata->data.kills++;
+    if (!gdata->preview_active) {
+      lifetime_stats_add_kill();
+      lifetime_stats_note_match_kills(gdata->data.kills);
+    }
   } else if (cmd == 'v') {
     gdata->data.follow_view = false;
     gdata->data.lview_xx = gdata->data.view_xx;
@@ -1367,6 +1372,7 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
         usrs->best_length = gdata->data.score;
 
       save_user_settings(usrs);
+      lifetime_stats_save_if_dirty();
     }
 
     if (usrs->instant_restart) {

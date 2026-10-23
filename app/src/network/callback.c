@@ -1,4 +1,3 @@
-
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
 #include <android/log.h>

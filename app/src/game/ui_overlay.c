@@ -15,6 +15,7 @@
 #include "user_settings.h"
 #include "sbot.h"
 #include "ntl_team.h"
+#include "lifetime_stats.h"
 #include "global_chat.h"
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
@@ -363,6 +364,8 @@ void ui_overlay(tenv* env) {
                                           15 -
                                       5) /
                           1;
+      if (!gdata->preview_active)
+        lifetime_stats_note_length(gdata->data.score);
 
       /* Current length, computed exactly like the number on other snakes'
          name labels (redraw.c): segment count only. `score` above also adds
@@ -460,6 +463,12 @@ void ui_overlay(tenv* env) {
     float mm_min = fminf(72.0f, mm_max);
     float mm_size = fminf((float)usrs->minimap_size, mm_max);
     if (mm_size < mm_min) mm_size = mm_min;
+    /* Dynamic minimap: shrink a little as the arena (flux_grd) shrinks. */
+    if (user_settings_dynamic_minimap(usrs) && gdata->data.grd > 1.0f) {
+      float arena_scale = gdata->data.flux_grd / gdata->data.grd;
+      arena_scale = fmaxf(0.72f, fminf(arena_scale, 1.0f));
+      mm_size = fmaxf(mm_min, mm_size * (0.78f + arena_scale * 0.22f));
+    }
 
     /*
      * The player stats block (nickname/IP/ping/FPS/timer) and the

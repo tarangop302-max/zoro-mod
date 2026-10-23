@@ -17,6 +17,7 @@
 #include "redraw.h"
 #include "ui_overlay.h"
 #include "../ui/settings.h"
+#include "lifetime_stats.h"
 
 void game_loop(tenv* env) {
   tuser_data* usr = env->usr;
@@ -120,6 +121,7 @@ void game_loop(tenv* env) {
       // handlers in death_screen.c), whether that happens because the
       // connection had already closed by then or closes right after.
       if (gdata->closed && !gdata->death_pending) {
+        lifetime_stats_save_if_dirty();
         game_data_reset(env);
 
         if (gdata->kill_review_pending) {

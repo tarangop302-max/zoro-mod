@@ -399,6 +399,27 @@ void ui_overlay(tenv* env) {
           laser_tx = mww2;
           laser_ty = mhh2;
         }
+
+        /* Joystick mode: there is no cursor, so fire the laser along the
+           joystick direction from the head to the screen edge. */
+        bool joystick_laser = !usrs->ctrl_mode_trackpad;
+        if (joystick_laser) {
+          float ang = gdata->touch_ctrl.joy_has_direction
+                          ? gdata->touch_ctrl.joy_angle
+                          : me->ehang;
+          float sx = mww2 + (hx - gdata->data.view_xx) * gdata->data.gsc;
+          float sy = mhh2 + (hy - gdata->data.view_yy) * gdata->data.gsc;
+          float sw_ = (float)ctx->size[0], sh_ = (float)ctx->size[1];
+          float ddx = cosf(ang), ddy = sinf(ang);
+          float tx_ = ddx > 1e-4f ? (sw_ - sx) / ddx
+                                  : (ddx < -1e-4f ? (0.0f - sx) / ddx : 1e9f);
+          float ty_ = ddy > 1e-4f ? (sh_ - sy) / ddy
+                                  : (ddy < -1e-4f ? (0.0f - sy) / ddy : 1e9f);
+          float len = fminf(fminf(tx_, ty_), 0.95f * fminf(sw_, sh_));
+          if (len < 0.0f) len = 0.0f;
+          laser_tx = sx + ddx * len;
+          laser_ty = sy + ddy * len;
+        }
 #else
         float laser_tx = env->ms->pos[0];
         float laser_ty = env->ms->pos[1];
@@ -412,6 +433,17 @@ void ui_overlay(tenv* env) {
                 (ImVec4){usrs->laser_color[0], usrs->laser_color[1],
                          usrs->laser_color[2], usrs->laser_color[3] * a}),
             usrs->laser_thickness);
+#ifdef ANDROID
+        /* Dot at the laser tip when steering with the joystick. */
+        if (!usrs->ctrl_mode_trackpad)
+          ImDrawList_AddCircleFilled(
+              igGetWindowDrawList(), (ImVec2){laser_tx, laser_ty},
+              fmaxf(3.0f, usrs->laser_thickness * 1.6f),
+              igColorConvertFloat4ToU32(
+                  (ImVec4){usrs->laser_color[0], usrs->laser_color[1],
+                           usrs->laser_color[2], usrs->laser_color[3] * a}),
+              16);
+#endif
       }
     }
   }

@@ -1099,7 +1099,10 @@ void redraw(tenv* env) {
             push_body_ribbon(usr->r->bpr, gdata, bp, mww2, mhh2, ribbon_half_w);
         } else if (mode->render_mode == 2) {
           float skinless_a = skin_alpha;
-          bool ribbon_snake = skinless_a < 1.0f;
+          /* Flat mode always draws the body as one continuous ribbon (same
+           * smooth, plain tube the transparent skin uses), even when fully
+           * opaque, so there are no circle-per-point scallops/segments. */
+          bool ribbon_snake = true;
           if (render_shadows) {
 
             int start = bp >= 4 ? bp - 4 : 0;

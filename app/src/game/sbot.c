@@ -63,13 +63,44 @@ sbot_dbg g_bot_dbg;
  * Head-on snakes keep their own arrival-time check in every tier.
  */
 #define ZONE_AXIS_COURSE 0.5f   /* rad, outward from the loop tangent */
-#define ZONE_FWD_W 2.5f         /* red zone centre, ahead of the head */
-#define ZONE_A_W 4.5f           /* red zone half-length               */
-#define ZONE_B_W 3.0f           /* red zone half-width                */
+#define ZONE_FWD_W 2.0f         /* red zone centre, ahead of the head */
+#define ZONE_OUT_SHIFT_W 0.5f   /* red zone centre, shifted to the outward side */
+#define ZONE_A_W 3.5f           /* red zone half-length               */
+#define ZONE_B_W 2.2f           /* red zone half-width                */
 #define OUTER_FWD_W 4.0f        /* outer oval centre, ahead of head   */
 #define OUTER_A_W 9.0f          /* outer oval half-length (~2x red)   */
 #define OUTER_B_W 6.0f          /* outer oval half-width  (~2x red)   */
 #define TIER2_COURSE 0.45f      /* outward course cap while in tier 2 */
+
+/* Enemy head direction. "Facing" = smallest angle between its heading and the
+ * direction to any point of my predicted arc.
+ *   <= FACE_REACT_DEG : may put me in tier 3 (react) from the red zone
+ *   <= FACE_AWAY_DEG  : still gets the head arrival-time check in tier 3
+ *   beyond            : red zone only counts as tier 2 (steady push); it has to
+ *                       turn first, and sideways heads are still covered by the
+ *                       head-on ray check. */
+#define FACE_REACT_DEG 60.0f
+#define FACE_AWAY_DEG 100.0f
+#define FACE_BOOST_DEG 90.0f          /* yellow oval: boosting head counts up to this angle */
+#define CLOSE_ARC_W 2.0f              /* a head this close to my arc counts whatever it faces */
+
+/* Reaction timing by enemy state (width-units of arrival margin).
+ * not boosting + facing me -> react late;  boosting + facing me -> react early. */
+#define HEAD_HOLD_LATE_M 1.0f         /* never below ~1: my own turn-away time */
+#define HEAD_FREE_LATE_M 8.0f
+#define HEAD_FREE_OUT_LATE_M 5.0f
+#define HEAD_HOLD_EARLY_M 3.5f
+#define HEAD_FREE_EARLY_M 18.0f
+#define HEAD_FREE_OUT_EARLY_M 11.0f
+
+/* Return-path (straight-line) check */
+#define HEADON_HOLD_LATE_M 3.0f
+#define HEADON_FREE_LATE_M 9.0f
+#define HEADON_HOLD_EARLY_M 7.0f
+#define HEADON_FREE_EARLY_M 20.0f
+#define HEADON_MAX_BOOST_W 25.0f      /* ignore boosting heads farther than this (width) */
+#define HEADON_MAX_IDLE_W 14.0f       /* ignore non-boosting heads farther than this */
+#define HEADON_CLOSE_W 8.0f           /* nearer than this: assume it can boost any moment */
 
 /* Enemy BODIES never switch tiers or trigger the head logic. They only get a
  * short collision guard on the first stretch of my predicted arc. */
@@ -706,6 +737,54 @@ static float margin_to_lim(float m, float hold, float free_m, float neg_slope) {
   return fmaxf(-2.0f, (m - hold) * neg_slope);
 }
 
+/* smallest angle between enemy heading and the direction to my predicted arc,
+ * and the smallest distance from its head to the arc */
+static void head_arc_info(const snake* sk, const v2* q, int qn, float* face,
+                          float* dmin) {
+  float best = (float)M_PI, bd2 = 1e30f;
+  for (int k = 0; k < qn; k++) {
+    float a = angdiff_abs(atan2f(q[k].y - sk->yy, q[k].x - sk->xx), sk->ang);
+    if (a < best) best = a;
+    float d2 = dist2(q[k].x, q[k].y, sk->xx, sk->yy);
+    if (d2 < bd2) bd2 = d2;
+  }
+  *face = best;
+  *dmin = sqrtf(bd2);
+}
+
+/* Is there a body between the attacker's head and my arc point, on its line?
+ * Other snakes' bodies (not the attacker's own) and my own body both block it:
+ * the attacker would die on them first. Checked every frame, so a blocker that
+ * moves away brings the threat back. */
+static bool ray_blocked(game_data* gdata, int skip_idx, v2 eh, v2 dir,
+                        float er, float u_end) {
+  int ns = tdarray_length(gdata->data.snakes);
+  for (int j = 0; j < ns; j++) {
+    if (j == skip_idx) continue;
+    snake* sj = gdata->data.snakes + j;
+    if (sj->id == B.id || sj->dead) continue;
+    float br = snake_width(sj->sc) * 0.5f;
+    int pn = tdarray_length(sj->pts);
+    for (int m = 0; m < pn; m++) {
+      body_part* po = sj->pts + m;
+      if (po->dying) continue;
+      float rx = po->xx - eh.x, ry = po->yy - eh.y;
+      float ub = rx * dir.x + ry * dir.y;
+      if (ub <= er || ub >= u_end) continue;
+      if (fabsf(rx * dir.y - ry * dir.x) <= er + br) return true;
+    }
+  }
+  float u_mine = u_end - 1.5f * B.width;
+  for (int m = 0; m < B.bpts_n; m += 4) {
+    if (B.bpts[m].len < 4.0f * B.width) continue;
+    float rx = B.bpts[m].x - eh.x, ry = B.bpts[m].y - eh.y;
+    float ub = rx * dir.x + ry * dir.y;
+    if (ub <= er || ub >= u_mine) continue;
+    if (fabsf(rx * dir.y - ry * dir.x) <= er + B.radius) return true;
+  }
+  return false;
+}
+
 static inline bool in_ellipse(float px, float py, float cx, float cy,
                               float ux, float uy, float a, float b) {
   float dx = px - cx, dy = py - cy;
@@ -769,8 +848,10 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
             close_tang.y * zcs + o * close_tang.x * zsn};
   R->ax = zax.x;
   R->ay = zax.y;
-  R->zc_x = B.x + zax.x * ZONE_FWD_W * B.width;
-  R->zc_y = B.y + zax.y * ZONE_FWD_W * B.width;
+  R->zc_x = B.x + zax.x * ZONE_FWD_W * B.width +
+            close_norm.x * ZONE_OUT_SHIFT_W * B.width;
+  R->zc_y = B.y + zax.y * ZONE_FWD_W * B.width +
+            close_norm.y * ZONE_OUT_SHIFT_W * B.width;
   R->za = ZONE_A_W * B.width;
   R->zb = ZONE_B_W * B.width;
   R->oc_x = B.x + zax.x * OUTER_FWD_W * B.width;
@@ -785,12 +866,24 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
     float er = snake_width(sk->sc) * 0.5f;
     v2 eh = {sk->xx, sk->yy};
     if (!point_in_poly_large(eh, inside)) {
+      float face_t, dmin_t;
+      head_arc_info(sk, R->q, PATH_N + 1, &face_t, &dmin_t);
+      bool facing_t = face_t <= FACE_REACT_DEG * (float)M_PI / 180.0f;
+      bool close_t = dmin_t <= CLOSE_ARC_W * B.width + er + B.radius;
+      bool boost_t = sk->sp > 10.0f;
       if (in_ellipse(eh.x, eh.y, R->zc_x, R->zc_y, zax.x, zax.y, R->za + er,
-                     R->zb + er))
-        tier = 3;
-      else if (in_ellipse(eh.x, eh.y, R->oc_x, R->oc_y, zax.x, zax.y,
-                          R->oa + er, R->ob + er))
-        tier = 2;
+                     R->zb + er)) {
+        /* red zone: facing me (or very close) reacts; others = steady push */
+        if (facing_t || close_t)
+          tier = 3;
+        else if (tier < 2)
+          tier = 2;
+      } else if (tier < 2 &&
+                 in_ellipse(eh.x, eh.y, R->oc_x, R->oc_y, zax.x, zax.y,
+                            R->oa + er, R->ob + er) &&
+                 (facing_t || close_t ||
+                  (boost_t && face_t <= FACE_BOOST_DEG * (float)M_PI / 180.0f)))
+        tier = 2; /* yellow oval: only heads that can actually come at me */
     }
   }
   R->tier = tier;
@@ -851,7 +944,7 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
   float lim_body = fminf(lim_out, lim_in);
 
   /* ---- 2) head arrival, 3) head-on ---------------------------------- */
-  float m_head = 1e9f, m_on = 1e9f, lim_head = LIM_FREE;
+  float m_head = 1e9f, m_on = 1e9f, lim_head = LIM_FREE, lim_on = LIM_FREE;
   float h_te = 0, h_s = 0, o_te = 0, o_s = 0;
   v2 h_src = {0, 0}, h_q = {0, 0}, o_src = {0, 0}, o_q = {0, 0};
 
@@ -879,10 +972,26 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
     float ang_out = ang_rel * out_sign;
     bool in_sector =
         ang_out >= 0.0f && ang_out <= HEAD_SECTOR_DEG * (float)M_PI / 180.0f;
-    float head_free = in_sector ? HEAD_FREE_M : HEAD_FREE_OUT_M;
+    float face_e, dmin_e;
+    head_arc_info(sk, R->q, PATH_N + 1, &face_e, &dmin_e);
+    bool facing_e = face_e <= FACE_REACT_DEG * (float)M_PI / 180.0f;
+    bool close_e = dmin_e <= CLOSE_ARC_W * B.width + er + B.radius;
+    bool early_e = boosting && facing_e;  /* boosting straight at me */
+    bool late_e = !boosting && facing_e;  /* walking at me: react last */
+    float head_hold = early_e ? HEAD_HOLD_EARLY_M
+                              : (late_e ? HEAD_HOLD_LATE_M : HEAD_HOLD_M);
+    float head_free =
+        early_e ? (in_sector ? HEAD_FREE_EARLY_M : HEAD_FREE_OUT_EARLY_M)
+                : (late_e ? (in_sector ? HEAD_FREE_LATE_M : HEAD_FREE_OUT_LATE_M)
+                          : (in_sector ? HEAD_FREE_M : HEAD_FREE_OUT_M));
+    float hon_hold = early_e ? HEADON_HOLD_EARLY_M
+                             : (late_e ? HEADON_HOLD_LATE_M : HEADON_HOLD_M);
+    float hon_free = early_e ? HEADON_FREE_EARLY_M
+                             : (late_e ? HEADON_FREE_LATE_M : HEADON_FREE_M);
     bool do_head =
         react && in_ellipse(eh.x, eh.y, R->oc_x, R->oc_y, zax.x, zax.y,
-                            R->oa + er, R->ob + er);
+                            R->oa + er, R->ob + er) &&
+        (face_e <= FACE_AWAY_DEG * (float)M_PI / 180.0f || close_e);
 
     for (int k = 0; k <= PATH_N; k++) {
       v2 q = R->q[k];
@@ -895,7 +1004,7 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
       float dth = angdiff_abs(atan2f(q.y - eh.y, q.x - eh.x), sk->ang);
       float te = (d_reach + dth * HEAD_TURN_W * ew) / ve;
       float m = (te - tm) * SPEED_BASE / B.width;
-      float lk = margin_to_lim(m, HEAD_HOLD_M, head_free, HEAD_NEG_SLOPE);
+      float lk = margin_to_lim(m, head_hold, head_free, HEAD_NEG_SLOPE);
       if (lk < lim_head) {
         lim_head = lk;
         h_src = eh;
@@ -910,26 +1019,35 @@ static void scan_threats(game_data* gdata, const poly_box_large* inside,
 
       /* 3) straight along its heading, worst case boost */
       float u = (q.x - eh.x) * dir.x + (q.y - eh.y) * dir.y;
-      if (u > 0.0f) {
+      float u_max = (boosting ? HEADON_MAX_BOOST_W : HEADON_MAX_IDLE_W) * B.width;
+      if (u > 0.0f && u <= u_max) {
         float perp = fabsf((q.x - eh.x) * dir.y - (q.y - eh.y) * dir.x);
         float tol = er + B.radius + HEADON_BUF_W * B.width + 0.08f * u;
         if (perp <= tol) {
-          float te3 = fmaxf(0.0f, u - er - B.radius) / v3;
+          /* a walking head far away is assumed to stay at walking pace;
+           * nearby it may boost any moment */
+          float vv = (!boosting && u > HEADON_CLOSE_W * B.width) ? ve : v3;
+          float te3 = fmaxf(0.0f, u - er - B.radius) / vv;
           float m3 = (te3 - tm) * SPEED_BASE / B.width;
-          if (m3 < m_on) {
-            m_on = m3;
-            o_te = te3;
-            o_s = R->s[k];
-            o_src = eh;
-            o_q = q;
+          float lk3 = margin_to_lim(m3, hon_hold, hon_free, HEADON_NEG_SLOPE);
+          /* only a real threat is worth the body-in-between test */
+          if (lk3 < LIM_FREE && (lk3 < lim_on || m3 < m_on) &&
+              !ray_blocked(gdata, i, eh, dir, er, u - B.radius - B.width)) {
+            if (lk3 < lim_on) {
+              lim_on = lk3;
+              o_src = eh;
+              o_q = q;
+            }
+            if (m3 < m_on) {
+              m_on = m3;
+              o_te = te3;
+              o_s = R->s[k];
+            }
           }
         }
       }
     }
   }
-
-  float lim_on =
-      margin_to_lim(m_on, HEADON_HOLD_M, HEADON_FREE_M, HEADON_NEG_SLOPE);
 
   R->lim = fminf(lim_body, fminf(lim_head, lim_on));
   if (tier == 2) R->lim = fminf(R->lim, TIER2_COURSE);
@@ -1038,7 +1156,14 @@ static void follow_circle_self(game_data* gdata) {
       float d1 = dist2(eh.x, eh.y, target_pt.x, target_pt.y);
       float d2_ = dist2(ea.x, ea.y, target_pt.x, target_pt.y);
       float dm = d1 < d2_ ? d1 : d2_;
-      if (dm < enemy_head_d2) enemy_head_d2 = dm;
+      /* direction: a head pointing away from my ring point is no pull, unless
+       * it is already very close */
+      float face_t = angdiff_abs(
+          atan2f(target_pt.y - eh.y, target_pt.x - eh.x), sk->ang);
+      float near_r = CLOSE_ARC_W * B.width + B.radius;
+      bool relevant = face_t <= FACE_AWAY_DEG * (float)M_PI / 180.0f ||
+                      dm < near_r * near_r;
+      if (relevant && dm < enemy_head_d2) enemy_head_d2 = dm;
     }
 
     /*

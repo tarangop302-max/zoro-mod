@@ -44,7 +44,7 @@
    (same turn rate the server uses) instead of waiting a full round trip for
    the server to echo the turn back. Server echoes are reconciled afterwards.
    0 = old behaviour. */
-#define STEER_PREDICT 1
+#define STEER_PREDICT 0  /* NTL match: no local turn prediction, head turns on server echo */
 /* Latency compensation is a runtime setting (Settings > General): when ON,
    our own turns are shown when the server will receive them (sent time +
    one-way delay) instead of the instant they are sent, so the head on screen
@@ -62,24 +62,30 @@
    actually has it, which is a big part of "died before touching the body".
    Extrapolating that much (along the snake's own heading) draws heads where
    the server has them now. 0 = off, 1 = full estimate. */
-#define NET_LEAD_FACTOR 1.0f
+#define NET_LEAD_FACTOR 0.0f  /* NTL match: heads drawn where received, no extrapolation */
 #define NET_LEAD_MAX_MS 100.0f
 /* Extra extrapolation (ms) on top of the network delay. A frame is read up to
    one frame after its packet arrived and reaches the screen ~1-2 frames after
    it is drawn, none of which the ping covers -- at 90 Hz that is roughly 10-20
    ms. If enemy heads look too far ahead of their bodies lower this; if you
    still die before touching, raise it (try 0 / 10 / 20). */
-#define NET_LEAD_EXTRA_MS 10.0f
+#define NET_LEAD_EXTRA_MS 0.0f
 
 /* Lag-spike handling. A spike shorter than LAG_START_MS is simply ridden out by
    dead-reckoning at full speed (no slow-down). Past that the world eases down
    to LAG_MULT_MIN (was 0.2 after 750 ms, which looked like a freeze). */
-#define LAG_START_MS 1000.0f
-#define LAG_MULT_MIN 0.5f
+#define LAG_START_MS 750.0f  /* NTL match */
+#define LAG_MULT_MIN 0.2f  /* NTL match */
 
 /* Longest single frame the simulation will catch up on, in 8 ms units.
    Was 5 (=40 ms): any frame slower than 25 fps ran the world in slow motion. */
-#define MAX_VFR 10.0f
+#define MAX_VFR 5.0f  /* NTL match: frame step capped at 5 x 8 ms */
+
+/* NTL-matched steering values. */
+#define NTL_TRACKPAD_DIRECT 1        /* touch arrow always steers by direction from touch-down, like NTL */
+#define NTL_KEY_BATCH_MS 50          /* keyboard turn packets (was 150) */
+#define NTL_MOUSE_DEAD_D2 1.0f       /* squared px; mouse steers from 1 px out (was 256 = 16 px) */
+#define NTL_TOUCH_DEAD_R 20.0f       /* px dead zone for touch/arrow (was 6) */
 
 #define PI2 6.2831853f
 #define PI 3.1415926f

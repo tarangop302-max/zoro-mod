@@ -110,7 +110,6 @@ static void reset_tab(user_settings* usrs, int tab) {
       usrs->joy_opacity = 1.0f;
       break;
     case TAB_AIM:
-      usrs->ctrl_trackpad_direct = false;
       usrs->arrow_size = 1.0f;
       usrs->arrow_sensitivity = 1.0f;
       usrs->boost_arrow_anim = false;
@@ -227,7 +226,6 @@ static void tab_aim(tuser_data* usr, user_settings* usrs, ImGuiStyle* style,
     igSeparatorText("Touch arrow");
     if (!arrow_mode) igTextDisabled("Only used with the Arrow scheme.");
     if (form_begin("arrow_tbl")) {
-      form_check("Instant aim", "##arrow instant aim", &usrs->ctrl_trackpad_direct);
       form_slider("Size", "##arrow size", &usrs->arrow_size, 0.40f, 2.50f, "%.2f");
       form_slider("Sensitivity", "##arrow sens", &usrs->arrow_sensitivity, 0.25f,
                   3.00f, "%.2f");
@@ -236,9 +234,7 @@ static void tab_aim(tuser_data* usr, user_settings* usrs, ImGuiStyle* style,
       form_check("Sync with zoom", "##arrow sync zoom", &usrs->arrow_sync_with_zoom);
       igEndTable();
     }
-    igTextDisabled(usrs->ctrl_trackpad_direct
-                       ? "Instant aim: arrow points from touch-down to finger."
-                       : "Arrow catches up to your finger gradually.");
+    igTextDisabled("Drag to move the arrow away from the head.");
     igTextDisabled(usrs->arrow_sync_with_zoom
                        ? "Arrow size follows game zoom."
                        : "Arrow keeps a fixed on-screen size while zooming.");

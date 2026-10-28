@@ -21,7 +21,7 @@
  * ago; once the window closes the normal smoothing reconciles any leftover.
  */
 /* How long server echoes about our own heading are ignored after a turn. */
-static float steer_window_ms(game_data* gdata) {
+__attribute__((unused)) static float steer_window_ms(game_data* gdata) {
   float window = 2.0f * gdata->data.owd_ms + 50.0f;
   if (window < STEER_PRED_MIN_WINDOW_MS) window = STEER_PRED_MIN_WINDOW_MS;
   if (window > STEER_PRED_MAX_WINDOW_MS) window = STEER_PRED_MAX_WINDOW_MS;
@@ -141,7 +141,7 @@ void input(tenv* env) {
         gdata->data.kd_r_frb += gdata->data.vfrb;
 
       if (gdata->data.kd_l_frb > 0 || gdata->data.kd_r_frb > 0)
-        if (gdata->data.ctm - gdata->data.lkstm > 150) {
+        if (gdata->data.ctm - gdata->data.lkstm > NTL_KEY_BATCH_MS) {
           gdata->data.lkstm = gdata->data.ctm;
           if (gdata->data.kd_r_frb > 0)
             if (gdata->data.kd_l_frb > gdata->data.kd_r_frb) {
@@ -223,7 +223,7 @@ void input(tenv* env) {
             gdata->touch_ctrl.tp_vx           = 0.0f;
             gdata->touch_ctrl.tp_vy           = 0.0f;
 
-            if (usrs->ctrl_trackpad_direct) {
+            if (NTL_TRACKPAD_DIRECT) {
               /* Direct mode: don't fall back to the old heading-based
                * placement even on this very first frame. At the instant
                * of touch-down there's no drag yet (finger == anchor), so
@@ -255,7 +255,7 @@ void input(tenv* env) {
             }
           }
 
-          if (usrs->ctrl_trackpad_direct) {
+          if (NTL_TRACKPAD_DIRECT) {
 
             /* Direct/instant mode: the arrow points straight from the
              * touch-down point to wherever your finger is right now --
@@ -264,7 +264,7 @@ void input(tenv* env) {
              * so the snake reorients as fast as you move your finger.
              * Runs on every frame -- including the first -- so there's
              * no leftover-heading placement before you start dragging. */
-            #define NTL_DIRECT_DEAD_R 6.0f
+            #define NTL_DIRECT_DEAD_R NTL_TOUCH_DEAD_R
 
             float fdx  = tx - gdata->touch_ctrl.tp_touch_down_x;
             float fdy  = ty - gdata->touch_ctrl.tp_touch_down_y;
@@ -449,7 +449,7 @@ void input(tenv* env) {
       gdata->data.lsxm = xm;    
       gdata->data.lsym = ym;    
       float d2 = xm * xm + ym * ym;    
-      if (d2 > 256) {    
+      if (d2 > NTL_MOUSE_DEAD_D2) {    
         ang = atan2f(ym, xm);    
         me->eang = ang;    
       } else    
@@ -457,7 +457,7 @@ void input(tenv* env) {
       ang = fmodf(ang, PI2);    
       if (ang < 0) ang += PI2;    
       int sang = (int)floorf((250 + 1) * ang / PI2);    
-      if (eb_on) sang = eyes_back_tick(gdata, me, d2 > 256, ang, now_ms);    
+      if (eb_on) sang = eyes_back_tick(gdata, me, d2 > NTL_MOUSE_DEAD_D2, ang, now_ms);    
       if (eb_on) gdata->data.eb_eye_ang = (float)sang * PI2 / 251.0f;    
       if (sang != gdata->data.lsang) {    
         gdata->data.lsang = sang;    

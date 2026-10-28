@@ -82,7 +82,6 @@
 #define MAX_VFR 5.0f  /* NTL match: frame step capped at 5 x 8 ms */
 
 /* NTL-matched steering values. */
-#define NTL_TRACKPAD_DIRECT 1        /* touch arrow always steers by direction from touch-down, like NTL */
 #define NTL_KEY_BATCH_MS 50          /* keyboard turn packets (was 150) */
 #define NTL_MOUSE_DEAD_D2 1.0f       /* squared px; mouse steers from 1 px out (was 256 = 16 px) */
 #define NTL_TOUCH_DEAD_R 20.0f       /* px dead zone for touch/arrow (was 6) */

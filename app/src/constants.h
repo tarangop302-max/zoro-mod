@@ -74,12 +74,17 @@
 /* Lag-spike handling. A spike shorter than LAG_START_MS is simply ridden out by
    dead-reckoning at full speed (no slow-down). Past that the world eases down
    to LAG_MULT_MIN (was 0.2 after 750 ms, which looked like a freeze). */
-#define LAG_START_MS 1000.0f
-#define LAG_MULT_MIN 0.5f
+#define LAG_START_MS 750.0f  /* NTL match */
+#define LAG_MULT_MIN 0.2f  /* NTL match */
 
 /* Longest single frame the simulation will catch up on, in 8 ms units.
    Was 5 (=40 ms): any frame slower than 25 fps ran the world in slow motion. */
-#define MAX_VFR 10.0f
+#define MAX_VFR 5.0f  /* NTL match: frame step capped at 5 x 8 ms */
+
+/* NTL-matched steering values. */
+#define NTL_KEY_BATCH_MS 50          /* keyboard turn packets (was 150) */
+#define NTL_MOUSE_DEAD_D2 1.0f       /* squared px; mouse steers from 1 px out (was 256 = 16 px) */
+#define NTL_TOUCH_DEAD_R 20.0f       /* px dead zone for touch/arrow (was 6) */
 
 #define PI2 6.2831853f
 #define PI 3.1415926f

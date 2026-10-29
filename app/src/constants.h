@@ -36,7 +36,7 @@
 /* Minimum real-time gap between steering (angle) packets. Was 50 ms measured on
    the per-frame clock (which really meant 50-67 ms at 60 Hz). 33 ms is the rate
    the NTL client uses, i.e. ~30 steering updates per second. */
-#define STEER_ANGLE_MIN_MS 16.0
+#define STEER_ANGLE_MIN_MS 33.0
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 

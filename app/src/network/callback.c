@@ -7,6 +7,29 @@
 #endif
 #include "callback.h"
 
+/* Browsers (what NTL runs in) open WebSockets with TCP_NODELAY. Without it the
+   OS may hold back our tiny 1-byte steering packets (Nagle) while it waits for
+   the ACK of the previous one, which shows up as steering that feels delayed
+   even though the ping is fine. Set it on our game socket. */
+#if defined(__linux__) || defined(__ANDROID__) || defined(__APPLE__) || defined(_WIN32)
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#endif
+static void set_tcp_nodelay(struct mg_connection* c) {
+  if (c == NULL || c->fd == NULL) return;
+  int one = 1;
+  setsockopt((int)(size_t)c->fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&one,
+             sizeof(one));
+}
+#else
+static void set_tcp_nodelay(struct mg_connection* c) { (void)c; }
+#endif
+
 #include "../game/food.h"
 #include "../game/eyes_back.h"
 #include "../game/snake.h"
@@ -1408,12 +1431,15 @@ void server_callback(struct mg_connection* c, int ev, void* ev_data) {
     return;
   }
 
-  if (ev == MG_EV_OPEN) {
+  if (ev == MG_EV_CONNECT) {
+    set_tcp_nodelay(c);
+  } else if (ev == MG_EV_OPEN) {
     DLOG("conn: TCP connected");
     printf("Connection opened\n");
   } else if (ev == MG_EV_WS_OPEN) {
     DLOG("conn: WebSocket opened!");
     printf("Connection established\n");
+    set_tcp_nodelay(c);
 
     mg_ws_send(c, (uint8_t[]){1}, 1, WEBSOCKET_OP_BINARY);
     mg_ws_send(c, (uint8_t[]){'c', 0}, 2, WEBSOCKET_OP_BINARY);

@@ -36,7 +36,7 @@
 /* Minimum real-time gap between steering (angle) packets. Was 50 ms measured on
    the per-frame clock (which really meant 50-67 ms at 60 Hz). 33 ms is the rate
    the NTL client uses, i.e. ~30 steering updates per second. */
-#define STEER_ANGLE_MIN_MS 33.0
+#define STEER_ANGLE_MIN_MS 16.0
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 
@@ -44,7 +44,7 @@
    (same turn rate the server uses) instead of waiting a full round trip for
    the server to echo the turn back. Server echoes are reconciled afterwards.
    0 = old behaviour. */
-#define STEER_PREDICT 0  /* NTL match: no local turn prediction, head turns on server echo */
+#define STEER_PREDICT 1
 /* Latency compensation is a runtime setting (Settings > General): when ON,
    our own turns are shown when the server will receive them (sent time +
    one-way delay) instead of the instant they are sent, so the head on screen
@@ -62,14 +62,14 @@
    actually has it, which is a big part of "died before touching the body".
    Extrapolating that much (along the snake's own heading) draws heads where
    the server has them now. 0 = off, 1 = full estimate. */
-#define NET_LEAD_FACTOR 0.0f  /* NTL match: heads drawn where received, no extrapolation */
+#define NET_LEAD_FACTOR 1.0f
 #define NET_LEAD_MAX_MS 100.0f
 /* Extra extrapolation (ms) on top of the network delay. A frame is read up to
    one frame after its packet arrived and reaches the screen ~1-2 frames after
    it is drawn, none of which the ping covers -- at 90 Hz that is roughly 10-20
    ms. If enemy heads look too far ahead of their bodies lower this; if you
    still die before touching, raise it (try 0 / 10 / 20). */
-#define NET_LEAD_EXTRA_MS 0.0f
+#define NET_LEAD_EXTRA_MS 10.0f
 
 /* Lag-spike handling. A spike shorter than LAG_START_MS is simply ridden out by
    dead-reckoning at full speed (no slow-down). Past that the world eases down

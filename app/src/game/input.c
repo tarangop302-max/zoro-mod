@@ -390,7 +390,7 @@ void input(tenv* env) {
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;    
     /* Keep alternating even while the mouse is perfectly still. */    
     if (eb_on) want_e = true;    
-    me->eang = atan2f(ym, xm);    
+    /* NTL sets snake.eang only when it sends a steering packet (below). */    
     float ang;    
     if (want_e &&    
         rt_gate(now_ms, gdata->data.rt_last_e_ms, STEER_ANGLE_MIN_MS)) {    

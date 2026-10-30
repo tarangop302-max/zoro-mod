@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include "hud_layout_editor.h"
+#include "../game/backup.h"
 
 #include "../user.h"
 #include "../android_glfw_shim.h"
@@ -375,6 +376,22 @@ void ui_settings(tenv* env) {
       igIndent(-style->WindowPadding.x);
       igEndTable();
     }
+#ifdef ANDROID
+    igSpacing();
+    igSeparatorText("Backup (settings + controls)");
+    {
+      ImVec2 bav;
+      igGetContentRegionAvail(&bav);
+      float bw = (bav.x - style->ItemSpacing.x) * 0.5f;
+      if (igButton("Export backup##backup_export", (ImVec2){bw, 0}))
+        backup_request_export(env);
+      igSameLine(0, -1);
+      if (igButton("Import backup##backup_import", (ImVec2){bw, 0}))
+        backup_request_import();
+      if (backup_status()[0]) igTextWrapped("%s", backup_status());
+      igTextDisabled("Saves all settings, controls and HUD layout to a file you choose. Survives Clear data.");
+    }
+#endif
     igSpacing();
     igTextWrapped("FPS limit is a maximum, not a forced refresh rate. Actual FPS cannot exceed your phone's active display refresh rate. Android Auto mode may keep the screen at 60 Hz; select 90/120/144 Hz in the phone's Display settings to use a matching Vlither limit.");
     igTextDisabled("VSync can also cap rendering to the current display mode.");

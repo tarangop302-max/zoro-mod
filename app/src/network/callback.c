@@ -7,6 +7,29 @@
 #endif
 #include "callback.h"
 
+/* Browsers (what NTL runs in) open WebSockets with TCP_NODELAY. Without it the
+   OS may hold back our tiny 1-byte steering packets (Nagle) while it waits for
+   the ACK of the previous one, which shows up as steering that feels delayed
+   even though the ping is fine. Set it on our game socket. */
+#if defined(__linux__) || defined(__ANDROID__) || defined(__APPLE__) || defined(_WIN32)
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#endif
+static void set_tcp_nodelay(struct mg_connection* c) {
+  if (c == NULL || c->fd == NULL) return;
+  int one = 1;
+  setsockopt((int)(size_t)c->fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&one,
+             sizeof(one));
+}
+#else
+static void set_tcp_nodelay(struct mg_connection* c) { (void)c; }
+#endif
+
 #include "../game/food.h"
 #include "../game/eyes_back.h"
 #include "../game/snake.h"
@@ -47,15 +70,41 @@ static void net_update_owd(game_data* gdata, float rtt) {
    where the server has it right now instead of one network trip ago. Skipped
    during a real stall, and capped below one segment so the head is never a
    whole body segment ahead of the newest body point. */
-static float net_lead_units(game_data* gdata, snake* o) {
+static float net_lead_ms(game_data* gdata, snake* o) {
   if (NET_LEAD_FACTOR <= 0.0f || gdata->data.lagging || o->dead) return 0.0f;
   if (gdata->data.owd_ms <= 0) return 0.0f; /* no ping measured yet */
   float lead_ms = gdata->data.owd_ms * NET_LEAD_FACTOR;
   if (lead_ms > NET_LEAD_MAX_MS) lead_ms = NET_LEAD_MAX_MS;
   if (gdata->data.lat_comp) lead_ms += NET_LEAD_EXTRA_MS;
+  return lead_ms;
+}
+
+static float net_lead_units(game_data* gdata, snake* o) {
+  float lead_ms = net_lead_ms(gdata, o);
+  if (lead_ms <= 0.0f) return 0.0f;
   float units = o->sp * lead_ms / 32.0f; /* sp/4 per 8 ms, same as oef() */
   float cap = 0.9f * o->msl;
   return units > cap ? cap : units;
+}
+
+/* Heading to push the head along. A snake that is mid-turn does not travel
+   straight ahead during the lead time, it curves toward wang at the server's
+   turn rate; pushing it along its current heading made turning heads slide
+   off their real path. This returns the average heading over the lead time
+   (the chord of that arc), so the drawn head lands where the server has it. */
+static float net_lead_heading(game_data* gdata, snake* o) {
+  float lead_ms = net_lead_ms(gdata, o);
+  if (lead_ms <= 0.0f || (o->dir != 1 && o->dir != 2)) return o->ang;
+  float per_ms = gdata->data.mamu * o->scang * o->spang / 8.0f;
+  float turn = per_ms * lead_ms;
+  if (turn <= 0.0f) return o->ang;
+  float d = fmodf(o->wang - o->ang, PI2);
+  if (d < 0) d += PI2;
+  if (d > PI) d -= PI2;
+  float remain = (o->dir == 1) ? (d < 0 ? -d : 0.0f) : (d > 0 ? d : 0.0f);
+  float eff = turn < remain ? turn : remain;
+  float avg = eff * (1.0f - (eff / turn) * 0.5f);
+  return o->ang + (o->dir == 1 ? -avg : avg);
 }
 
 void decode_secret(const uint8_t* packet, size_t packet_len, uint8_t* result) {
@@ -861,8 +910,9 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       float lx = xx;
       float ly = yy;
       if (csp > 0) {
-        lx += cosf(o->ang) * csp;
-        ly += sinf(o->ang) * csp;
+        float lead_ang = net_lead_heading(gdata, o);
+        lx += cosf(lead_ang) * csp;
+        ly += sinf(lead_ang) * csp;
       }
       float ochl = o->chl - 1;
       o->chl = csp / o->msl;
@@ -1408,12 +1458,15 @@ void server_callback(struct mg_connection* c, int ev, void* ev_data) {
     return;
   }
 
-  if (ev == MG_EV_OPEN) {
+  if (ev == MG_EV_CONNECT) {
+    set_tcp_nodelay(c);
+  } else if (ev == MG_EV_OPEN) {
     DLOG("conn: TCP connected");
     printf("Connection opened\n");
   } else if (ev == MG_EV_WS_OPEN) {
     DLOG("conn: WebSocket opened!");
     printf("Connection established\n");
+    set_tcp_nodelay(c);
 
     mg_ws_send(c, (uint8_t[]){1}, 1, WEBSOCKET_OP_BINARY);
     mg_ws_send(c, (uint8_t[]){'c', 0}, 2, WEBSOCKET_OP_BINARY);

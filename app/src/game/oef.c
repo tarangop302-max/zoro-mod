@@ -46,10 +46,10 @@ void time_step(tenv* env) {
   }
 
   if (gdata->data.lagging) {
-    gdata->data.lag_mult -= 0.02f * gdata->data.vfr;
+    gdata->data.lag_mult *= 0.85f; /* NTL: x0.85 per frame */
     if (gdata->data.lag_mult < LAG_MULT_MIN) gdata->data.lag_mult = LAG_MULT_MIN;
   } else if (gdata->data.lag_mult < 1) {
-    gdata->data.lag_mult += 0.1f * gdata->data.vfr;
+    gdata->data.lag_mult += 0.05f; /* NTL: +0.05 per frame */
     if (gdata->data.lag_mult >= 1) gdata->data.lag_mult = 1;
   }
 

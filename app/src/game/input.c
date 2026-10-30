@@ -21,7 +21,7 @@
  * ago; once the window closes the normal smoothing reconciles any leftover.
  */
 /* How long server echoes about our own heading are ignored after a turn. */
-static float steer_window_ms(game_data* gdata) {
+__attribute__((unused)) static float steer_window_ms(game_data* gdata) {
   float window = 2.0f * gdata->data.owd_ms + 50.0f;
   if (window < STEER_PRED_MIN_WINDOW_MS) window = STEER_PRED_MIN_WINDOW_MS;
   if (window > STEER_PRED_MAX_WINDOW_MS) window = STEER_PRED_MAX_WINDOW_MS;
@@ -141,7 +141,7 @@ void input(tenv* env) {
         gdata->data.kd_r_frb += gdata->data.vfrb;
 
       if (gdata->data.kd_l_frb > 0 || gdata->data.kd_r_frb > 0)
-        if (gdata->data.ctm - gdata->data.lkstm > 150) {
+        if (gdata->data.ctm - gdata->data.lkstm > NTL_KEY_BATCH_MS) {
           gdata->data.lkstm = gdata->data.ctm;
           if (gdata->data.kd_r_frb > 0)
             if (gdata->data.kd_l_frb > gdata->data.kd_r_frb) {
@@ -223,66 +223,17 @@ void input(tenv* env) {
             gdata->touch_ctrl.tp_vx           = 0.0f;
             gdata->touch_ctrl.tp_vy           = 0.0f;
 
-            if (usrs->ctrl_trackpad_direct) {
-              /* Direct mode: don't fall back to the old heading-based
-               * placement even on this very first frame. At the instant
-               * of touch-down there's no drag yet (finger == anchor), so
-               * this should read as "no direction input" -- but it must
-               * NOT be an exact (0,0) offset from center: me->eang =
-               * atan2f(ym, xm) runs unconditionally every frame further
-               * down, and atan2f(0,0) snaps to angle 0 (due east) for
-               * that one frame, which visibly glitches the rendered
-               * heading for a frame before the real heading returns.
-               * A 1px nudge would round back to (0,0) once xm/ym get
-               * cast to int downstream if the heading is near a diagonal
-               * (e.g. ~45 degrees splits it ~0.7px/~0.7px, each
-               * truncating to 0) -- so use 2px, which survives that
-               * worst case while still safely under the dead-zone
-               * threshold (so nothing gets sent to the server yet).
-               * The very next frame's dead-zone check below takes over
-               * once you actually start dragging. */
-              gdata->touch_ctrl.tp_cursor_x = cx + 2.0f * cosf(me->eang);
-              gdata->touch_ctrl.tp_cursor_y = cy + 2.0f * sinf(me->eang);
-            } else {
-              float ang = me->eang;
-              float spawn_x = cx + NTL_SPAWN_R * cosf(ang);
-              float spawn_y = cy + NTL_SPAWN_R * sinf(ang);
+            float ang = me->eang;
+            float spawn_x = cx + NTL_SPAWN_R * cosf(ang);
+            float spawn_y = cy + NTL_SPAWN_R * sinf(ang);
 
-              gdata->touch_ctrl.tp_anchor_x = spawn_x;
-              gdata->touch_ctrl.tp_anchor_y = spawn_y;
-              gdata->touch_ctrl.tp_cursor_x = spawn_x;
-              gdata->touch_ctrl.tp_cursor_y = spawn_y;
-            }
+            gdata->touch_ctrl.tp_anchor_x = spawn_x;
+            gdata->touch_ctrl.tp_anchor_y = spawn_y;
+            gdata->touch_ctrl.tp_cursor_x = spawn_x;
+            gdata->touch_ctrl.tp_cursor_y = spawn_y;
           }
 
-          if (usrs->ctrl_trackpad_direct) {
-
-            /* Direct/instant mode: the arrow points straight from the
-             * touch-down point to wherever your finger is right now --
-             * no accumulated per-frame deltas, no velocity/momentum.
-             * This mirrors Vlither Enhanced's absolute arrow-steering,
-             * so the snake reorients as fast as you move your finger.
-             * Runs on every frame -- including the first -- so there's
-             * no leftover-heading placement before you start dragging. */
-            #define NTL_DIRECT_DEAD_R 6.0f
-
-            float fdx  = tx - gdata->touch_ctrl.tp_touch_down_x;
-            float fdy  = ty - gdata->touch_ctrl.tp_touch_down_y;
-            float dist = sqrtf(fdx * fdx + fdy * fdy);
-
-            if (dist > NTL_DIRECT_DEAD_R) {
-              float ux = fdx / dist;
-              float uy = fdy / dist;
-              gdata->touch_ctrl.tp_cursor_x = cx + ux * NTL_SPAWN_R;
-              gdata->touch_ctrl.tp_cursor_y = cy + uy * NTL_SPAWN_R;
-            }
-            /* Below the dead zone: keep pointing the last direction
-             * instead of snapping to zero, so it doesn't jitter right
-             * at the touch-down point. */
-
-            gdata->touch_ctrl.tp_vx = 0.0f;
-            gdata->touch_ctrl.tp_vy = 0.0f;
-          } else if (!(env->wnd->touch.just_down || !gdata->touch_ctrl.tp_tracking)) {
+          if (!(env->wnd->touch.just_down || !gdata->touch_ctrl.tp_tracking)) {
 
             float nx = gdata->touch_ctrl.tp_anchor_x
 
@@ -439,7 +390,7 @@ void input(tenv* env) {
     if (xm != gdata->data.lsxm || ym != gdata->data.lsym) want_e = true;    
     /* Keep alternating even while the mouse is perfectly still. */    
     if (eb_on) want_e = true;    
-    me->eang = atan2f(ym, xm);    
+    /* NTL sets snake.eang only when it sends a steering packet (below). */    
     float ang;    
     if (want_e &&    
         rt_gate(now_ms, gdata->data.rt_last_e_ms, STEER_ANGLE_MIN_MS)) {    
@@ -449,7 +400,7 @@ void input(tenv* env) {
       gdata->data.lsxm = xm;    
       gdata->data.lsym = ym;    
       float d2 = xm * xm + ym * ym;    
-      if (d2 > 256) {    
+      if (d2 > NTL_MOUSE_DEAD_D2) {    
         ang = atan2f(ym, xm);    
         me->eang = ang;    
       } else    
@@ -457,7 +408,7 @@ void input(tenv* env) {
       ang = fmodf(ang, PI2);    
       if (ang < 0) ang += PI2;    
       int sang = (int)floorf((250 + 1) * ang / PI2);    
-      if (eb_on) sang = eyes_back_tick(gdata, me, d2 > 256, ang, now_ms);    
+      if (eb_on) sang = eyes_back_tick(gdata, me, d2 > NTL_MOUSE_DEAD_D2, ang, now_ms);    
       if (eb_on) gdata->data.eb_eye_ang = (float)sang * PI2 / 251.0f;    
       if (sang != gdata->data.lsang) {    
         gdata->data.lsang = sang;    

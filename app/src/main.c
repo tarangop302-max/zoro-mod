@@ -1,4 +1,3 @@
-
 #include "game/loop.h"
 #include "game/bg_preview.h"
 #include "game/death_screen.h"

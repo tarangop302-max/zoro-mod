@@ -255,6 +255,11 @@ static void gc_qm_save(void) {
     fclose(f);
 }
 
+/* Called after a backup import replaced quick_msgs.txt. */
+void global_chat_reload_quick_msgs(void) {
+    gc_qm_loaded = false;
+}
+
 static void gc_qm_ensure_loaded(void) {
     if (gc_qm_loaded) {
         return;

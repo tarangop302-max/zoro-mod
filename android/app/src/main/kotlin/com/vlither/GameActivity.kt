@@ -367,6 +367,137 @@ open class GameActivity : NativeActivity() {
         }
 
         // ---------------------------------------------------------------
+        // Settings & controls backup. Export writes a small zip (user.dat =
+        // all settings, controls, HUD layout, saved names, team keys, plus
+        // quick_msgs.txt) to a place the player picks with the system file
+        // picker (Downloads, Drive, ...). That location is outside the app,
+        // so it survives Clear data and uninstall. Import reads such a zip
+        // back into the app's files dir; native then reloads it.
+        // Native finds out how it went via pollBackupEvent().
+        // ---------------------------------------------------------------
+
+        const val BACKUP_EVENT_EXPORTED = 1
+        const val BACKUP_EVENT_IMPORTED = 2
+        const val BACKUP_EVENT_ERROR = 3
+        const val BACKUP_EVENT_CANCELLED = 4
+        private const val REQUEST_CODE_BACKUP_EXPORT = 4301
+        private const val REQUEST_CODE_BACKUP_IMPORT = 4302
+        private const val BACKUP_MAX_ENTRY_BYTES = 2L * 1024L * 1024L
+        private val BACKUP_FILES = arrayOf("user.dat", "quick_msgs.txt")
+        private val backupEvents = ConcurrentLinkedQueue<Int>()
+
+        @JvmStatic
+        fun requestBackupExport(activity: Activity) {
+            try {
+                val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
+                    .format(java.util.Date())
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/zip"
+                    putExtra(Intent.EXTRA_TITLE, "zoro-backup-$stamp.zip")
+                }
+                activity.startActivityForResult(intent, REQUEST_CODE_BACKUP_EXPORT)
+            } catch (e: Exception) {
+                Log.e(TAG, "requestBackupExport error: ${e.message}")
+                backupEvents.add(BACKUP_EVENT_ERROR)
+            }
+        }
+
+        @JvmStatic
+        fun requestBackupImport(activity: Activity) {
+            try {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                }
+                activity.startActivityForResult(intent, REQUEST_CODE_BACKUP_IMPORT)
+            } catch (e: Exception) {
+                Log.e(TAG, "requestBackupImport error: ${e.message}")
+                backupEvents.add(BACKUP_EVENT_ERROR)
+            }
+        }
+
+        @JvmStatic
+        fun pollBackupEvent(activity: Activity): Int {
+            return backupEvents.poll() ?: 0
+        }
+
+        private fun doBackupExport(activity: Activity, uri: android.net.Uri) {
+            Thread {
+                try {
+                    val dir = activity.filesDir
+                    var count = 0
+                    val out = activity.contentResolver.openOutputStream(uri)
+                        ?: throw java.io.IOException("no output stream")
+                    java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
+                        for (name in BACKUP_FILES) {
+                            val f = File(dir, name)
+                            if (!f.isFile || f.length() > BACKUP_MAX_ENTRY_BYTES) continue
+                            zip.putNextEntry(java.util.zip.ZipEntry(name))
+                            f.inputStream().use { it.copyTo(zip) }
+                            zip.closeEntry()
+                            count++
+                        }
+                    }
+                    backupEvents.add(if (count > 0) BACKUP_EVENT_EXPORTED else BACKUP_EVENT_ERROR)
+                } catch (e: Exception) {
+                    Log.e(TAG, "doBackupExport error: ${e.message}")
+                    backupEvents.add(BACKUP_EVENT_ERROR)
+                }
+            }.start()
+        }
+
+        private fun doBackupImport(activity: Activity, uri: android.net.Uri) {
+            Thread {
+                try {
+                    val dir = activity.filesDir
+                    val staged = HashMap<String, ByteArray>()
+                    val input = activity.contentResolver.openInputStream(uri)
+                        ?: throw java.io.IOException("no input stream")
+                    java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+                        var entry = zip.nextEntry
+                        while (entry != null) {
+                            // Only the known file names are accepted, so a
+                            // crafted zip can't write anywhere else.
+                            if (!entry.isDirectory && BACKUP_FILES.contains(entry.name)) {
+                                val bos = java.io.ByteArrayOutputStream()
+                                val buf = ByteArray(8192)
+                                var total = 0L
+                                while (true) {
+                                    val n = zip.read(buf)
+                                    if (n < 0) break
+                                    total += n
+                                    if (total > BACKUP_MAX_ENTRY_BYTES) {
+                                        throw java.io.IOException("entry too large")
+                                    }
+                                    bos.write(buf, 0, n)
+                                }
+                                staged[entry.name] = bos.toByteArray()
+                            }
+                            zip.closeEntry()
+                            entry = zip.nextEntry
+                        }
+                    }
+                    val settings = staged["user.dat"]
+                    if (settings == null || settings.isEmpty()) {
+                        throw java.io.IOException("not a Zoro backup (no user.dat)")
+                    }
+                    for ((name, bytes) in staged) {
+                        val tmp = File(dir, "$name.tmp")
+                        tmp.writeBytes(bytes)
+                        if (!tmp.renameTo(File(dir, name))) {
+                            throw java.io.IOException("could not write $name")
+                        }
+                    }
+                    backupEvents.add(BACKUP_EVENT_IMPORTED)
+                } catch (e: Exception) {
+                    Log.e(TAG, "doBackupImport error: ${e.message}")
+                    backupEvents.add(BACKUP_EVENT_ERROR)
+                }
+            }.start()
+        }
+
+        // ---------------------------------------------------------------
         // Screen recording (MediaProjection). Clips are saved app-private
         // only (Movies/clips under getExternalFilesDir) -- pushing a copy
         // to the phone's own Gallery only happens when the player taps
@@ -1123,6 +1254,15 @@ open class GameActivity : NativeActivity() {
                 startRecordingSessionInternal(this, resultCode, data)
             } else {
                 recorderEvents.add(REC_EVENT_DENIED)
+            }
+        }
+        if (requestCode == REQUEST_CODE_BACKUP_EXPORT || requestCode == REQUEST_CODE_BACKUP_IMPORT) {
+            val uri = data?.data
+            if (resultCode == Activity.RESULT_OK && uri != null) {
+                if (requestCode == REQUEST_CODE_BACKUP_EXPORT) doBackupExport(this, uri)
+                else doBackupImport(this, uri)
+            } else {
+                backupEvents.add(BACKUP_EVENT_CANCELLED)
             }
         }
     }

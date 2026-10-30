@@ -95,4 +95,7 @@ jsr_network* global_chat_get_network(void);
 /* Release Public Chat resources. */
 void global_chat_destroy(tenv* env);
 
+/* Re-read quick_msgs.txt on next use (after a backup import). */
+void global_chat_reload_quick_msgs(void);
+
 #endif

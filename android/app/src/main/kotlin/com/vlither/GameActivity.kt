@@ -454,7 +454,33 @@ open class GameActivity : NativeActivity() {
                     val staged = HashMap<String, ByteArray>()
                     val input = activity.contentResolver.openInputStream(uri)
                         ?: throw java.io.IOException("no input stream")
-                    java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+                    // Read the picked file fully first. Some file managers show
+                    // a zip as a folder, so the player can end up picking the
+                    // user.dat inside it directly -- accept that too.
+                    val rawBytes = input.use { ins ->
+                        val bos = java.io.ByteArrayOutputStream()
+                        val buf = ByteArray(8192)
+                        var total = 0L
+                        while (true) {
+                            val n = ins.read(buf)
+                            if (n < 0) break
+                            total += n
+                            if (total > BACKUP_MAX_ENTRY_BYTES * 2) {
+                                throw java.io.IOException("file too large")
+                            }
+                            bos.write(buf, 0, n)
+                        }
+                        bos.toByteArray()
+                    }
+                    val isZip = rawBytes.size >= 4 && rawBytes[0] == 'P'.code.toByte() &&
+                        rawBytes[1] == 'K'.code.toByte()
+                    if (!isZip) {
+                        if (rawBytes.size < 512 || rawBytes.size > BACKUP_MAX_ENTRY_BYTES) {
+                            throw java.io.IOException("not a Zoro backup")
+                        }
+                        staged["user.dat"] = rawBytes
+                    }
+                    if (isZip) java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(rawBytes)).use { zip ->
                         var entry = zip.nextEntry
                         while (entry != null) {
                             // Only the known file names are accepted, so a

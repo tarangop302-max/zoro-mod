@@ -6,6 +6,7 @@
 #include "eyes_back.h"    
     
 #include "../user.h"    
+#include "../ui/key_buttons.h"    
     
 /*
  * Steering prediction. The server only starts turning the snake when our
@@ -348,14 +349,22 @@ void input(tenv* env) {
     if (usrs->hotkeys[HOTKEY_BOT].active) {
       xm = gdata->bot.output.xm;
       ym = gdata->bot.output.ym;
+    } else if ((gdata->curr_screen == KEYBOARD_EDITOR ||
+                gdata->curr_screen == HUD_LAYOUT_EDITOR) &&
+               gdata->data.lsxm != -2147483647) {
+      /* A layout editor (keyboard / HUD) is open mid-match: dragging buttons must
+         not steer the snake, so keep the last direction that was sent. */
+      xm = gdata->data.lsxm;
+      ym = gdata->data.lsym;
     }
 #ifdef ANDROID    
     
-    gdata->data.wmd = (!gdata->settings_popup && env->wnd->touch.boost_down) || gdata->bot.output.accel;    
+    gdata->data.wmd = (!gdata->settings_popup && !(gdata->curr_screen == KEYBOARD_EDITOR || gdata->curr_screen == HUD_LAYOUT_EDITOR) && env->wnd->touch.boost_down) || gdata->bot.output.accel;    
 #else    
     /* While the settings popup is open, clicks belong to the popup and must
        not boost; the bot still boosts on its own. */    
     gdata->data.wmd = (!gdata->settings_popup &&    
+                       !(gdata->curr_screen == KEYBOARD_EDITOR || gdata->curr_screen == HUD_LAYOUT_EDITOR) &&    
                        (twindow_button_down(env->wnd, GLFW_MOUSE_BUTTON_LEFT) ||    
                         twindow_key_down(env->wnd, GLFW_KEY_SPACE) ||    
                         twindow_key_down(env->wnd, GLFW_KEY_UP))) ||    
@@ -438,6 +447,7 @@ void input(tenv* env) {
     
   for (int i = 0; i < NUM_HOTKEYS; i++) {    
     if (i == HOTKEY_OPEN_SETTINGS) continue; /* see input_settings_hotkey() */    
+    if (i == HOTKEY_KEY_EDITOR) continue;    /* see input_key_editor_hotkey() */    
     hotkey* hk = usr_hotkey(usrs, i);    
     if (i == HOTKEY_EYES_BACK) {    
       /* Typing in the team chat must not toggle Eyes back. */    
@@ -511,4 +521,24 @@ void input_settings_hotkey(tenv* env) {
     gdata->settings_popup = false;
   }
   prev_active = hk->active;
+}
+
+void input_key_editor_hotkey(tenv* env) {
+  tuser_data* usr = env->usr;
+  game_data* gdata = &usr->gdata;
+  user_settings* usrs = &usr->usrs;
+  hotkey* hk = &usrs->hotkey_key_editor;
+
+  /* Only mid-match, never while typing (team chat, nickname...). */
+  if (gdata->curr_screen != PLAYING || gdata->settings_popup) return;
+  ImGuiIO* io = igGetIO_Nil();
+  bool typing = io && io->WantTextInput;
+
+  bool in_range = hk->key >= 0 && hk->key < 512;
+  bool real_pressed = !typing && tkeyboard_key_pressed(env->kb, hk->key);
+  bool fake_pressed = !typing && in_range && gdata->data.fake_key_pressed[hk->key];
+  if (in_range) gdata->data.fake_key_pressed[hk->key] = false;
+
+  hk->active = false;
+  if (real_pressed || fake_pressed) ui_key_buttons_open_editor(env);
 }

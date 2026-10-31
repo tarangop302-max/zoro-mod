@@ -17,7 +17,7 @@ static ImU32 crystal_col(float r, float g, float b, float a) {
    gradient fill to fall back on. Many thin rings with a smoothly-decreasing
    alpha curve is the standard workaround and reads as an actual soft glow
    instead of stacked circles. */
-static void crystal_draw_glow_blob(ImDrawList* dl, ImVec2 center,
+void crystal_draw_glow_blob(ImDrawList* dl, ImVec2 center,
                                     float radius, float r, float g, float b,
                                     float peak_alpha) {
   const int RINGS = 40;

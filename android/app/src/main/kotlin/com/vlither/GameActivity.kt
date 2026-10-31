@@ -12,6 +12,9 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.net.Uri
 import android.graphics.Color
 import android.graphics.Typeface
 import android.hardware.display.DisplayManager
@@ -367,163 +370,6 @@ open class GameActivity : NativeActivity() {
         }
 
         // ---------------------------------------------------------------
-        // Settings & controls backup. Export writes a small zip (user.dat =
-        // all settings, controls, HUD layout, saved names, team keys, plus
-        // quick_msgs.txt) to a place the player picks with the system file
-        // picker (Downloads, Drive, ...). That location is outside the app,
-        // so it survives Clear data and uninstall. Import reads such a zip
-        // back into the app's files dir; native then reloads it.
-        // Native finds out how it went via pollBackupEvent().
-        // ---------------------------------------------------------------
-
-        const val BACKUP_EVENT_EXPORTED = 1
-        const val BACKUP_EVENT_IMPORTED = 2
-        const val BACKUP_EVENT_ERROR = 3
-        const val BACKUP_EVENT_CANCELLED = 4
-        private const val REQUEST_CODE_BACKUP_EXPORT = 4301
-        private const val REQUEST_CODE_BACKUP_IMPORT = 4302
-        private const val BACKUP_MAX_ENTRY_BYTES = 2L * 1024L * 1024L
-        private val BACKUP_FILES = arrayOf("user.dat", "quick_msgs.txt")
-        private val backupEvents = ConcurrentLinkedQueue<Int>()
-
-        @JvmStatic
-        fun requestBackupExport(activity: Activity) {
-            try {
-                val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
-                    .format(java.util.Date())
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/zip"
-                    putExtra(Intent.EXTRA_TITLE, "zoro-backup-$stamp.zip")
-                }
-                activity.startActivityForResult(intent, REQUEST_CODE_BACKUP_EXPORT)
-            } catch (e: Exception) {
-                Log.e(TAG, "requestBackupExport error: ${e.message}")
-                backupEvents.add(BACKUP_EVENT_ERROR)
-            }
-        }
-
-        @JvmStatic
-        fun requestBackupImport(activity: Activity) {
-            try {
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                }
-                activity.startActivityForResult(intent, REQUEST_CODE_BACKUP_IMPORT)
-            } catch (e: Exception) {
-                Log.e(TAG, "requestBackupImport error: ${e.message}")
-                backupEvents.add(BACKUP_EVENT_ERROR)
-            }
-        }
-
-        @JvmStatic
-        fun pollBackupEvent(activity: Activity): Int {
-            return backupEvents.poll() ?: 0
-        }
-
-        private fun doBackupExport(activity: Activity, uri: android.net.Uri) {
-            Thread {
-                try {
-                    val dir = activity.filesDir
-                    var count = 0
-                    val out = activity.contentResolver.openOutputStream(uri)
-                        ?: throw java.io.IOException("no output stream")
-                    java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
-                        for (name in BACKUP_FILES) {
-                            val f = File(dir, name)
-                            if (!f.isFile || f.length() > BACKUP_MAX_ENTRY_BYTES) continue
-                            zip.putNextEntry(java.util.zip.ZipEntry(name))
-                            f.inputStream().use { it.copyTo(zip) }
-                            zip.closeEntry()
-                            count++
-                        }
-                    }
-                    backupEvents.add(if (count > 0) BACKUP_EVENT_EXPORTED else BACKUP_EVENT_ERROR)
-                } catch (e: Exception) {
-                    Log.e(TAG, "doBackupExport error: ${e.message}")
-                    backupEvents.add(BACKUP_EVENT_ERROR)
-                }
-            }.start()
-        }
-
-        private fun doBackupImport(activity: Activity, uri: android.net.Uri) {
-            Thread {
-                try {
-                    val dir = activity.filesDir
-                    val staged = HashMap<String, ByteArray>()
-                    val input = activity.contentResolver.openInputStream(uri)
-                        ?: throw java.io.IOException("no input stream")
-                    // Read the picked file fully first. Some file managers show
-                    // a zip as a folder, so the player can end up picking the
-                    // user.dat inside it directly -- accept that too.
-                    val rawBytes = input.use { ins ->
-                        val bos = java.io.ByteArrayOutputStream()
-                        val buf = ByteArray(8192)
-                        var total = 0L
-                        while (true) {
-                            val n = ins.read(buf)
-                            if (n < 0) break
-                            total += n
-                            if (total > BACKUP_MAX_ENTRY_BYTES * 2) {
-                                throw java.io.IOException("file too large")
-                            }
-                            bos.write(buf, 0, n)
-                        }
-                        bos.toByteArray()
-                    }
-                    val isZip = rawBytes.size >= 4 && rawBytes[0] == 'P'.code.toByte() &&
-                        rawBytes[1] == 'K'.code.toByte()
-                    if (!isZip) {
-                        if (rawBytes.size < 512 || rawBytes.size > BACKUP_MAX_ENTRY_BYTES) {
-                            throw java.io.IOException("not a Zoro backup")
-                        }
-                        staged["user.dat"] = rawBytes
-                    }
-                    if (isZip) java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(rawBytes)).use { zip ->
-                        var entry = zip.nextEntry
-                        while (entry != null) {
-                            // Only the known file names are accepted, so a
-                            // crafted zip can't write anywhere else.
-                            if (!entry.isDirectory && BACKUP_FILES.contains(entry.name)) {
-                                val bos = java.io.ByteArrayOutputStream()
-                                val buf = ByteArray(8192)
-                                var total = 0L
-                                while (true) {
-                                    val n = zip.read(buf)
-                                    if (n < 0) break
-                                    total += n
-                                    if (total > BACKUP_MAX_ENTRY_BYTES) {
-                                        throw java.io.IOException("entry too large")
-                                    }
-                                    bos.write(buf, 0, n)
-                                }
-                                staged[entry.name] = bos.toByteArray()
-                            }
-                            zip.closeEntry()
-                            entry = zip.nextEntry
-                        }
-                    }
-                    val settings = staged["user.dat"]
-                    if (settings == null || settings.isEmpty()) {
-                        throw java.io.IOException("not a Zoro backup (no user.dat)")
-                    }
-                    for ((name, bytes) in staged) {
-                        val tmp = File(dir, "$name.tmp")
-                        tmp.writeBytes(bytes)
-                        if (!tmp.renameTo(File(dir, name))) {
-                            throw java.io.IOException("could not write $name")
-                        }
-                    }
-                    backupEvents.add(BACKUP_EVENT_IMPORTED)
-                } catch (e: Exception) {
-                    Log.e(TAG, "doBackupImport error: ${e.message}")
-                    backupEvents.add(BACKUP_EVENT_ERROR)
-                }
-            }.start()
-        }
-
-        // ---------------------------------------------------------------
         // Screen recording (MediaProjection). Clips are saved app-private
         // only (Movies/clips under getExternalFilesDir) -- pushing a copy
         // to the phone's own Gallery only happens when the player taps
@@ -722,6 +568,111 @@ open class GameActivity : NativeActivity() {
         @JvmStatic
         fun pollRecorderEvent(activity: Activity): Int {
             return recorderEvents.poll() ?: 0
+        }
+
+        /* ---- Lobby background picker (called from C via JNI) ----
+           requestPickLobbyBackground() opens the system photo picker. The
+           chosen picture is shrunk (long side <= 1920 px), rotated upright and
+           saved as filesDir/lobby_bg.jpg, then LOBBY_BG_EVENT_* is queued for
+           native code to pick up with pollLobbyBgEvent() (see lobby_bg.c).
+           Cancelling the picker queues nothing. */
+        private const val REQUEST_CODE_PICK_LOBBY_BG = 4203
+        private const val LOBBY_BG_EVENT_SAVED = 1
+        private const val LOBBY_BG_EVENT_ERROR = 2
+        private const val LOBBY_BG_MAX_SIDE = 1920
+        private val lobbyBgEvents = ConcurrentLinkedQueue<Int>()
+
+        @JvmStatic
+        fun requestPickLobbyBackground(activity: Activity) {
+            try {
+                val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                    type = "image/*"
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                }
+                activity.startActivityForResult(intent, REQUEST_CODE_PICK_LOBBY_BG)
+            } catch (e: Exception) {
+                Log.e(TAG, "requestPickLobbyBackground error: ${e.message}")
+                lobbyBgEvents.add(LOBBY_BG_EVENT_ERROR)
+            }
+        }
+
+        @JvmStatic
+        fun pollLobbyBgEvent(activity: Activity): Int {
+            return lobbyBgEvents.poll() ?: 0
+        }
+
+        internal fun saveLobbyBackground(activity: Activity, uri: Uri) {
+            Thread {
+                try {
+                    val resolver = activity.contentResolver
+
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                        lobbyBgEvents.add(LOBBY_BG_EVENT_ERROR)
+                        return@Thread
+                    }
+
+                    var sample = 1
+                    val longSide = maxOf(bounds.outWidth, bounds.outHeight)
+                    while (longSide / (sample * 2) >= LOBBY_BG_MAX_SIDE) sample *= 2
+                    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                    var bmp = resolver.openInputStream(uri)?.use {
+                        BitmapFactory.decodeStream(it, null, opts)
+                    }
+                    if (bmp == null) {
+                        lobbyBgEvents.add(LOBBY_BG_EVENT_ERROR)
+                        return@Thread
+                    }
+
+                    /* Phone photos are often stored sideways with an EXIF flag. */
+                    var degrees = 0f
+                    try {
+                        resolver.openInputStream(uri)?.use { stream ->
+                            val exif = android.media.ExifInterface(stream)
+                            degrees = when (exif.getAttributeInt(
+                                android.media.ExifInterface.TAG_ORIENTATION,
+                                android.media.ExifInterface.ORIENTATION_NORMAL
+                            )) {
+                                android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                                android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                                android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                                else -> 0f
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "lobby bg exif: ${e.message}")
+                    }
+                    if (degrees != 0f) {
+                        val m = Matrix().apply { postRotate(degrees) }
+                        bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+                    }
+
+                    val side = maxOf(bmp!!.width, bmp.height)
+                    if (side > LOBBY_BG_MAX_SIDE) {
+                        val s = LOBBY_BG_MAX_SIDE.toFloat() / side
+                        bmp = Bitmap.createScaledBitmap(
+                            bmp, (bmp.width * s).toInt().coerceAtLeast(1),
+                            (bmp.height * s).toInt().coerceAtLeast(1), true
+                        )
+                    }
+
+                    val tmp = File(activity.filesDir, "lobby_bg.tmp")
+                    val dest = File(activity.filesDir, "lobby_bg.jpg")
+                    FileOutputStream(tmp).use { out ->
+                        bmp.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                    }
+                    if (dest.exists()) dest.delete()
+                    if (!tmp.renameTo(dest)) {
+                        lobbyBgEvents.add(LOBBY_BG_EVENT_ERROR)
+                        return@Thread
+                    }
+                    lobbyBgEvents.add(LOBBY_BG_EVENT_SAVED)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "saveLobbyBackground error: ${e.message}")
+                    lobbyBgEvents.add(LOBBY_BG_EVENT_ERROR)
+                }
+            }.start()
         }
 
         /** Called from C via JNI when the player taps "Save" on a clip in
@@ -1281,14 +1232,10 @@ open class GameActivity : NativeActivity() {
             } else {
                 recorderEvents.add(REC_EVENT_DENIED)
             }
-        }
-        if (requestCode == REQUEST_CODE_BACKUP_EXPORT || requestCode == REQUEST_CODE_BACKUP_IMPORT) {
+        } else if (requestCode == REQUEST_CODE_PICK_LOBBY_BG) {
             val uri = data?.data
             if (resultCode == Activity.RESULT_OK && uri != null) {
-                if (requestCode == REQUEST_CODE_BACKUP_EXPORT) doBackupExport(this, uri)
-                else doBackupImport(this, uri)
-            } else {
-                backupEvents.add(BACKUP_EVENT_CANCELLED)
+                saveLobbyBackground(this, uri)
             }
         }
     }

@@ -27,6 +27,31 @@
  * ============================================================================
  */
 
+/* ---------------------------------------------------------------------------
+ * Theme palette that follows the selected lobby background.
+ *
+ * All UI colours in the mod were designed in the default purple. Instead of
+ * editing every literal, crystal_tint() re-maps any purple-ish colour onto the
+ * current theme's hue / saturation (greys, whites, reds, greens... are left
+ * alone). crystal_col() and every igPushStyleColor_Vec4() call (macro below)
+ * go through it automatically, so buttons, frames, sliders, borders and the
+ * gradient backgrounds all change together with the lobby background.
+ * ------------------------------------------------------------------------- */
+ImVec4 crystal_tint(ImVec4 c);
+ImU32 crystal_tint_u32(ImU32 c);
+/* Sets the theme from an accent colour (e.g. a preset's main glow colour). */
+void crystal_theme_set_accent(float r, float g, float b);
+void crystal_theme_reset_default(void);
+/* Same as crystal_draw_glow_blob but WITHOUT theme tinting (used to draw the
+   lobby background presets, which have their own exact colours). */
+void crystal_draw_glow_blob_raw(ImDrawList* dl, ImVec2 center, float radius,
+                                float r, float g, float b, float peak_alpha);
+
+/* Every style colour pushed anywhere in the UI is tinted to the theme. The
+   variadic form is needed because compound literals contain commas. */
+#define igPushStyleColor_Vec4(idx, ...) \
+  igPushStyleColor_Vec4((idx), crystal_tint(__VA_ARGS__))
+
 void crystal_draw_background(tenv* env);
 void crystal_draw_background_alpha(tenv* env, float alpha);
 /* Same background, but with up to two rectangular holes left untouched --
@@ -47,6 +72,44 @@ void crystal_draw_glow_blob(ImDrawList* dl, ImVec2 center, float radius,
                             float r, float g, float b, float peak_alpha);
 void crystal_sheen(void);
 void crystal_glow_rect(ImVec2 pos, ImVec2 size, float r, float g, float b);
+/* ---------------------------------------------------------------------------
+ * Themed, FIXED-SIZE modal panel (used by the Snakey Rain and Lobby
+ * Background panels).
+ *
+ * Why not igBeginPopup(): ImGui popups are always auto-resized to their
+ * contents every frame. Widgets sized from the available width (-1 sliders,
+ * equal-width thumbnails, ...) then shrink the window a bit more each frame,
+ * which is exactly the "panel keeps getting smaller / slider stops working"
+ * bug. A modal popup with an explicit, always-applied size has no such
+ * feedback loop.
+ *
+ * Usage (open it first with igOpenPopup_Str(id, 0)):
+ *     if (crystal_panel_begin(env, "my_panel", "TITLE", "subtitle", 460)) {
+ *       ...contents (scrolls on its own; add touch scroll if you like)...
+ *       crystal_panel_end();
+ *     }
+ * crystal_panel_end() must be called ONLY when begin returned true.
+ * ------------------------------------------------------------------------- */
+bool crystal_panel_begin(tenv* env, const char* id, const char* title,
+                         const char* subtitle, float max_w);
+void crystal_panel_end(void);
+/* Optional, one-shot (cleared by the next crystal_panel_begin): size the panel
+   as a fraction of the screen instead of the default (e.g. 0.52 x 0.88 = the
+   same footprint as the lobby Settings / Controls popups), and reserve
+   `footer_h` pixels at the bottom for a pinned footer (buttons). After the
+   body is done call crystal_panel_end_body(), draw the footer, then
+   crystal_panel_end(). */
+void crystal_panel_set_layout(float w_frac, float h_frac, float footer_h);
+void crystal_panel_end_body(void);
+/* Round themed "X" button drawn at screen position `pos` with diameter `d`.
+   Returns true when tapped. Call inside a window. */
+bool crystal_close_button(const char* id, ImVec2 pos, float d);
+/* Small accent bar + purple label, replaces igSeparatorText inside panels. */
+void crystal_section(const char* label);
+/* Rounded translucent card behind the next `h` pixels of content width-wide.
+   Call BEFORE the content; returns the card's screen rect via out params. */
+void crystal_card_bg(ImVec2 pos, ImVec2 size, float r, float g, float b);
+
 void crystal_push_theme(void);
 void crystal_pop_theme(void);
 

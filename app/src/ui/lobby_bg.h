@@ -19,5 +19,8 @@
 void ui_lobby_bg_draw(tenv* env);
 void ui_lobby_bg_button(tenv* env, float frame_height);
 void ui_lobby_bg_destroy(tenv* env);
+/* Makes every button/frame/slider colour in the mod follow the selected
+   background (call once per frame, before any screen is drawn). */
+void lobby_bg_sync_theme(tenv* env);
 
 #endif

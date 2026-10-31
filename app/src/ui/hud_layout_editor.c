@@ -5,6 +5,7 @@
 #endif
 
 #include "../user.h"
+#include "crystal_theme.h"
 
 /* Whatever the player's real settings were right before entering the
  * editor, so "Back" can put everything -- including the HUD-visible

@@ -42,6 +42,9 @@ void crystal_draw_background_alpha(tenv* env, float alpha);
 void crystal_draw_background_alpha_excl2(tenv* env, float alpha,
                                          ImVec2 excl1_min, ImVec2 excl1_max,
                                          ImVec2 excl2_min, ImVec2 excl2_max);
+/* Soft circular glow (used by the built-in lobby backgrounds too). */
+void crystal_draw_glow_blob(ImDrawList* dl, ImVec2 center, float radius,
+                            float r, float g, float b, float peak_alpha);
 void crystal_sheen(void);
 void crystal_glow_rect(ImVec2 pos, ImVec2 size, float r, float g, float b);
 void crystal_push_theme(void);

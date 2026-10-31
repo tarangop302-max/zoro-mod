@@ -6,7 +6,6 @@
 #include "game/global_chat.h"
 #include "game/screenshot.h"
 #include "game/recorder.h"
-#include "game/backup.h"
 
 #include "ui/skin_editor.h"
 #include "ui/title_screen.h"
@@ -1000,6 +999,12 @@ void trender(tenv* env) {
         // custom buttons can be placed relative to where those actually
         // sit on-screen instead of against a blank black canvas.
 
+        // Apply the finger drag first, so everything drawn this frame (game
+        // overlay and editor) uses the up-to-date button positions.
+        ui_key_buttons_update(
+            env
+        );
+
         if (
             !bg_preview_visible(
                 env
@@ -1071,7 +1076,6 @@ void trender(tenv* env) {
     // from then on, not only while actually connected to a match.
 
     recorder_update();
-    backup_update(env);
     recorder_button_draw(
         env
     );

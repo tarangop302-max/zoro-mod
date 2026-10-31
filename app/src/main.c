@@ -1,5 +1,6 @@
 #include "game/loop.h"
 #include "game/bg_preview.h"
+#include "ui/lobby_bg.h"
 #include "game/death_screen.h"
 #include "game/ntl_team.h"
 #include "game/snakey_rain.h"
@@ -835,6 +836,8 @@ void trender(tenv* env) {
         1
     );
 
+
+    lobby_bg_sync_theme(env);
 
     bg_preview_update(
         env

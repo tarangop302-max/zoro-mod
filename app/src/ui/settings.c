@@ -1,7 +1,7 @@
 #include "settings.h"
 
 #include "hud_layout_editor.h"
-#include "../game/backup.h"
+#include "key_buttons.h"
 
 #include "../user.h"
 #include "../android_glfw_shim.h"
@@ -252,6 +252,8 @@ void ui_settings(tenv* env) {
       igAlignTextToFramePadding();
       igText("Adjust HUD Layout");
       igAlignTextToFramePadding();
+      igText("Keyboard layout");
+      igAlignTextToFramePadding();
       igText("Instant restart");
       igAlignTextToFramePadding();
       igText("Restart with right click");
@@ -336,11 +338,15 @@ void ui_settings(tenv* env) {
                     ImGuiSliderFlags_AlwaysClamp);
       igSetNextItemWidth(-1);
       igColorEdit3("##border color", usrs->bd_color, ImGuiColorEditFlags_None);
-      igBeginDisabled(popup); /* leaves the match, so not from the popup */
+      /* Works mid-match too: the editor closes this popup, runs on top of the
+         live game and brings the popup back when you leave it. */
       if (igButton("Open editor##hud_layout", (ImVec2){-1, 0})) {
         ui_hud_layout_editor_enter(env);
       }
-      igEndDisabled();
+      if (igButton("Open editor##key_layout", (ImVec2){-1, 0})) {
+        save_user_settings(usrs);
+        ui_key_buttons_open_editor(env);
+      }
       igCheckbox("##instant restart", &usrs->instant_restart);
       igCheckbox("##restart rc", &usrs->restart_rc);
       igCheckbox("##quit mc", &usrs->quit_mc);
@@ -376,22 +382,6 @@ void ui_settings(tenv* env) {
       igIndent(-style->WindowPadding.x);
       igEndTable();
     }
-#ifdef ANDROID
-    igSpacing();
-    igSeparatorText("Backup (settings + controls)");
-    {
-      ImVec2 bav;
-      igGetContentRegionAvail(&bav);
-      float bw = (bav.x - style->ItemSpacing.x) * 0.5f;
-      if (igButton("Export backup##backup_export", (ImVec2){bw, 0}))
-        backup_request_export(env);
-      igSameLine(0, -1);
-      if (igButton("Import backup##backup_import", (ImVec2){bw, 0}))
-        backup_request_import();
-      if (backup_status()[0]) igTextWrapped("%s", backup_status());
-      igTextDisabled("Saves all settings, controls and HUD layout to a file you choose. Survives Clear data.");
-    }
-#endif
     igSpacing();
     igTextWrapped("FPS limit is a maximum, not a forced refresh rate. Actual FPS cannot exceed your phone's active display refresh rate. Android Auto mode may keep the screen at 60 Hz; select 90/120/144 Hz in the phone's Display settings to use a matching Vlither limit.");
     igTextDisabled("VSync can also cap rendering to the current display mode.");
@@ -726,6 +716,16 @@ void ui_settings(tenv* env) {
   igPopStyleColor(3);
 
   crystal_pop_theme();
+
+#ifdef ANDROID
+  /* Colour pickers and combo lists are separate ImGui popup windows that can
+     extend outside the settings window. During a match a touch outside the
+     registered rectangle is a gameplay touch, so those popups never saw
+     taps (colours did nothing, dropdowns could not be picked). While any
+     popup is open, let ImGui own the whole screen. */
+  if (ingame_popup && igIsPopupOpen_Str(NULL, ImGuiPopupFlags_AnyPopup))
+    android_ui_capture_rect(0, 0, (float)ctx->size[0], (float)ctx->size[1]);
+#endif
 
   if (popup) {
     igEnd();

@@ -13,7 +13,7 @@
 
 #ifndef IM_COL32
 #define IM_COL32(R,G,B,A) \
-  (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)<<0))
+  crystal_tint_u32((((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)<<0)))
 #endif
 
 #ifdef ANDROID

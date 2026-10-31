@@ -48,21 +48,6 @@ void android_jni_save_screenshot(const unsigned char* rgba, int width,
    surfaced back to native code. */
 void android_jni_save_image_to_gallery(const char* filename);
 
-/* --- Settings & controls backup (see GameActivity.kt) ---
-   Export/Import open the system file picker; the result arrives
-   asynchronously, so poll once per frame like the recorder. */
-typedef enum android_backup_event {
-    ANDROID_BACKUP_EVENT_NONE = 0,
-    ANDROID_BACKUP_EVENT_EXPORTED = 1,
-    ANDROID_BACKUP_EVENT_IMPORTED = 2,
-    ANDROID_BACKUP_EVENT_ERROR = 3,
-    ANDROID_BACKUP_EVENT_CANCELLED = 4
-} android_backup_event;
-
-void android_jni_backup_export(void);
-void android_jni_backup_import(void);
-android_backup_event android_jni_poll_backup_event(void);
-
 /* --- Screen recording (MediaProjection, see GameActivity.kt) ---
    The permission flow is asynchronous (system consent dialog), so
    starting/stopping just kick things off; use
@@ -100,6 +85,14 @@ void android_jni_save_clip_to_gallery(const char* filename);
    standard VIEW intent. Called when the player taps "Play" on a clip in
    the in-app Clips gallery. */
 void android_jni_play_clip(const char* filename);
+
+/* Lobby background picker. android_jni_request_pick_lobby_bg() opens the
+   system photo picker; when the player chooses a picture Kotlin shrinks it and
+   saves it as "lobby_bg.jpg" in the app files folder, then queues an event.
+   android_jni_poll_lobby_bg_event(): 0 = nothing, 1 = new picture saved,
+   2 = failed (cancelling the picker produces no event). */
+void android_jni_request_pick_lobby_bg(void);
+int android_jni_poll_lobby_bg_event(void);
 
 typedef enum android_ime_event_type {
     ANDROID_IME_EVENT_NONE = 0,

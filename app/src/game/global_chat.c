@@ -4,6 +4,7 @@
 #include "profile_emoji.h"
 
 #include "thermite/tchat.h"
+#include "../ui/crystal_theme.h"
 #include "thermite/jsr_network.h"
 #include "ntl_team.h"
 
@@ -26,6 +27,8 @@
 #ifndef IM_COL32
 #define IM_COL32(R,G,B,A) (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)))
 #endif
+/* Theme-aware variant: purple chrome follows the selected lobby background. */
+#define GCT(R,G,B,A) crystal_tint_u32(IM_COL32(R,G,B,A))
 
 #define GLOBAL_CHAT_MAX_MESSAGES 50
 #define GLOBAL_CHAT_NAME_LEN 32
@@ -1332,11 +1335,11 @@ void global_chat_draw(tenv* env) {
 
             ImDrawList_AddRectFilled(
                 dl, p, gc_add(p, sz.x, sz.y),
-                IM_COL32(36, 22, 64, 230), 20.0f, 0
+                GCT(36, 22, 64, 230), 20.0f, 0
             );
             ImDrawList_AddRect(
                 dl, p, gc_add(p, sz.x, sz.y),
-                IM_COL32(190, 160, 255, 115), 20.0f, 0, 1.5f
+                GCT(190, 160, 255, 115), 20.0f, 0, 1.5f
             );
 
             float head_h = 44.0f;
@@ -1350,7 +1353,7 @@ void global_chat_draw(tenv* env) {
                 dl,
                 gc_v2(p.x + 1.0f, p.y + head_h),
                 gc_v2(p.x + sz.x - 1.0f, p.y + head_h),
-                IM_COL32(190, 160, 255, 64),
+                GCT(190, 160, 255, 64),
                 1.0f
             );
 
@@ -1362,8 +1365,8 @@ void global_chat_draw(tenv* env) {
                     "##gc_open",
                     bmn,
                     bsz,
-                    IM_COL32(120, 70, 220, 255),
-                    IM_COL32(145, 92, 245, 255),
+                    GCT(120, 70, 220, 255),
+                    GCT(145, 92, 245, 255),
                     12.0f,
                     0
                 )
@@ -1414,7 +1417,7 @@ void global_chat_draw(tenv* env) {
                     );
                     ImDrawList_AddRect(
                         fdl, bmn2, bmx,
-                        IM_COL32(36, 22, 64, 255), bh * 0.5f, 0, 2.0f
+                        GCT(36, 22, 64, 255), bh * 0.5f, 0, 2.0f
                     );
                     gc_text_center(
                         fdl, bmn2, gc_v2(bw, bh),
@@ -2050,7 +2053,7 @@ static void gc_initial(const char* name, char out[8]) {
 }
 
 static ImU32 gc_ping_color(int ping) {
-    if (ping < 0) return IM_COL32(140, 133, 170, 200);
+    if (ping < 0) return GCT(140, 133, 170, 200);
     if (ping < 90) return IM_COL32(125, 255, 176, 255);
     if (ping < 180) return IM_COL32(255, 204, 77, 255);
     return IM_COL32(242, 77, 77, 255);
@@ -2242,7 +2245,7 @@ static void gc_section(const char* title, float width, float u) {
     ImDrawList* dl = igGetWindowDrawList();
 
     ImDrawList_AddText_Vec2(
-        dl, p, IM_COL32(181, 156, 245, 255), title, NULL
+        dl, p, GCT(181, 156, 245, 255), title, NULL
     );
 
     float tw = gc_text_w(title);
@@ -2251,7 +2254,7 @@ static void gc_section(const char* title, float width, float u) {
         dl,
         gc_v2(p.x + tw + u * 0.6f, p.y + lh * 0.55f),
         gc_v2(p.x + width, p.y + lh * 0.55f),
-        IM_COL32(190, 160, 255, 40),
+        GCT(190, 160, 255, 40),
         1.0f
     );
 
@@ -2335,7 +2338,7 @@ static bool gc_pill_button(
         on ? IM_COL32(40, 160, 90, 255) : IM_COL32(255, 255, 255, 20),
         on ? IM_COL32(55, 190, 110, 255) : IM_COL32(255, 255, 255, 42),
         u * 0.6f,
-        on ? 0 : IM_COL32(190, 160, 255, 50)
+        on ? 0 : GCT(190, 160, 255, 50)
     );
 
     gc_text_center(
@@ -2498,8 +2501,8 @@ static void gc_draw_activity(float u, float width) {
 
     ImDrawList* dl = igGetWindowDrawList();
     float lh = igGetTextLineHeight();
-    ImU32 dim = IM_COL32(150, 142, 185, 210);
-    ImU32 dimmer = IM_COL32(120, 112, 155, 200);
+    ImU32 dim = GCT(150, 142, 185, 210);
+    ImU32 dimmer = GCT(120, 112, 155, 200);
 
     for (int i = gc_event_count - 1; i >= 0; i--) {
         const gc_event* ev = &gc_events[i];

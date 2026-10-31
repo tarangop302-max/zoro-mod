@@ -375,8 +375,26 @@ void ui_key_buttons_destroy(tenv *env) {
   (void)env;
 }
 
+/* Screen to go back to when the editor is closed: PLAYING when it was opened
+   from a live match with the Keyboard layout hotkey, CONTROLS otherwise. */
+static int s_return_screen = CONTROLS;
+/* True when the editor was opened from the in-match Settings popup: the popup
+   is hidden while editing and brought back on leaving. */
+static bool s_reopen_popup = false;
+
 void ui_key_buttons_open_editor(tenv *env) {
   if (!env || !env->usr) return;
+  {
+    game_data *gd = &env->usr->gdata;
+    s_return_screen = (gd->curr_screen == PLAYING || gd->curr_screen == SETTINGS)
+                          ? gd->curr_screen
+                          : CONTROLS;
+    s_reopen_popup = (gd->curr_screen == PLAYING && gd->settings_popup);
+    if (s_reopen_popup) {
+      gd->settings_popup = false;
+      usr_hotkey(&env->usr->usrs, HOTKEY_OPEN_SETTINGS)->active = false;
+    }
+  }
 #ifdef ANDROID
   ui_key_buttons_native_cancel_all();
 #endif
@@ -401,7 +419,12 @@ static void close_editor(tenv *env) {
   s_kb.drag_idx = -1;
   s_kb.sel_kind = SEL_NONE;
   s_kb.drag_kind = SEL_NONE;
-  env->usr->gdata.curr_screen = CONTROLS;
+  env->usr->gdata.curr_screen = s_return_screen;
+  if (s_reopen_popup) {
+    s_reopen_popup = false;
+    env->usr->gdata.settings_popup = true;
+    usr_hotkey(&env->usr->usrs, HOTKEY_OPEN_SETTINGS)->active = true;
+  }
 }
 
 static void read_pointer(tenv *env, bool *down, bool *clicked, bool *released,
@@ -421,6 +444,12 @@ static void read_pointer(tenv *env, bool *down, bool *clicked, bool *released,
   }
   if (ui_touch->just_up) {
     *released = true;
+    *mx = ui_touch->x;
+    *my = ui_touch->y;
+  }
+  /* ImGui's MousePos is only refreshed when its frame starts, so it trails the
+     finger by a frame. While a finger is down use the live touch position. */
+  if (ui_touch->down) {
     *mx = ui_touch->x;
     *my = ui_touch->y;
   }
@@ -1057,6 +1086,63 @@ static void draw_circle_proxy(ImDrawList *dl, kb_circle g, float opacity,
                           IM_COL32(255, 255, 255, 235), label, NULL);
 }
 
+/* Moves the item being dragged to the finger. Runs BEFORE anything is drawn
+   (see ui_key_buttons_update() and draw_editor()), so the picture always shows
+   the position of the current frame instead of trailing one frame behind the
+   finger. Safe to call more than once per frame. */
+static void apply_drag(tenv *env) {
+  if (!env || !env->usr || !env->ctx) return;
+  user_settings *usrs = &env->usr->usrs;
+  float sw = (float)env->ctx->size[0];
+  float sh = (float)env->ctx->size[1];
+  bool mouse_down, mouse_clicked, mouse_released;
+  float mx, my;
+  read_pointer(env, &mouse_down, &mouse_clicked, &mouse_released, &mx, &my);
+  if (s_kb.drag_kind != SEL_NONE && mouse_down && !s_kb.picker_open) {
+    float nx = (mx - s_kb.drag_off_x) / sw;
+    float ny = (my - s_kb.drag_off_y) / sh;
+    if (s_kb.drag_kind == SEL_KEY && s_kb.drag_idx >= 0) {
+      custom_key_btn *b = &usrs->key_btns[s_kb.drag_idx];
+      b->rel_x = nx;
+      b->rel_y = ny;
+      float hw, hh;
+      button_extents(b, sh, sane_wmul(usrs->key_btn_wmul[s_kb.drag_idx]),
+                     usrs->key_btn_shape[s_kb.drag_idx] == 1, &hw, &hh);
+      float rx = hw / sw;
+      float ry = hh / sh;
+      if (b->rel_x < rx) b->rel_x = rx;
+      if (b->rel_x > 1.0f - rx) b->rel_x = 1.0f - rx;
+      if (b->rel_y < ry + 0.06f) b->rel_y = ry + 0.06f;
+      if (b->rel_y > 1.0f - ry) b->rel_y = 1.0f - ry;
+    } else if (s_kb.drag_kind == SEL_BOOST || s_kb.drag_kind == SEL_JOY) {
+      bool boost = s_kb.drag_kind == SEL_BOOST;
+      float *rx_p = boost ? &usrs->boost_rel_x : &usrs->joy_rel_x;
+      float *ry_p = boost ? &usrs->boost_rel_y : &usrs->joy_rel_y;
+      float rs = boost ? usrs->boost_rel_size : usrs->joy_rel_size;
+      float rx = rs * sh / sw;
+      if (nx < rx) nx = rx;
+      if (nx > 1.0f - rx) nx = 1.0f - rx;
+      if (ny < rs) ny = rs;
+      if (ny > 1.0f - rs) ny = 1.0f - rs;
+      *rx_p = nx;
+      *ry_p = ny;
+    } else if (s_kb.drag_kind == SEL_ZOOM) {
+      if (nx < 0.02f) nx = 0.02f;
+      if (nx > 0.98f) nx = 0.98f;
+      if (ny < 0.10f) ny = 0.10f;
+      if (ny > 0.90f) ny = 0.90f;
+      usrs->zslider_rel_x = nx;
+      usrs->zslider_rel_y = ny;
+    }
+  }
+}
+
+void ui_key_buttons_update(tenv *env) {
+  if (!env || !env->usr) return;
+  if (env->usr->gdata.curr_screen == KEYBOARD_EDITOR && s_kb.editor_open)
+    apply_drag(env);
+}
+
 static void draw_editor(tenv *env) {
   tuser_data *usr = env->usr;
   user_settings *usrs = &usr->usrs;
@@ -1076,6 +1162,8 @@ static void draw_editor(tenv *env) {
   ImDrawList *bg = igGetBackgroundDrawList(igGetMainViewport());
   ImDrawList_AddRectFilled(bg, (ImVec2){0, 0}, (ImVec2){sw, sh},
                            IM_COL32(8, 5, 20, 150), 0, 0);
+
+  apply_drag(env);
 
   bool mouse_down, mouse_clicked, mouse_released;
   float mx, my;
@@ -1241,43 +1329,6 @@ static void draw_editor(tenv *env) {
     }
   }
 
-  if (s_kb.drag_kind != SEL_NONE && mouse_down && !s_kb.picker_open) {
-    float nx = (mx - s_kb.drag_off_x) / sw;
-    float ny = (my - s_kb.drag_off_y) / sh;
-    if (s_kb.drag_kind == SEL_KEY && s_kb.drag_idx >= 0) {
-      custom_key_btn *b = &usrs->key_btns[s_kb.drag_idx];
-      b->rel_x = nx;
-      b->rel_y = ny;
-      float hw, hh;
-      button_extents(b, sh, sane_wmul(usrs->key_btn_wmul[s_kb.drag_idx]),
-                     usrs->key_btn_shape[s_kb.drag_idx] == 1, &hw, &hh);
-      float rx = hw / sw;
-      float ry = hh / sh;
-      if (b->rel_x < rx) b->rel_x = rx;
-      if (b->rel_x > 1.0f - rx) b->rel_x = 1.0f - rx;
-      if (b->rel_y < ry + 0.06f) b->rel_y = ry + 0.06f;
-      if (b->rel_y > 1.0f - ry) b->rel_y = 1.0f - ry;
-    } else if (s_kb.drag_kind == SEL_BOOST || s_kb.drag_kind == SEL_JOY) {
-      bool boost = s_kb.drag_kind == SEL_BOOST;
-      float *rx_p = boost ? &usrs->boost_rel_x : &usrs->joy_rel_x;
-      float *ry_p = boost ? &usrs->boost_rel_y : &usrs->joy_rel_y;
-      float rs = boost ? usrs->boost_rel_size : usrs->joy_rel_size;
-      float rx = rs * sh / sw;
-      if (nx < rx) nx = rx;
-      if (nx > 1.0f - rx) nx = 1.0f - rx;
-      if (ny < rs) ny = rs;
-      if (ny > 1.0f - rs) ny = 1.0f - rs;
-      *rx_p = nx;
-      *ry_p = ny;
-    } else if (s_kb.drag_kind == SEL_ZOOM) {
-      if (nx < 0.02f) nx = 0.02f;
-      if (nx > 0.98f) nx = 0.98f;
-      if (ny < 0.10f) ny = 0.10f;
-      if (ny > 0.90f) ny = 0.90f;
-      usrs->zslider_rel_x = nx;
-      usrs->zslider_rel_y = ny;
-    }
-  }
   if (mouse_released) {
     s_kb.drag_kind = SEL_NONE;
     s_kb.drag_idx = -1;

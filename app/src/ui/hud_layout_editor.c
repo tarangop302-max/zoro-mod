@@ -11,6 +11,11 @@
  * hotkey itself -- exactly how it was. */
 static bool  s_saved_hud_hotkey = false;
 static bool  s_snapshot_valid = false;
+/* Where "Back"/"Confirm" return to: PLAYING when opened mid-match from the
+   Settings popup (the popup is hidden meanwhile and restored afterwards),
+   SETTINGS when opened from the lobby. */
+static int   s_return_screen = SETTINGS;
+static bool  s_reopen_popup = false;
 
 static bool  s_snap_lb_pos_custom = false;
 static float s_snap_lb_rel_x = 0.0f;
@@ -50,6 +55,13 @@ void ui_hud_layout_editor_enter(tenv* env) {
 
   s_snapshot_valid = true;
 
+  s_return_screen = gdata->curr_screen == PLAYING ? PLAYING : SETTINGS;
+  s_reopen_popup = (gdata->curr_screen == PLAYING && gdata->settings_popup);
+  if (s_reopen_popup) {
+    gdata->settings_popup = false;
+    usr_hotkey(usrs, HOTKEY_OPEN_SETTINGS)->active = false;
+  }
+
   gdata->curr_screen = HUD_LAYOUT_EDITOR;
 }
 
@@ -78,7 +90,12 @@ static void exit_editor(tenv* env, bool discard) {
   s_snapshot_valid = false;
 
   save_user_settings(usrs);
-  gdata->curr_screen = SETTINGS;
+  gdata->curr_screen = s_return_screen;
+  if (s_reopen_popup) {
+    s_reopen_popup = false;
+    gdata->settings_popup = true;
+    usr_hotkey(usrs, HOTKEY_OPEN_SETTINGS)->active = true;
+  }
 }
 
 void ui_hud_layout_editor(tenv* env) {

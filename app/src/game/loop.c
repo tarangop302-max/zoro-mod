@@ -71,6 +71,7 @@ void game_loop(tenv* env) {
       // while it is up (the bot keeps steering; input() ignores clicks for
       // boost while the popup is open). It also stays open if you die.
       input_settings_hotkey(env);
+      if (!gdata->death_pending) input_key_editor_hotkey(env);
       if (!gdata->death_pending) {
         input(env);
       }

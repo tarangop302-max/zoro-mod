@@ -1092,4 +1092,95 @@ int android_jni_poll_lobby_bg_event(void) {
     return (result == 1 || result == 2) ? result : 0;
 }
 
+/* ---- Settings backup (Kotlin: GameActivity.requestBackupExport/Import,
+   pollBackupEvent) ---- */
+static void call_static_void_activity(const char* name) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return;
+    }
+
+    jclass cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (cls && !(*env)->ExceptionCheck(env)) {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, name, "(Landroid/app/Activity;)V");
+        if (mid && !(*env)->ExceptionCheck(env)) {
+            (*env)->CallStaticVoidMethod(env, cls, mid,
+                                         g_android_app->activity->clazz);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    } else if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
+void android_jni_backup_export(void) {
+    call_static_void_activity("requestBackupExport");
+}
+
+void android_jni_backup_import(void) {
+    call_static_void_activity("requestBackupImport");
+}
+
+android_backup_event android_jni_poll_backup_event(void) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return ANDROID_BACKUP_EVENT_NONE;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+    int result = ANDROID_BACKUP_EVENT_NONE;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK)
+            return ANDROID_BACKUP_EVENT_NONE;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return ANDROID_BACKUP_EVENT_NONE;
+    }
+
+    jclass cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (cls && !(*env)->ExceptionCheck(env)) {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "pollBackupEvent", "(Landroid/app/Activity;)I");
+        if (mid && !(*env)->ExceptionCheck(env)) {
+            result = (*env)->CallStaticIntMethod(
+                env, cls, mid, g_android_app->activity->clazz);
+        }
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            result = ANDROID_BACKUP_EVENT_NONE;
+        }
+    } else if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+    return (result >= ANDROID_BACKUP_EVENT_EXPORTED &&
+            result <= ANDROID_BACKUP_EVENT_ERROR)
+               ? (android_backup_event)result
+               : ANDROID_BACKUP_EVENT_NONE;
+}
+
+
 #endif

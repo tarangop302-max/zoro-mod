@@ -148,7 +148,7 @@ static void gc_draw_players_list(
         bool hovered = igIsItemHovered(0) || igIsItemActive();
 
         ImU32 bg =
-            located ? IM_COL32(124, 74, 232, 95) :
+            located ? GCT(124, 74, 232, 95) :
             pr->sos ? IM_COL32(224, 56, 44, 50) :
             hovered ? IM_COL32(255, 255, 255, 24) :
                       IM_COL32(255, 255, 255, 12);
@@ -157,7 +157,7 @@ static void gc_draw_players_list(
 
         if (located) {
             ImDrawList_AddRect(
-                dl, p, pmax, IM_COL32(190, 160, 255, 170),
+                dl, p, pmax, GCT(190, 160, 255, 170),
                 u * 0.7f, 0, 1.2f
             );
         } else if (pr->sos) {
@@ -201,7 +201,7 @@ static void gc_draw_players_list(
 
         ImVec2 dot = gc_v2(ac.x + r_av * 0.72f, ac.y + r_av * 0.72f);
         ImDrawList_AddCircleFilled(
-            dl, dot, u * 0.38f, IM_COL32(28, 16, 52, 255), 12
+            dl, dot, u * 0.38f, GCT(28, 16, 52, 255), 12
         );
         ImDrawList_AddCircleFilled(
             dl, dot, u * 0.26f, IM_COL32(125, 255, 176, 255), 12
@@ -220,7 +220,7 @@ static void gc_draw_players_list(
         float tag_x = right;
 
         if (pr->you) {
-            gc_tag(dl, &tag_x, tag_y, tag_h, "YOU", IM_COL32(124, 74, 232, 230), u);
+            gc_tag(dl, &tag_x, tag_y, tag_h, "YOU", GCT(124, 74, 232, 230), u);
         }
 
         if (pr->sos) {
@@ -252,7 +252,7 @@ static void gc_draw_players_list(
             dl, gc_v2(x, ty1),
             pr->you ?
                 IM_COL32(125, 255, 176, 255) :
-                IM_COL32(180, 156, 245, 255),
+                GCT(180, 156, 245, 255),
             nm, NULL
         );
 
@@ -263,7 +263,7 @@ static void gc_draw_players_list(
         }
 
         /* Line 2: score / server on the left, ping on the right. */
-        ImU32 dim = IM_COL32(140, 133, 170, 230);
+        ImU32 dim = GCT(140, 133, 170, 230);
         float ping_w = 0.0f;
         char ping_s[16] = "";
 
@@ -315,10 +315,10 @@ static void gc_draw_players_list(
         if (play_kind != 0) {
             ImU32 pc =
                 play_kind == 1 ?
-                    (play_hot ? IM_COL32(150, 100, 250, 255) : IM_COL32(124, 74, 232, 255)) :
+                    (play_hot ? GCT(150, 100, 250, 255) : GCT(124, 74, 232, 255)) :
                 confirming ?
                     IM_COL32(230, 150, 40, 255) :
-                    (play_hot ? IM_COL32(95, 80, 160, 255) : IM_COL32(70, 56, 120, 255));
+                    (play_hot ? GCT(95, 80, 160, 255) : GCT(70, 56, 120, 255));
 
             ImDrawList_AddRectFilled(
                 dl, play_mn, gc_add(play_mn, play_w, play_h),
@@ -398,7 +398,7 @@ static void gc_message_scrollbar(
         dl,
         gc_v2(bar_x, track_pos.y),
         gc_v2(bar_x + bar_w, track_pos.y + track_h),
-        IM_COL32(176, 148, 245, 28),
+        GCT(176, 148, 245, 28),
         bar_w * 0.5f, 0
     );
 
@@ -406,7 +406,7 @@ static void gc_message_scrollbar(
         dl,
         gc_v2(bar_x, thumb_y),
         gc_v2(bar_x + bar_w, thumb_y + thumb_h),
-        IM_COL32(191, 165, 245, 170),
+        GCT(191, 165, 245, 170),
         bar_w * 0.5f, 0
     );
 
@@ -556,8 +556,8 @@ static void gc_draw_messages(
         global_chat_net != NULL &&
         jsr_network_is_connected(global_chat_net);
 
-    ImU32 dim = IM_COL32(150, 142, 185, 210);
-    ImU32 dimmer = IM_COL32(120, 112, 155, 200);
+    ImU32 dim = GCT(150, 142, 185, 210);
+    ImU32 dimmer = GCT(120, 112, 155, 200);
 
     if (global_chat_message_count == 0) {
         ImVec2 cp;
@@ -742,7 +742,7 @@ static void gc_draw_messages(
 
         ImU32 bg =
             is_system ? IM_COL32(62, 186, 255, 26) :
-            is_own ? IM_COL32(124, 74, 232, 78) :
+            is_own ? GCT(124, 74, 232, 78) :
                      IM_COL32(255, 255, 255, 13);
 
         ImDrawList_AddRectFilled(dl, p, pmax, bg, u * 0.65f, 0);
@@ -754,7 +754,7 @@ static void gc_draw_messages(
             );
         } else if (is_own) {
             ImDrawList_AddRect(
-                dl, p, pmax, IM_COL32(190, 160, 255, 60),
+                dl, p, pmax, GCT(190, 160, 255, 60),
                 u * 0.65f, 0, 1.0f
             );
         }
@@ -801,7 +801,7 @@ static void gc_draw_messages(
                     dl, gc_v2(x, hy),
                     is_own ?
                         IM_COL32(125, 255, 176, 255) :
-                        IM_COL32(181, 156, 245, 255),
+                        GCT(181, 156, 245, 255),
                     nm, NULL
                 );
 
@@ -885,7 +885,7 @@ static void gc_draw_messages(
 
         ImDrawList_AddCircleFilled(
             dl, c, r,
-            hot ? IM_COL32(150, 100, 250, 245) : IM_COL32(124, 74, 232, 230),
+            hot ? GCT(150, 100, 250, 245) : GCT(124, 74, 232, 230),
             24
         );
 
@@ -957,7 +957,7 @@ static void gc_draw_tray(ImVec2 pos, float width, float u) {
     );
     ImDrawList_AddRect(
         dl, pos, gc_add(pos, width, h),
-        IM_COL32(190, 160, 255, 55), u * 0.8f, 0, 1.0f
+        GCT(190, 160, 255, 55), u * 0.8f, 0, 1.0f
     );
 
     int remove = -1;
@@ -1050,7 +1050,7 @@ static void gc_draw_emoji_grid(
     );
     ImDrawList_AddRect(
         pdl, pos, gc_add(pos, size.x, size.y),
-        IM_COL32(190, 160, 255, 55), u * 0.8f, 0, 1.0f
+        GCT(190, 160, 255, 55), u * 0.8f, 0, 1.0f
     );
 
     igSetCursorScreenPos(pos);
@@ -1250,8 +1250,8 @@ static void gc_draw_key_screen(
             "##gc_connect",
             p,
             gc_v2(bw, bh),
-            IM_COL32(124, 74, 232, 255),
-            IM_COL32(150, 100, 250, 255),
+            GCT(124, 74, 232, 255),
+            GCT(150, 100, 250, 255),
             u * 0.6f,
             0
         )
@@ -1346,19 +1346,19 @@ static void global_chat_panel_contents(
 
     ImDrawList_AddRectFilled(
         dl, wp, pmax,
-        IM_COL32(28, 16, 52, (int)(255.0f * alpha)),
+        GCT(28, 16, 52, (int)(255.0f * alpha)),
         radius, 0
     );
 
     ImDrawList_AddRectFilled(
         dl, wp, gc_v2(wp.x + rail_w, pmax.y),
-        IM_COL32(10, 5, 25, (int)(130.0f * alpha)),
+        GCT(10, 5, 25, (int)(130.0f * alpha)),
         radius, ImDrawFlags_RoundCornersLeft
     );
 
     ImDrawList_AddRect(
         dl, wp, pmax,
-        IM_COL32(190, 160, 255, 105),
+        GCT(190, 160, 255, 105),
         radius, 0, 1.5f
     );
 
@@ -1397,7 +1397,7 @@ static void global_chat_panel_contents(
                 dl,
                 gc_add(bmn, -3.0f, -3.0f),
                 gc_add(bmn, btn + 3.0f, btn + 3.0f),
-                IM_COL32(124, 74, 232, 70),
+                GCT(124, 74, 232, 70),
                 btn * 0.32f, 0
             );
 
@@ -1406,7 +1406,7 @@ static void global_chat_panel_contents(
                 dl,
                 gc_v2(wp.x + 2.0f, bmn.y + btn * 0.2f),
                 gc_v2(wp.x + 5.0f, bmn.y + btn * 0.8f),
-                IM_COL32(200, 175, 255, 255),
+                GCT(200, 175, 255, 255),
                 2.0f, 0
             );
         }
@@ -1417,10 +1417,10 @@ static void global_chat_panel_contents(
                 bmn,
                 gc_v2(btn, btn),
                 on ?
-                    IM_COL32(124, 74, 232, 255) :
+                    GCT(124, 74, 232, 255) :
                     IM_COL32(255, 255, 255, 16),
                 on ?
-                    IM_COL32(140, 90, 245, 255) :
+                    GCT(140, 90, 245, 255) :
                     IM_COL32(255, 255, 255, 38),
                 btn * 0.28f,
                 0
@@ -1447,8 +1447,8 @@ static void global_chat_panel_contents(
                 (global_chat_is_sos_active() || others_sos > 0) ?
                     IM_COL32(255, 90, 74, 255) : ic,
                 on ?
-                    IM_COL32(124, 74, 232, 255) :
-                    IM_COL32(44, 30, 78, 255)
+                    GCT(124, 74, 232, 255) :
+                    GCT(44, 30, 78, 255)
             );
         } else {
             gc_icon_gear(dl, c, is, ic);
@@ -1531,7 +1531,7 @@ static void global_chat_panel_contents(
                 dl,
                 gc_v2(rail_x + btn * 0.15f, y - rail_gap * 0.5f),
                 gc_v2(rail_x + btn * 0.85f, y - rail_gap * 0.5f),
-                IM_COL32(190, 160, 255, 50),
+                GCT(190, 160, 255, 50),
                 1.0f
             );
         }
@@ -1557,12 +1557,12 @@ static void global_chat_panel_contents(
                     gc_v2(btn, qh),
                     q == 0 ?
                         IM_COL32(224, 56, 44, 120) :
-                        IM_COL32(124, 74, 232, 90),
+                        GCT(124, 74, 232, 90),
                     q == 0 ?
                         IM_COL32(245, 90, 76, 190) :
-                        IM_COL32(150, 100, 250, 170),
+                        GCT(150, 100, 250, 170),
                     qh * 0.3f,
-                    IM_COL32(190, 160, 255, 70)
+                    GCT(190, 160, 255, 70)
                 )
             ) {
                 gc_send_quick(env, q);
@@ -1643,11 +1643,11 @@ static void global_chat_panel_contents(
 
             ImDrawList_AddRectFilled(
                 tdl, tp, gc_add(tp, tw, th),
-                IM_COL32(36, 22, 64, (int)(235.0f * a)), th * 0.5f, 0
+                GCT(36, 22, 64, (int)(235.0f * a)), th * 0.5f, 0
             );
             ImDrawList_AddRect(
                 tdl, tp, gc_add(tp, tw, th),
-                IM_COL32(190, 160, 255, (int)(110.0f * a)), th * 0.5f, 0, 1.0f
+                GCT(190, 160, 255, (int)(110.0f * a)), th * 0.5f, 0, 1.0f
             );
             ImDrawList_AddCircleFilled(
                 tdl, gc_v2(tp.x + u * 0.9f, tp.y + th * 0.5f), u * 0.24f,
@@ -1769,7 +1769,7 @@ static void global_chat_panel_contents(
 
         gc_icon_x(
             dl, gc_v2(x_close + hb * 0.5f, by + hb * 0.5f),
-            hb * 0.42f, IM_COL32(203, 182, 255, 255)
+            hb * 0.42f, GCT(203, 182, 255, 255)
         );
     }
 
@@ -1777,7 +1777,7 @@ static void global_chat_panel_contents(
         dl,
         gc_v2(mx, wp.y + head_h),
         gc_v2(pmax.x - 1.0f, wp.y + head_h),
-        IM_COL32(190, 160, 255, 34),
+        GCT(190, 160, 255, 34),
         1.0f
     );
 
@@ -1786,10 +1786,10 @@ static void global_chat_panel_contents(
         dl,
         gc_v2(mx, wp.y + head_h - 1.0f),
         gc_v2(pmax.x - radius * 0.6f, wp.y + head_h + 1.0f),
-        IM_COL32(190, 160, 255, 120),
-        IM_COL32(190, 160, 255, 0),
-        IM_COL32(190, 160, 255, 0),
-        IM_COL32(190, 160, 255, 120)
+        GCT(190, 160, 255, 120),
+        GCT(190, 160, 255, 0),
+        GCT(190, 160, 255, 0),
+        GCT(190, 160, 255, 120)
     );
 
     /* ---------- tab content ---------- */
@@ -1929,7 +1929,7 @@ static void global_chat_panel_contents(
                     ),
                     used >= limit - 10 ?
                         IM_COL32(255, 120, 100, 255) :
-                        IM_COL32(150, 142, 185, 230),
+                        GCT(150, 142, 185, 230),
                     cnt, NULL
                 );
             }
@@ -1943,13 +1943,13 @@ static void global_chat_panel_contents(
                 emn,
                 gc_v2(in_h, in_h),
                 gc_emoji_picker_open ?
-                    IM_COL32(124, 74, 232, 200) :
+                    GCT(124, 74, 232, 200) :
                     IM_COL32(255, 255, 255, 22),
                 gc_emoji_picker_open ?
-                    IM_COL32(150, 100, 250, 230) :
+                    GCT(150, 100, 250, 230) :
                     IM_COL32(255, 255, 255, 46),
                 u * 0.7f,
-                IM_COL32(190, 160, 255, 60)
+                GCT(190, 160, 255, 60)
             )
         ) {
             gc_emoji_picker_open = !gc_emoji_picker_open;
@@ -1969,8 +1969,8 @@ static void global_chat_panel_contents(
                 "##gc_send",
                 smn,
                 gc_v2(in_h, in_h),
-                IM_COL32(124, 74, 232, 255),
-                IM_COL32(150, 100, 250, 255),
+                GCT(124, 74, 232, 255),
+                GCT(150, 100, 250, 255),
                 u * 0.7f,
                 0
             );
@@ -2018,7 +2018,7 @@ static void global_chat_panel_contents(
                 ImDrawList_AddText_Vec2(
                     igGetWindowDrawList(),
                     gc_v2(hp.x + av.x - hw, hp.y),
-                    IM_COL32(120, 112, 155, 200), hint, NULL
+                    GCT(120, 112, 155, 200), hint, NULL
                 );
             }
         }
@@ -2072,15 +2072,15 @@ static void global_chat_panel_contents(
                 cdl, sp, smax,
                 sos_on ?
                     IM_COL32(255, 90, 74, 190) :
-                    IM_COL32(190, 160, 255, 50),
+                    GCT(190, 160, 255, 50),
                 u * 0.8f, 0, 1.2f
             );
 
             gc_icon_sos(
                 cdl, gc_v2(sp.x + u * 1.7f, sp.y + card_h * 0.5f),
                 lh * 1.7f,
-                sos_on ? IM_COL32(255, 90, 74, 255) : IM_COL32(190, 175, 235, 255),
-                sos_on ? IM_COL32(60, 20, 20, 255) : IM_COL32(44, 30, 78, 255)
+                sos_on ? IM_COL32(255, 90, 74, 255) : GCT(190, 175, 235, 255),
+                sos_on ? IM_COL32(60, 20, 20, 255) : GCT(44, 30, 78, 255)
             );
 
             float tx = sp.x + u * 3.4f;
@@ -2115,7 +2115,7 @@ static void global_chat_panel_contents(
 
             ImDrawList_AddText_Vec2(
                 cdl, gc_v2(tx, sp.y + lh * 1.8f),
-                IM_COL32(170, 160, 205, 230), l2c, NULL
+                GCT(170, 160, 205, 230), l2c, NULL
             );
 
             /* Time-left bar (5 minute SOS). */
@@ -2255,7 +2255,7 @@ static void global_chat_panel_contents(
         float gap = u * 0.5f;
         float bw = (av.x - gap) * 0.5f;
 
-        ImU32 dim = IM_COL32(150, 142, 185, 220);
+        ImU32 dim = GCT(150, 142, 185, 220);
 
         /* ---- window ---- */
         gc_section("Window", av.x, u);

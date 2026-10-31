@@ -6,6 +6,7 @@
 #include "game/global_chat.h"
 #include "game/screenshot.h"
 #include "game/recorder.h"
+#include "game/backup.h"
 
 #include "ui/skin_editor.h"
 #include "ui/title_screen.h"
@@ -1076,6 +1077,7 @@ void trender(tenv* env) {
     // from then on, not only while actually connected to a match.
 
     recorder_update();
+    backup_update(env);
     recorder_button_draw(
         env
     );

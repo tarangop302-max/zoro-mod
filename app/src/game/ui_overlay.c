@@ -3,13 +3,14 @@
 
 #ifndef IM_COL32
 #define IM_COL32(R,G,B,A) \
-  (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)<<0))
+  crystal_tint_u32((((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)<<0)))
 #endif
 #endif
 #include "ui_overlay.h"
 
 #include <math.h>
 #include "../user.h"
+#include "../ui/crystal_theme.h"
 #include "../arrow_styles.h"
 #include "net_graph.h"
 #include "user_settings.h"

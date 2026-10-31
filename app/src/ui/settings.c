@@ -2,6 +2,7 @@
 
 #include "hud_layout_editor.h"
 #include "key_buttons.h"
+#include "../game/backup.h"
 
 #include "../user.h"
 #include "../android_glfw_shim.h"
@@ -386,6 +387,13 @@ void ui_settings(tenv* env) {
     igTextWrapped("FPS limit is a maximum, not a forced refresh rate. Actual FPS cannot exceed your phone's active display refresh rate. Android Auto mode may keep the screen at 60 Hz; select 90/120/144 Hz in the phone's Display settings to use a matching Vlither limit.");
     igTextDisabled("VSync can also cap rendering to the current display mode.");
     igTextWrapped("%s", "Latency compensation: your own turns appear on screen when the server actually receives them, and other snakes' heads are drawn where the server has them now. What you see is what can hit you, at the cost of your turns showing about half your ping later. Turn delay sets how much of that wait is applied: 0% shows your turns instantly (the old behaviour), 100% shows them exactly when the server gets them. Keep it at 100% for a true picture: lowering it makes turns look faster than they really are.");
+    igSpacing();
+    igSeparatorText("Backup");
+    igTextWrapped("Save all your settings, control layouts and Team Chat quick messages to a file, so you can restore them after clearing data or reinstalling.");
+    if (igButton("Export backup", (ImVec2){0, 0})) backup_request_export(env);
+    igSameLine(0, -1);
+    if (igButton("Import backup", (ImVec2){0, 0})) backup_request_import();
+    if (backup_status()[0]) igTextWrapped("%s", backup_status());
     igEndChild();
     }
 

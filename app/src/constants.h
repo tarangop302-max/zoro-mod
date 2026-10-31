@@ -133,6 +133,11 @@ static inline int rt_gate(double now_ms, double last_ms, double min_ms) {
 #define NUM_STORED_HOTKEYS 8
 #define NUM_HOTKEYS 11
 #define MAX_KEY_BTNS 16
+/* Lobby (title screen) background: -1 = original gradient, 0..PRESET_COUNT-1
+   = built-in backgrounds, LOBBY_BG_CUSTOM = the picture uploaded from the
+   phone gallery. */
+#define LOBBY_BG_PRESET_COUNT 6
+#define LOBBY_BG_CUSTOM 100
 
 typedef enum conn_status {
   DISCONNECTED = 0,

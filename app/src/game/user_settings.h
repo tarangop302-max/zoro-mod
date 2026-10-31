@@ -461,6 +461,15 @@ typedef struct user_settings {
      usr_hotkey(usrs, HOTKEY_KEY_EDITOR). */
   uint8_t key_editor_reserved[8];
   hotkey  hotkey_key_editor;
+
+  /* v2.27 extension: lobby (title screen) background. lobby_bg_index: -1 =
+     original gradient, 0..LOBBY_BG_PRESET_COUNT-1 = built-in, LOBBY_BG_CUSTOM
+     = uploaded picture. lobby_bg_dim darkens an uploaded picture (0..0.85).
+     Appended after hotkey_key_editor so every earlier file stays a compatible
+     prefix (see v227_prefix in read_user_settings). */
+  uint8_t lobby_bg_reserved[8];
+  int     lobby_bg_index;
+  float   lobby_bg_dim;
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {

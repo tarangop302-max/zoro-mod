@@ -155,6 +155,10 @@ void user_settings_default(user_settings* usr_settings) {
          sizeof(usr_settings->key_editor_reserved));
   usr_settings->hotkey_key_editor =
       (hotkey){GLFW_KEY_L, false, 0, "Keyboard layout"};
+  memset(usr_settings->lobby_bg_reserved, 0,
+         sizeof(usr_settings->lobby_bg_reserved));
+  usr_settings->lobby_bg_index = -1;
+  usr_settings->lobby_bg_dim = 0.25f;
 
   for (int i = 0; i < MAX_KEY_BTNS; i++) {
     usr_settings->key_btns[i].active   = false;
@@ -378,9 +382,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v224_prefix = offsetof(user_settings, turn_path_reserved);
   size_t v225_prefix = offsetof(user_settings, key_geom_reserved);
   size_t v226_prefix = offsetof(user_settings, key_editor_reserved);
+  size_t v227_prefix = offsetof(user_settings, lobby_bg_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v227_prefix)
+    /* A file saved before the lobby background existed ends at v227_prefix,
+       possibly followed only by compiler tail padding. Keep every saved value;
+       the new fields keep their defaults. */
+    bytes_to_read = v227_prefix;
   else if ((size_t)file_size >= v226_prefix)
     /* A file saved before the Keyboard layout hotkey existed ends at
        v226_prefix, possibly followed only by compiler tail padding. Keep every
@@ -824,6 +834,14 @@ void read_user_settings(user_settings* usr_settings) {
     ke->active = false;
     strcpy(ke->description, "Keyboard layout");
   }
+
+  if (!(loaded.lobby_bg_index == -1 ||
+        (loaded.lobby_bg_index >= 0 &&
+         loaded.lobby_bg_index < LOBBY_BG_PRESET_COUNT) ||
+        loaded.lobby_bg_index == LOBBY_BG_CUSTOM))
+    loaded.lobby_bg_index = -1;
+  if (!(loaded.lobby_bg_dim >= 0.0f && loaded.lobby_bg_dim <= 0.85f))
+    loaded.lobby_bg_dim = 0.25f;
 
   *usr_settings = loaded;
 }

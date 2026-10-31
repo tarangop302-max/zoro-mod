@@ -151,6 +151,10 @@ void user_settings_default(user_settings* usr_settings) {
       (hotkey){GLFW_KEY_O, false, 0, "Open settings"};
   usr_settings->hotkey_eyes_back =
       (hotkey){GLFW_KEY_U, false, 0, "Eyes back"};
+  memset(usr_settings->key_editor_reserved, 0,
+         sizeof(usr_settings->key_editor_reserved));
+  usr_settings->hotkey_key_editor =
+      (hotkey){GLFW_KEY_L, false, 0, "Keyboard layout"};
 
   for (int i = 0; i < MAX_KEY_BTNS; i++) {
     usr_settings->key_btns[i].active   = false;
@@ -373,9 +377,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v223_prefix = offsetof(user_settings, center_ring_reserved);
   size_t v224_prefix = offsetof(user_settings, turn_path_reserved);
   size_t v225_prefix = offsetof(user_settings, key_geom_reserved);
+  size_t v226_prefix = offsetof(user_settings, key_editor_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v226_prefix)
+    /* A file saved before the Keyboard layout hotkey existed ends at
+       v226_prefix, possibly followed only by compiler tail padding. Keep every
+       saved value; the new hotkey keeps its default. */
+    bytes_to_read = v226_prefix;
   else if ((size_t)file_size >= v225_prefix)
     /* A file saved before the key width / zoom thickness fields existed ends
        at v225_prefix (it already contains the turn path width), possibly
@@ -795,6 +805,24 @@ void read_user_settings(user_settings* usr_settings) {
     if (eb->mode < 0 || eb->mode > 1) eb->mode = 0;
     eb->active = false;
     strcpy(eb->description, "Eyes back");
+  }
+
+  {
+    /* Keyboard layout: same key rules and de-duplication as Eyes back. */
+    hotkey* ke = &loaded.hotkey_key_editor;
+    bool ok = (ke->key >= 48 && ke->key < 58) || (ke->key >= 65 && ke->key < 91);
+    if (!ok || ke->key == GLFW_KEY_M || ke->key == GLFW_KEY_N)
+      ke->key = GLFW_KEY_L;
+    for (int tries = 0; tries < 36; ++tries) {
+      bool taken = false;
+      for (int d = 0; d < HOTKEY_KEY_EDITOR; ++d)
+        if (usr_hotkey(&loaded, d)->key == ke->key) taken = true;
+      if (!taken && ke->key != GLFW_KEY_M && ke->key != GLFW_KEY_N) break;
+      ke->key = (ke->key >= 65 && ke->key < 90) ? ke->key + 1 : 65;
+    }
+    if (ke->mode < 0 || ke->mode > 1) ke->mode = 0;
+    ke->active = false;
+    strcpy(ke->description, "Keyboard layout");
   }
 
   *usr_settings = loaded;

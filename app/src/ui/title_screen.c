@@ -11,6 +11,7 @@
 #include "../game/snakey_rain.h"
 #include "../game/lifetime_stats.h"
 #include "crystal_theme.h"
+#include "lobby_bg.h"
 #include "kills_gallery.h"
 #include "clips_gallery.h"
 
@@ -94,7 +95,7 @@ void ui_title_screen(tenv* env) {
   usr->r->global.bd_opacity = 0;
   usr->r->global.minimap_opacity = 0;
 
-  crystal_draw_background(env);
+  ui_lobby_bg_draw(env); /* lobby only: gradient / preset / uploaded picture */
   crystal_push_theme();
 
   float frame_height = igGetFrameHeight();
@@ -457,8 +458,9 @@ void ui_title_screen(tenv* env) {
   }
 
   draw_snakey_rain_homepage(env, frame_height);
+  ui_lobby_bg_button(env, frame_height);
 
   igPopFont();
 }
 
-void ui_title_screen_destroy(tenv* env) {}
+void ui_title_screen_destroy(tenv* env) { ui_lobby_bg_destroy(env); }

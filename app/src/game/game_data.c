@@ -64,6 +64,10 @@ void display_hotkeys(tuser_data* usr, float offset, font_size sz) {
     hotkey* hk = &usrs->hotkey_eyes_back;
     show_hot_key(usr, hk->key, (vec3){1, 1, 0.7f}, hk->description, offset, sz);
   }
+  {
+    hotkey* hk = &usrs->hotkey_key_editor;
+    show_hot_key(usr, hk->key, (vec3){1, 1, 0.7f}, hk->description, offset, sz);
+  }
 
   igPopFont();
 }

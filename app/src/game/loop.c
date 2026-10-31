@@ -18,6 +18,7 @@
 #include "ui_overlay.h"
 #include "../ui/settings.h"
 #include "lifetime_stats.h"
+#include "../ui/crystal_theme.h"
 
 void game_loop(tenv* env) {
   tuser_data* usr = env->usr;

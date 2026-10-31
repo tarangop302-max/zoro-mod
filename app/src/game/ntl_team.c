@@ -14,9 +14,11 @@
 #endif
 
 #include "../ui/crystal_theme.h"
+#include "../ui/lobby_bg.h"
+#include "../ui/settings.h"
 
 #ifndef IM_COL32
-#define IM_COL32(R,G,B,A) (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)))
+#define IM_COL32(R,G,B,A) crystal_tint_u32((((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R))))
 #endif
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -1317,59 +1319,154 @@ void ntl_team_panel(tenv *env) {
   u->r->global.bd_opacity = 0;
   u->r->global.minimap_opacity = 0;
 
-  crystal_draw_background(env);
+  /* Only the lobby background behind this screen (no game / bot preview). */
+  ui_lobby_bg_draw(env);
   crystal_push_theme();
 
-  igText("NTL Chat");
-  igSameLine(0, 12);
-  if (!us->ntl_enabled)
-    igTextColored((ImVec4){1.0f, 0.55f, 0.25f, 1.0f}, "Disabled");
-  else if (strlen(us->ntl_auth_key) < 16 || strlen(us->ntl_team_id) < 16)
-    igTextColored((ImVec4){1.0f, 0.35f, 0.35f, 1.0f}, "Credentials required");
-  else {
-    double now = mg_millis() / 1000.0;
-    bool recently_connected = S.last_success > 0 && now - S.last_success < NTL_CONNECTED_GRACE_SECONDS;
-    if (recently_connected) {
-      igTextColored((ImVec4){0.35f, 1.0f, 0.5f, 1.0f},
-                    S.consecutive_failures > 0
-                        ? "Connected - reconnecting (%d online)"
-                        : "Connected - %d online",
-                    S.count);
-    } else if (S.request_active)
-      igTextColored((ImVec4){1.0f, 0.85f, 0.3f, 1.0f}, "Connecting...");
-    else if (S.consecutive_failures > 0)
-      igTextColored((ImVec4){1.0f, 0.68f, 0.25f, 1.0f},
-                    "Reconnecting automatically...");
-    else if (!S.last_request_ok && S.last_http_status != 0)
-      igTextColored((ImVec4){1.0f, 0.35f, 0.35f, 1.0f}, "Server error HTTP %d", S.last_http_status);
-    else
-      igTextColored((ImVec4){1.0f, 0.55f, 0.25f, 1.0f}, "Waiting for NTL server");
+  tcontext *ctx = env->ctx;
+  float ui_s = 1.0f;
+  {
+    float se = ctx->size[0] < ctx->size[1] ? ctx->size[0] : ctx->size[1];
+    ui_s = se / 720.0f;
+    if (ui_s < 0.75f) ui_s = 0.75f;
+    if (ui_s > 1.30f) ui_s = 1.30f;
   }
-  igSeparator();
 
-  float footer_h = igGetFrameHeight() * 1.8f + style->ItemSpacing.y * 2.0f;
-  float body_h = avail.y - footer_h - igGetFrameHeight() - style->ItemSpacing.y * 2.0f;
-  if (body_h < 260) body_h = 260;
+  /* ---- connection status (text + colour) ---- */
+  char status_txt[96];
+  ImVec4 status_col = {1.0f, 0.55f, 0.25f, 1.0f};
+  if (!us->ntl_enabled) {
+    snprintf(status_txt, sizeof status_txt, "NTL chat disabled");
+  } else if (strlen(us->ntl_auth_key) < 16 || strlen(us->ntl_team_id) < 16) {
+    snprintf(status_txt, sizeof status_txt, "Credentials required");
+    status_col = (ImVec4){1.0f, 0.35f, 0.35f, 1.0f};
+  } else {
+    double now = mg_millis() / 1000.0;
+    bool recently_connected = S.last_success > 0 &&
+                              now - S.last_success < NTL_CONNECTED_GRACE_SECONDS;
+    if (recently_connected) {
+      snprintf(status_txt, sizeof status_txt,
+               S.consecutive_failures > 0
+                   ? "Connected - reconnecting (%d online)"
+                   : "Connected - %d online",
+               S.count);
+      status_col = (ImVec4){0.35f, 1.0f, 0.5f, 1.0f};
+    } else if (S.request_active) {
+      snprintf(status_txt, sizeof status_txt, "Connecting...");
+      status_col = (ImVec4){1.0f, 0.85f, 0.3f, 1.0f};
+    } else if (S.consecutive_failures > 0) {
+      snprintf(status_txt, sizeof status_txt, "Reconnecting automatically...");
+      status_col = (ImVec4){1.0f, 0.68f, 0.25f, 1.0f};
+    } else if (!S.last_request_ok && S.last_http_status != 0) {
+      snprintf(status_txt, sizeof status_txt, "Server error HTTP %d",
+               S.last_http_status);
+      status_col = (ImVec4){1.0f, 0.35f, 0.35f, 1.0f};
+    } else {
+      snprintf(status_txt, sizeof status_txt, "Waiting for NTL server");
+    }
+  }
 
-  igPushStyleColor_Vec4(ImGuiCol_ChildBg,
-                        (ImVec4){0.176f, 0.106f, 0.306f, 0.30f});
-  igBeginChild_Str("##ntl_team_and_chat",
-                   (ImVec2){avail.x, body_h},
-                   ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
+  static bool popup_was_open = false;
+  static int ntl_tab = 0;
+  global_chat_adjust_mode chat_adjust_mode = global_chat_get_adjust_mode();
+  bool pos_active = chat_adjust_mode == GLOBAL_CHAT_ADJUST_POSITION;
+  bool size_active = chat_adjust_mode == GLOBAL_CHAT_ADJUST_SIZE;
 
-  /* Three columns: Map dot customization (widest), Chat
-   * position (medium), Online players (narrowest -- it's
-   * just a name list). */
-  float col_gap = style->ItemSpacing.x * 2.0f;
-  float remaining = avail.x - col_gap * 2.0f;
-  float map_col_w = remaining * 0.46f;
-  float chat_col_w = remaining * 0.32f;
-  float players_col_w = remaining - map_col_w - chat_col_w;
+  /* While moving / resizing the chat window, get the big panel out of the way
+     (it would cover the screen) and show just a small Confirm bar. */
+  if (chat_adjust_mode != GLOBAL_CHAT_ADJUST_NONE) {
+    popup_was_open = false; /* reopened automatically after Confirm */
+    float bar_w = fminf(460.0f * ui_s, ctx->size[0] - 32.0f);
+    igSetNextWindowPos((ImVec2){ctx->size[0] * 0.5f,
+                                ctx->size[1] - 16.0f * ui_s},
+                       ImGuiCond_Always, (ImVec2){0.5f, 1.0f});
+    igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 16.0f);
+    igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 1.5f);
+    igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding,
+                        (ImVec2){14.0f * ui_s, 12.0f * ui_s});
+    igPushStyleColor_Vec4(ImGuiCol_WindowBg,
+                          (ImVec4){0.070f, 0.050f, 0.120f, 0.96f});
+    igPushStyleColor_Vec4(ImGuiCol_Border,
+                          (ImVec4){0.690f, 0.580f, 0.960f, 0.55f});
+    igBegin("##ntl_adjust_bar", NULL,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize);
+    igPushTextWrapPos(igGetCursorPosX() + bar_w);
+    igTextWrapped("%s", pos_active
+                            ? "Drag the chat window to where you want it, then tap Confirm."
+                            : "Drag the chat window's edge or corner to resize it, then tap Confirm.");
+    igPopTextWrapPos();
+    igSpacing();
+    igPushStyleColor_Vec4(ImGuiCol_Button,
+                          (ImVec4){0.20f, 0.62f, 0.30f, 1.0f});
+    if (igButton(pos_active ? "CONFIRM POSITION" : "CONFIRM SIZE",
+                 (ImVec2){bar_w, igGetFrameHeight() * 1.6f})) {
+      global_chat_set_adjust_mode(env, GLOBAL_CHAT_ADJUST_NONE);
+    }
+    igPopStyleColor(1);
+    igEnd();
+    igPopStyleColor(2);
+    igPopStyleVar(3);
+    crystal_pop_theme();
+    igPopFont();
+    return;
+  }
 
-  igBeginChild_Str("##ntl_map_col", (ImVec2){map_col_w, 0},
-                   ImGuiChildFlags_None, ImGuiWindowFlags_None);
+  /* ---- the panel: same footprint as the Settings / Controls popups ---- */
+  if (!popup_was_open) igOpenPopup_Str("NTL Team Chat", 0);
+  float footer_h = igGetFrameHeight() * 1.6f + style->ItemSpacing.y * 2.0f;
+  crystal_panel_set_layout(0.52f, 0.88f, footer_h);
+  if (!crystal_panel_begin(env, "NTL Team Chat", "TEAM CHAT",
+                           "Map dots, chat position and online players",
+                           480.0f)) {
+    if (popup_was_open) { /* closed with the X / by tapping outside = Back */
+      popup_was_open = false;
+      save_user_settings(us);
+      g->curr_screen = TITLE_SCREEN;
+    }
+    crystal_pop_theme();
+    igPopFont();
+    return;
+  }
+  popup_was_open = true;
+  ui_touch_scroll(env, 22);
 
-  igSeparatorText("Map dot customization");
+  /* status pill */
+  {
+    ImVec2 p;
+    igGetCursorScreenPos(&p);
+    float lh = igGetTextLineHeight();
+    ImDrawList *sdl = igGetWindowDrawList();
+    ImDrawList_AddCircleFilled(sdl, (ImVec2){p.x + lh * 0.45f, p.y + lh * 0.5f},
+                               lh * 0.26f, igColorConvertFloat4ToU32(status_col),
+                               14);
+    igSetCursorScreenPos((ImVec2){p.x + lh * 1.1f, p.y});
+    igTextColored(status_col, "%s", status_txt);
+    igSpacing();
+  }
+
+  /* tab row (same look as the Settings tabs) */
+  {
+    const char *tab_names[3] = {"Map dots", "Chat", "Players"};
+    ImVec2 tav;
+    igGetContentRegionAvail(&tav);
+    float tw = (tav.x - style->ItemSpacing.x * 2.0f) / 3.0f;
+    float th = igGetFrameHeight() * 1.15f;
+    for (int t = 0; t < 3; t++) {
+      if (t) igSameLine(0, -1);
+      bool sel = t == ntl_tab;
+      igPushStyleColor_Vec4(ImGuiCol_Button,
+                            sel ? (ImVec4){0.510f, 0.294f, 0.910f, 0.95f}
+                                : (ImVec4){0.200f, 0.160f, 0.320f, 0.85f});
+      if (igButton(tab_names[t], (ImVec2){tw, th})) ntl_tab = t;
+      igPopStyleColor(1);
+    }
+    igSpacing();
+  }
+
+  if (ntl_tab == 0) {
+  crystal_section("Map dot customization");
   igCheckbox("Show teammates on minimap", &us->ntl_show_teammates);
   igCheckbox("Show teammate names", &us->ntl_marker_labels);
   igSpacing();
@@ -1399,7 +1496,7 @@ void ntl_team_panel(tenv *env) {
   igSpacing();
 
   /* Live preview of the dot exactly as the minimap draws it. */
-  igSeparatorText("Preview");
+  crystal_section("Preview");
   {
     ImVec2 pav;
     igGetContentRegionAvail(&pav);
@@ -1463,7 +1560,7 @@ void ntl_team_panel(tenv *env) {
    * position updates (see jsr_network_send_location), so a
    * teammate who picks e.g. a blue diamond shows up as a blue
    * diamond on everyone else's minimap -- not just their own. */
-  igSeparatorText("Dot colour");
+  crystal_section("Dot colour");
   igTextWrapped("How your dot appears on your teammates' minimaps.");
 
   static const float ntl_color_presets[6][3] = {
@@ -1515,7 +1612,7 @@ void ntl_team_panel(tenv *env) {
   }
   igSpacing();
 
-  igSeparatorText("Dot shape");
+  crystal_section("Dot shape");
   static const int ntl_shape_values[5] = {0, 1, 3, 4, 5};
   float shape_btn = igGetFrameHeight() * 1.9f;
   for (int i = 0; i < 5; i++) {
@@ -1542,7 +1639,7 @@ void ntl_team_panel(tenv *env) {
   }
   igSpacing();
 
-  igSeparatorText("Emoji");
+  crystal_section("Emoji");
   igTextWrapped("Pick an emoji for your dot. Your colour shows as the disc behind it.");
   {
     float eb = shape_btn;
@@ -1604,18 +1701,9 @@ void ntl_team_panel(tenv *env) {
     igTextColored((ImVec4){1.0f, 0.60f, 0.25f, 1.0f},
                   "That emoji isn't in the list above");
 
-  igEndChild();
+  } else if (ntl_tab == 1) {
+  crystal_section("Chat position");
 
-  igSameLine(0, col_gap);
-
-  igBeginChild_Str("##ntl_chat_col", (ImVec2){chat_col_w, 0},
-                   ImGuiChildFlags_None, ImGuiWindowFlags_None);
-
-  igSeparatorText("Chat position");
-
-  global_chat_adjust_mode chat_adjust_mode = global_chat_get_adjust_mode();
-  bool pos_active = chat_adjust_mode == GLOBAL_CHAT_ADJUST_POSITION;
-  bool size_active = chat_adjust_mode == GLOBAL_CHAT_ADJUST_SIZE;
   float chat_btn_h = igGetFrameHeight() * 1.8f;
 
   if (pos_active)
@@ -1651,17 +1739,10 @@ void ntl_team_panel(tenv *env) {
             "Confirm size.");
   }
 
-  igEndChild();
-
-  igSameLine(0, col_gap);
-
-  igBeginChild_Str("##ntl_players_col", (ImVec2){players_col_w, 0},
-                   ImGuiChildFlags_None, ImGuiWindowFlags_None);
-
-  igSeparatorText("Online players");
-  igBeginChild_Str("##ntl_members", (ImVec2){0, 0},
-                   ImGuiChildFlags_None,
-                   ImGuiWindowFlags_AlwaysVerticalScrollbar);
+  } else {
+  crystal_section("Online players");
+  igBeginChild_Str("##ntl_members", (ImVec2){0, 320.0f * ui_s},
+                   ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
   jsr_network *jnet = global_chat_get_network();
   int jsr_count = jnet ? jsr_network_roster_count(jnet) : 0;
   if (jsr_count == 0) {
@@ -1681,47 +1762,47 @@ void ntl_team_panel(tenv *env) {
       igSpacing();
     }
   }
-  igEndChild();
+  igEndChild(); /* ##ntl_members */
+  }
 
-  igEndChild();
+  crystal_panel_end_body();
 
-  igEndChild();
-  igPopStyleColor(1);
-
-  /* Leaving the panel (Save/Back below) always locks the chat
-   * window back down first, so it can't be left stuck in a
-   * draggable state with no controls visible to confirm it. */
-  float btn_w = (avail.x - style->ItemSpacing.x) * 0.5f;
+  /* Pinned footer. Leaving the panel (Save/Back) always locks the chat window
+   * back down first. */
   {
-    ImVec2 save_pos;
-    igGetCursorScreenPos(&save_pos);
-    crystal_glow_rect(save_pos, (ImVec2){btn_w, igGetFrameHeight() * 1.6f},
-                      0.647f, 0.420f, 1.0f);
+    float fb_h = igGetFrameHeight() * 1.6f;
+    ImVec2 fav;
+    igGetContentRegionAvail(&fav);
+    float btn_w = (fav.x - style->ItemSpacing.x) * 0.5f;
+    {
+      ImVec2 save_pos;
+      igGetCursorScreenPos(&save_pos);
+      crystal_glow_rect(save_pos, (ImVec2){btn_w, fb_h}, 0.647f, 0.420f, 1.0f);
+    }
+    igPushStyleColor_Vec4(ImGuiCol_Button,
+                          (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+    igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                          (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+    igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                          (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
+    if (igButton("Save", (ImVec2){btn_w, fb_h})) {
+      ntl_sync_active_credentials(us);
+      save_user_settings(us);
+      S.next_poll = 0;
+    }
+    crystal_sheen();
+    igPopStyleColor(3);
+    igSameLine(0, style->ItemSpacing.x);
+    if (igButton("Back", (ImVec2){btn_w, fb_h})) {
+      save_user_settings(us);
+      popup_was_open = false;
+      g->curr_screen = TITLE_SCREEN;
+      igCloseCurrentPopup();
+    }
+    crystal_sheen();
   }
-  igPushStyleColor_Vec4(ImGuiCol_Button,
-                        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
-                        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
-                        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
-  if (igButton("Save", (ImVec2){btn_w, igGetFrameHeight() * 1.6f})) {
-    if (chat_adjust_mode != GLOBAL_CHAT_ADJUST_NONE)
-      global_chat_set_adjust_mode(env, GLOBAL_CHAT_ADJUST_NONE);
-    ntl_sync_active_credentials(us);
-    save_user_settings(us);
-    S.next_poll = 0;
-  }
-  crystal_sheen();
-  igPopStyleColor(3);
-  igSameLine(0, style->ItemSpacing.x);
-  if (igButton("Back", (ImVec2){btn_w, igGetFrameHeight() * 1.6f})) {
-    if (chat_adjust_mode != GLOBAL_CHAT_ADJUST_NONE)
-      global_chat_set_adjust_mode(env, GLOBAL_CHAT_ADJUST_NONE);
-    save_user_settings(us);
-    g->curr_screen = TITLE_SCREEN;
-  }
-  crystal_sheen();
 
+  crystal_panel_end();
   crystal_pop_theme();
 
   igPopFont();

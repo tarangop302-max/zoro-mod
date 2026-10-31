@@ -10,4 +10,8 @@ void input(tenv* env);
    input() itself is skipped -- so the same key can also close the popup. */
 void input_settings_hotkey(tenv* env);
 
+/* Handles the "Keyboard layout" hotkey: opens the Adjust keyboard buttons
+   editor mid-match. Called every frame from game_loop(). */
+void input_key_editor_hotkey(tenv* env);
+
 #endif

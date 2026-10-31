@@ -453,11 +453,20 @@ typedef struct user_settings {
   uint8_t key_geom_reserved[16];
   float   key_btn_wmul[MAX_KEY_BTNS];
   float   zslider_thick;
+
+  /* v2.26 extension: "Keyboard layout" hotkey. Opens the Adjust keyboard
+     buttons editor in the middle of a match (like the Open settings hotkey
+     opens Settings). Appended after zslider_thick so every earlier file stays
+     a compatible prefix (see v226_prefix in read_user_settings). Access through
+     usr_hotkey(usrs, HOTKEY_KEY_EDITOR). */
+  uint8_t key_editor_reserved[8];
+  hotkey  hotkey_key_editor;
 } user_settings;
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {
   if (i < NUM_STORED_HOTKEYS) return &u->hotkeys[i];
   if (i == HOTKEY_OPEN_SETTINGS) return &u->hotkey_open_settings;
+  if (i == HOTKEY_KEY_EDITOR) return &u->hotkey_key_editor;
   return &u->hotkey_eyes_back;
 }
 

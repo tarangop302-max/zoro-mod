@@ -94,6 +94,22 @@ void android_jni_play_clip(const char* filename);
 void android_jni_request_pick_lobby_bg(void);
 int android_jni_poll_lobby_bg_event(void);
 
+/* Settings backup (see game/backup.c). Export opens the system "save as"
+   picker and writes user.dat + quick_msgs.txt into a zip there; import opens
+   the system file picker and restores them from such a zip. Both are
+   asynchronous: poll android_jni_poll_backup_event() once per frame. */
+typedef enum android_backup_event {
+    ANDROID_BACKUP_EVENT_NONE = 0,
+    ANDROID_BACKUP_EVENT_EXPORTED = 1,
+    ANDROID_BACKUP_EVENT_IMPORTED = 2,
+    ANDROID_BACKUP_EVENT_CANCELLED = 3,
+    ANDROID_BACKUP_EVENT_ERROR = 4,
+} android_backup_event;
+
+void android_jni_backup_export(void);
+void android_jni_backup_import(void);
+android_backup_event android_jni_poll_backup_event(void);
+
 typedef enum android_ime_event_type {
     ANDROID_IME_EVENT_NONE = 0,
     ANDROID_IME_EVENT_TEXT        = 1,

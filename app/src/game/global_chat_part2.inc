@@ -1292,6 +1292,14 @@ static void global_chat_panel_contents(
 
     user_settings* usrs = &env->usr->usrs;
 
+    /* Remembered panel opacity (loaded once, saved when the slider is released). */
+    static bool gc_alpha_loaded = false;
+
+    if (!gc_alpha_loaded) {
+        gc_panel_alpha = user_settings_get_panel_alpha(usrs, 2, 0.82f, 0.10f);
+        gc_alpha_loaded = true;
+    }
+
     /* Same panel text scale as before. (This ImGui version has no
      * SetWindowFontScale -- font size is set via PushFont/PopFont, so
      * every return path below must PopFont() to match.) */
@@ -2309,14 +2317,22 @@ static void global_chat_panel_contents(
         );
         igPushItemWidth(-1.0f);
 
-        igSliderFloat(
-            "##gc_alpha",
-            &gc_panel_alpha,
-            0.10f,
-            1.0f,
-            "%.2f",
-            0
-        );
+        if (
+            igSliderFloat(
+                "##gc_alpha",
+                &gc_panel_alpha,
+                0.10f,
+                1.0f,
+                "%.2f",
+                0
+            )
+        ) {
+            user_settings_set_panel_alpha(usrs, 2, gc_panel_alpha);
+        }
+
+        if (igIsItemDeactivatedAfterEdit()) {
+            save_user_settings(usrs);
+        }
 
         igPopItemWidth();
         igPopStyleColor(1);

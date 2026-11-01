@@ -90,6 +90,14 @@ void ui_settings(tenv* env) {
   user_settings* usrs = &usr->usrs;
   ImGuiStyle* style = igGetStyle();
   ImGuiIO* io = igGetIO_Nil();
+
+  /* Panel opacity is remembered between launches (loaded once, saved when the
+     slider is released). */
+  static bool s_alpha_loaded = false;
+  if (!s_alpha_loaded) {
+    s_popup_alpha = user_settings_get_panel_alpha(usrs, 0, 0.82f, 0.30f);
+    s_alpha_loaded = true;
+  }
   game_data* gdata = &usr->gdata;
   /* Popup mode: opened mid-match with the Open settings hotkey. It is drawn
      as a compact, touchable window (tabs instead of 4 columns, small font,
@@ -181,8 +189,10 @@ void ui_settings(tenv* env) {
       float sw = hv.x * 0.42f;
       igSameLine(style->WindowPadding.x + hv.x - sw, 0);
       igSetNextItemWidth(sw);
-      igSliderFloat("##popup_alpha", &s_popup_alpha, 0.30f, 1.0f,
-                    "Opacity %.2f", ImGuiSliderFlags_AlwaysClamp);
+      if (igSliderFloat("##popup_alpha", &s_popup_alpha, 0.30f, 1.0f,
+                        "Opacity %.2f", ImGuiSliderFlags_AlwaysClamp))
+        user_settings_set_panel_alpha(usrs, 0, s_popup_alpha);
+      if (igIsItemDeactivatedAfterEdit()) save_user_settings(usrs);
     }
     /* Tab row: General / Normal / Assist / Hotkeys */
     const char* tab_names[4] = {"General", "Normal", "Assist", "Hotkeys"};

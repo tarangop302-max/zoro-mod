@@ -264,6 +264,10 @@ void ui_settings(tenv* env) {
       igText("Laser color");
       igAlignTextToFramePadding();
       igText("Laser thickness");
+#ifdef ANDROID
+      igAlignTextToFramePadding();
+      igText("Joystick laser length");
+#endif
       igAlignTextToFramePadding();
       igText("Centre ring radius");
       igAlignTextToFramePadding();
@@ -357,6 +361,15 @@ void ui_settings(tenv* env) {
       igSetNextItemWidth(-1);
       igSliderInt("##laser thickness", &usrs->laser_thickness, 1, 4, "%d px",
                   ImGuiSliderFlags_AlwaysClamp);
+#ifdef ANDROID
+      {
+        int laser_pct = user_settings_joy_laser_pct(usrs);
+        igSetNextItemWidth(-1);
+        if (igSliderInt("##joy laser length", &laser_pct, 10, 100, "%d%%",
+                        ImGuiSliderFlags_AlwaysClamp))
+          user_settings_set_joy_laser_pct(usrs, laser_pct);
+      }
+#endif
       igSetNextItemWidth(-1);
       igSliderFloat("##center ring radius", &usrs->center_ring_radius, 16.0f,
                     600.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);

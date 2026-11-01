@@ -574,6 +574,7 @@ void ui_settings(tenv* env) {
 
         igEndTable();
       }
+      if (i == 1) ntl_tags_assist_settings_ui();
       igPopID();
     }
     igEndChild();

@@ -45,6 +45,7 @@ static unsigned long long s_tex = 0;      /* atlas descriptor set            */
 static bool s_show = true;                /* "Show NTL tags"                 */
 static int s_sel = NTL_TAG_NONE;          /* our own tag id                  */
 static bool s_picker_open = false;
+static bool s_assist_hide = false;        /* "ASSIST HIDE TAGS"            */
 
 /* NTL tag feed */
 static struct mg_mgr s_mgr;
@@ -78,7 +79,8 @@ typedef struct {
   uint32_t magic;
   int32_t selected;
   uint8_t show;
-  uint8_t pad[3];
+  uint8_t assist_hide; /* was padding: old files read as 0 = off */
+  uint8_t pad[2];
 } cfg_file;
 
 static FILE *open_cfg(const char *mode) {
@@ -99,13 +101,15 @@ static void cfg_load(void) {
   fclose(f);
   if (got != sizeof c || c.magic != NT_CFG_MAGIC) return;
   s_show = c.show != 0;
+  s_assist_hide = c.assist_hide != 0;
   s_sel = ntl_tags_valid(c.selected) ? c.selected : NTL_TAG_NONE;
 }
 
 static void cfg_save(void) {
   FILE *f = open_cfg("wb");
   if (!f) return;
-  cfg_file c = {NT_CFG_MAGIC, s_sel, (uint8_t)(s_show ? 1 : 0), {0, 0, 0}};
+  cfg_file c = {NT_CFG_MAGIC, s_sel, (uint8_t)(s_show ? 1 : 0),
+                (uint8_t)(s_assist_hide ? 1 : 0), {0, 0}};
   fwrite(&c, 1, sizeof c, f);
   fclose(f);
 }
@@ -335,6 +339,7 @@ static int quad(ImVec2 *pts, int n, ImVec2 a, ImVec2 c, ImVec2 b) {
 void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
                          float screen_cx, float screen_cy, float alive) {
   if (!s_show || !s_tex || !o || o->ntl_tag1 <= 0) return;
+  if (s_assist_hide && env->usr->usrs.hotkeys[HOTKEY_ASSIST].active) return;
   int tid = o->ntl_tag1 - 1;
   if (!ntl_tags_valid(tid)) return;
   const ntl_tag_def *def = &ntl_tag_defs[s_index[tid]];
@@ -461,6 +466,15 @@ static void thumb(ImDrawList *dl, const ntl_tag_def *d, ImVec2 a, ImVec2 b) {
                       (ImVec2){(float)(d->ax + d->aw) / NTL_TAG_ATLAS_W,
                                (float)(d->ay + d->ah) / NTL_TAG_ATLAS_H},
                       0xFFFFFFFFu);
+}
+
+void ntl_tags_assist_settings_ui(void) {
+  bool v = s_assist_hide;
+  if (igCheckbox("ASSIST HIDE TAGS", &v)) {
+    s_assist_hide = v;
+    cfg_save();
+  }
+  igTextDisabled("Hides all NTL tags while Assist is on.");
 }
 
 void ntl_tags_settings_ui(tenv *env) {

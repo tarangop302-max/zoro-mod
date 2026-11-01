@@ -58,6 +58,10 @@ int ntl_tags_decode_header(const uint8_t *hdr, int len, int *plain_skin);
 void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
                          float screen_cx, float screen_cy, float alive);
 
+/* Assist mode settings: "ASSIST HIDE TAGS" checkbox (hides every tag while
+ * Assist is on). */
+void ntl_tags_assist_settings_ui(void);
+
 /* Settings screen block: "NTL tags" header, show toggle, picker. */
 void ntl_tags_settings_ui(tenv *env);
 

@@ -342,6 +342,9 @@ void crystal_pop_theme(void) {
 static bool s_panel_font_pushed = false;
 static bool s_panel_body_open = false;
 static float s_panel_wf = 0.0f, s_panel_hf = 0.0f, s_panel_footer = 0.0f;
+static bool s_panel_closable = true;
+
+void crystal_panel_set_closable(bool closable) { s_panel_closable = closable; }
 
 void crystal_panel_set_layout(float w_frac, float h_frac, float footer_h) {
   s_panel_wf = w_frac;
@@ -396,6 +399,8 @@ bool crystal_panel_begin(tenv* env, const char* id, const char* title,
   if (s_panel_wf > 0.0f) w = sw * s_panel_wf;
   if (s_panel_hf > 0.0f) h = sh * s_panel_hf;
   const float footer_h = s_panel_footer;
+  const bool closable = s_panel_closable;
+  s_panel_closable = true; /* one-shot */
   s_panel_wf = s_panel_hf = s_panel_footer = 0.0f; /* one-shot */
   if (w < 200.0f) w = 200.0f;
   if (h < 160.0f) h = 160.0f;
@@ -514,8 +519,10 @@ bool crystal_panel_begin(tenv* env, const char* id, const char* title,
   }
 
   ImVec2 close_pos = {wp.x + wsz.x - pad - close_d, cp.y - 2.0f};
+  bool close_pressed = false;
+  if (closable) {
   igSetCursorScreenPos(close_pos);
-  bool close_pressed =
+  close_pressed =
       igInvisibleButton("##panel_close", (ImVec2){close_d, close_d}, 0);
   bool close_hot = igIsItemHovered(0);
   bool close_held = igIsItemActive();
@@ -534,6 +541,7 @@ bool crystal_panel_begin(tenv* env, const char* id, const char* title,
                        xc, 2.2f);
     ImDrawList_AddLine(dl, (ImVec2){c.x - k, c.y + k}, (ImVec2){c.x + k, c.y - k},
                        xc, 2.2f);
+  }
   }
   float header_bottom = cp.y + (subtitle && subtitle[0] ? lh * 2.0f + 4.0f : lh);
   if (close_pos.y + close_d > header_bottom)
@@ -556,7 +564,7 @@ bool crystal_panel_begin(tenv* env, const char* id, const char* title,
 
   /* Tap on the dimmed area outside the panel closes it (ignored for the
      first moments so the tap that opened it can't also close it). */
-  if (!close_pressed && igGetTime() - s_open_time > 0.30 &&
+  if (closable && !close_pressed && igGetTime() - s_open_time > 0.30 &&
       igIsMouseClicked_Bool(0, false) &&
       !igIsMouseHoveringRect(wp, (ImVec2){wp.x + wsz.x, wp.y + wsz.y}, false))
     close_pressed = true;

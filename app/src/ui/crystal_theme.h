@@ -101,6 +101,10 @@ void crystal_panel_end(void);
    crystal_panel_end(). */
 void crystal_panel_set_layout(float w_frac, float h_frac, float footer_h);
 void crystal_panel_end_body(void);
+/* One-shot (next crystal_panel_begin): hide the X button and ignore taps
+   outside the panel, for screens that must be left through their own
+   buttons (e.g. kill review, where closing would lose the captures). */
+void crystal_panel_set_closable(bool closable);
 /* Round themed "X" button drawn at screen position `pos` with diameter `d`.
    Returns true when tapped. Call inside a window. */
 bool crystal_close_button(const char* id, ImVec2 pos, float d);

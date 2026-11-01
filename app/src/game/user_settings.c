@@ -571,6 +571,9 @@ void read_user_settings(user_settings* usr_settings) {
   }
   loaded.net_graph_reserved[0] = loaded.net_graph_reserved[0] ? 1 : 0;
   if (loaded.net_graph_reserved[1] > 101) loaded.net_graph_reserved[1] = 0;
+  if (loaded.net_graph_reserved[3] != 0 &&
+      (loaded.net_graph_reserved[3] < 10 || loaded.net_graph_reserved[3] > 100))
+    loaded.net_graph_reserved[3] = 0;
   if (loaded.fps_limit != 0 && loaded.fps_limit != 60 &&
       loaded.fps_limit != 90 && loaded.fps_limit != 120 &&
       loaded.fps_limit != 144)

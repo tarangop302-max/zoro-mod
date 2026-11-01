@@ -421,6 +421,8 @@ void ui_overlay(tenv* env) {
                                   : (ddy < -1e-4f ? (0.0f - sy) / ddy : 1e9f);
           float len = fminf(fminf(tx_, ty_), 0.95f * fminf(sw_, sh_));
           if (len < 0.0f) len = 0.0f;
+          /* Settings > "Joystick laser length" (100% = to the screen edge). */
+          len *= (float)user_settings_joy_laser_pct(usrs) / 100.0f;
           laser_tx = sx + ddx * len;
           laser_ty = sy + ddy * len;
         }

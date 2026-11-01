@@ -532,6 +532,28 @@ static inline void user_settings_set_joy_laser_pct(user_settings* s, int pct) {
   s->net_graph_reserved[3] = pct >= 100 ? 0 : (uint8_t)pct;
 }
 
+/* Remembered panel opacity of the Settings popup (slot 0), the Controls
+   window (slot 1) and the Team Chat window (slot 2). Stored as percent in the
+   spare bytes net_graph_reserved[4..6] so the file layout is unchanged; 0 (never
+   set / older files) means "use the built-in default". */
+static inline float user_settings_get_panel_alpha(const user_settings* s,
+                                                  int slot, float def,
+                                                  float lo) {
+  int v = s->net_graph_reserved[4 + slot];
+  if (v == 0) return def;
+  float a = (float)v / 100.0f;
+  if (a < lo) a = lo;
+  if (a > 1.0f) a = 1.0f;
+  return a;
+}
+static inline void user_settings_set_panel_alpha(user_settings* s, int slot,
+                                                 float a) {
+  int v = (int)(a * 100.0f + 0.5f);
+  if (v < 1) v = 1;
+  if (v > 100) v = 100;
+  s->net_graph_reserved[4 + slot] = (uint8_t)v;
+}
+
 void save_user_settings(user_settings* usr_settings);
 /* Remember a nickname in the previous-names list. Ignores empty names and
    names already in the list. Returns true if the list changed. */

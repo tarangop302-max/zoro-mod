@@ -518,6 +518,20 @@ static inline void user_settings_set_dynamic_minimap(user_settings* s, bool on) 
   s->net_graph_reserved[2] = on ? 0 : 1;
 }
 
+/* Joystick laser length, as a percentage (10-100) of the full laser (screen
+   edge). Stored in the fourth spare byte of net_graph_reserved so the file
+   layout is unchanged; 0 (every older file) means 100%, i.e. the old
+   behaviour. Only used in joystick mode. */
+static inline int user_settings_joy_laser_pct(const user_settings* s) {
+  int v = s->net_graph_reserved[3];
+  if (v < 10 || v > 100) return 100;
+  return v;
+}
+static inline void user_settings_set_joy_laser_pct(user_settings* s, int pct) {
+  if (pct < 10) pct = 10;
+  s->net_graph_reserved[3] = pct >= 100 ? 0 : (uint8_t)pct;
+}
+
 void save_user_settings(user_settings* usr_settings);
 /* Remember a nickname in the previous-names list. Ignores empty names and
    names already in the list. Returns true if the list changed. */

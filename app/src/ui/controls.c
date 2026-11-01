@@ -310,6 +310,13 @@ void ui_controls(tenv* env) {
   ImGuiStyle* style = igGetStyle();
   game_data* gdata = &usr->gdata;
 
+  /* Panel opacity is remembered between launches. */
+  static bool s_alpha_loaded = false;
+  if (!s_alpha_loaded) {
+    s_alpha = user_settings_get_panel_alpha(usrs, 1, 0.72f, 0.30f);
+    s_alpha_loaded = true;
+  }
+
   /* Same small font + scale as the Settings popup. */
   igPushFont(usr->imgui_data.regular_font[FONT_SIZE_SMALL],
              usr->imgui_data.regular_font[FONT_SIZE_SMALL]->LegacySize);
@@ -368,8 +375,10 @@ void ui_controls(tenv* env) {
       float sw = hv.x * 0.42f;
       igSameLine(style->WindowPadding.x + hv.x - sw, 0);
       igSetNextItemWidth(sw);
-      igSliderFloat("##controls_alpha", &s_alpha, 0.30f, 1.0f, "Opacity %.2f",
-                    ImGuiSliderFlags_AlwaysClamp);
+      if (igSliderFloat("##controls_alpha", &s_alpha, 0.30f, 1.0f,
+                        "Opacity %.2f", ImGuiSliderFlags_AlwaysClamp))
+        user_settings_set_panel_alpha(usrs, 1, s_alpha);
+      if (igIsItemDeactivatedAfterEdit()) save_user_settings(usrs);
     }
 
     /* Tab row. */

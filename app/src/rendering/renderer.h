@@ -56,6 +56,9 @@ typedef struct renderer {
      to a plain circle. */
   texture* emoji_atlas_tex;
   VkDescriptorSet emoji_atlas_ds;
+  /* NTL tag atlas (game/ntl_tags.h). Optional like the emoji sheet. */
+  texture* ntl_tags_tex;
+  VkDescriptorSet ntl_tags_ds;
 
   VkSampler linear_sampler;
   VkSampler nearest_sampler;

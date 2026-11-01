@@ -3,6 +3,7 @@
 #include "ui/lobby_bg.h"
 #include "game/death_screen.h"
 #include "game/ntl_team.h"
+#include "game/ntl_tags.h"
 #include "game/snakey_rain.h"
 #include "game/global_chat.h"
 #include "game/screenshot.h"
@@ -271,6 +272,10 @@ void tinit(tenv* env) {
       env
   );
 
+  ntl_tags_init(
+      env
+  );
+
 
   snakey_rain_init(
       env
@@ -340,6 +345,10 @@ void tdestroy(tenv* env) {
       env
   );
 
+
+  ntl_tags_destroy(
+      env
+  );
 
   ntl_team_destroy(
       env
@@ -845,6 +854,10 @@ void trender(tenv* env) {
 
 
     ntl_team_update(
+        env
+    );
+
+    ntl_tags_update(
         env
     );
 

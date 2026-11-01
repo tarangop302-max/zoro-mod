@@ -3,6 +3,7 @@
 
 #include "../user.h"
 #include "global_chat.h"
+#include "ntl_tags.h"
 
 void lerp_minimap_float(float* dst, const uint8_t* src, int mmsz, float alpha) {
   int stride = MAX_MINIMAP_SIZE;
@@ -1857,6 +1858,10 @@ void redraw(tenv* env) {
               &(bp_instance){
                   {acx - m, acy - m, m * 2, fang}, acc->uv, {1, 1, 1, ea}});
         }
+
+        /* NTL tag: antenna + picture dangling behind the head. */
+        ntl_tags_draw_snake(env, o, hx, hy, mww2, mhh2,
+                            o->alive_amt * (1 - o->dead_amt));
 
       }
     }

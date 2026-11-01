@@ -5,6 +5,7 @@
 
 #include "../user.h"
 #include "crystal_theme.h"
+#include "settings.h"
 #include "../game/screenshot.h"
 #include "../rendering/texture.h"
 
@@ -127,142 +128,145 @@ static void delete_item(tenv *env, int index) {
   s_item_count--;
 }
 
-static void draw_viewer(tenv *env, float sw, float sh) {
-  ImGuiStyle *style = igGetStyle();
+/* Deletions are deferred to the start of the next frame: the viewer has just
+   drawn this item's texture, and destroying it mid-frame would leave this
+   frame's draw list pointing at a dead descriptor. */
+static int s_pending_delete = -1;
+
+/* The picture viewer: shown INSIDE the same popup, in place of the grid. */
+static void draw_viewer_body(tenv *env) {
   gallery_item *it = &s_items[s_viewing_index];
   load_item(env, it);
 
+  ImVec2 av;
+  igGetContentRegionAvail(&av);
+  float note_h = igGetTextLineHeight() * 3.2f;
+
   if (it->tex) {
-    float avail_w = sw * 0.82f;
-    float avail_h = sh * 0.6f;
     float aspect = (float)it->tex->size[0] / (float)it->tex->size[1];
-    float dw = avail_w, dh = dw / aspect;
-    if (dh > avail_h) {
-      dh = avail_h;
+    float max_w = av.x - 8.0f;
+    float max_h = av.y - note_h;
+    if (max_h < 80.0f) max_h = 80.0f;
+    float dw = max_w, dh = dw / aspect;
+    if (dh > max_h) {
+      dh = max_h;
       dw = dh * aspect;
     }
-    igSetCursorPos((ImVec2){sw * 0.5f - dw * 0.5f, sh * 0.16f});
+    ImVec2 org;
+    igGetCursorScreenPos(&org);
+    ImVec2 p0 = {org.x + (av.x - dw) * 0.5f, org.y + 4.0f};
+    ImVec2 p1 = {p0.x + dw, p0.y + dh};
+    ImDrawList *dl = igGetWindowDrawList();
     ImTextureRef tref = {NULL, (ImTextureID)it->ds};
-    igImage(tref, (ImVec2){dw, dh}, (ImVec2){0, 0}, (ImVec2){1, 1});
-    igSetCursorPosY(sh * 0.16f + dh + 24.0f);
+    ImDrawList_AddImageRounded(dl, tref, p0, p1, (ImVec2){0, 0},
+                               (ImVec2){1, 1}, IM_COL32(255, 255, 255, 255),
+                               10.0f, 0);
+    ImDrawList_AddRect(dl, p0, p1, IM_COL32(176, 148, 245, 140), 10.0f, 0, 1.5f);
+    igDummy((ImVec2){av.x, dh + 12.0f});
   } else {
-    igSetCursorPos((ImVec2){sw * 0.5f - 90.0f, sh * 0.4f});
-    igText("Couldn't load this image.");
-    igSetCursorPosY(sh * 0.4f + 40.0f);
+    igTextWrapped("Couldn't load this image.");
   }
 
-  float btn_w = 165.0f;
-  float btn_h = igGetFrameHeight() * 1.5f;
-  float gap = 16.0f;
-  float row_w = btn_w * 3.0f + gap * 2.0f;
-  igSetCursorPosX(sw * 0.5f - row_w * 0.5f);
-
-  if (igButton("Close", (ImVec2){btn_w, btn_h})) {
-    s_viewing_index = -1;
-    s_confirm_delete = false;
-  }
-  crystal_sheen();
-  igSameLine(0, gap);
-
-#ifdef ANDROID
-  bool already_saved = it->saved_to_gallery;
-  igBeginDisabled(already_saved);
-  igPushStyleColor_Vec4(ImGuiCol_Button,
-                        (ImVec4){0.16f, 0.55f, 0.30f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
-                        (ImVec4){0.20f, 0.65f, 0.36f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
-                        (ImVec4){0.13f, 0.45f, 0.25f, 1.0f});
-  if (igButton(already_saved ? "Saved" : "\uea1a Save",
-              (ImVec2){btn_w, btn_h})) {
-    android_jni_save_image_to_gallery(it->filename);
-    it->saved_to_gallery = true;
-  }
-  igPopStyleColor(3);
-  igEndDisabled();
-  crystal_sheen();
-  igSameLine(0, gap);
-#endif
-
-  igPushStyleColor_Vec4(ImGuiCol_Button,
-                        (ImVec4){0.647f, 0.176f, 0.176f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
-                        (ImVec4){0.75f, 0.22f, 0.22f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
-                        (ImVec4){0.55f, 0.14f, 0.14f, 1.0f});
-  const char *del_label = s_confirm_delete ? "Confirm delete?" : "Delete";
-  if (igButton(del_label, (ImVec2){btn_w, btn_h})) {
-    if (s_confirm_delete) {
-      int idx = s_viewing_index;
-      s_viewing_index = -1;
-      s_confirm_delete = false;
-      delete_item(env, idx);
-    } else {
-      s_confirm_delete = true;
-    }
-  }
-  crystal_sheen();
-  igPopStyleColor(3);
-
-  igSetCursorPosX(sw * 0.5f - row_w * 0.5f);
-  igTextWrapped(
+  igTextDisabled(
       "Kills are only saved in the app. Tap Save to also add this one to "
       "your phone's Gallery.");
-  (void)style;
 }
 
-static void draw_grid(tenv *env, float sw, float sh) {
-  ImGuiStyle *style = igGetStyle();
-
-  int cols = 4;
-  float pad = 12.0f;
-  float cell = (sw - style->WindowPadding.x * 2.0f - pad * (cols - 1)) / cols;
-  if (cell > 220.0f) cell = 220.0f;
-  float grid_w = cell * cols + pad * (cols - 1);
-  float start_x = sw * 0.5f - grid_w * 0.5f;
-  float start_y = 76.0f;
-
-  igSetCursorPos((ImVec2){start_x, start_y});
-  igBeginChild_Str("##kills_grid", (ImVec2){grid_w, sh - start_y - 96.0f},
-                   ImGuiChildFlags_None, ImGuiWindowFlags_None);
-
+/* The grid: 4 across, as many rows as needed, scrolls vertically. */
+static void draw_grid_body(tenv *env) {
   if (s_item_count == 0) {
-    igTextWrapped("No kill screenshots yet. Turn SCREENSHOT on (top right), "
-                  "get kills in a match, then choose which ones to save from "
-                  "the Kill Shots button on the death popup.");
+    igTextWrapped("No kill screenshots yet. Turn SCREENSHOT on (the button at "
+                  "the bottom), get kills in a match, then choose which ones "
+                  "to save from the Kill Shots button on the death popup.");
+    return;
   }
+
+  ImGuiStyle *style = igGetStyle();
+  ImVec2 av;
+  igGetContentRegionAvail(&av);
+  const float gap = 14.0f;
+  const float margin = 10.0f;
+  int cols = 4;
+  while (cols > 1 && (av.x - margin * 2.0f - gap * (cols - 1)) / cols < 110.0f)
+    cols--;
+  float cw = (av.x - margin * 2.0f - gap * (cols - 1)) / cols;
+  if (cw < 60.0f) cw = 60.0f;
+
+  /* Real aspect ratio of the pictures (they were squashed into squares). */
+  float asp = 0.5625f;
+  for (int i = 0; i < s_item_count; i++)
+    if (s_items[i].tex && s_items[i].tex->size[0] > 0 &&
+        s_items[i].tex->size[1] > 0) {
+      asp = (float)s_items[i].tex->size[1] / (float)s_items[i].tex->size[0];
+      break;
+    }
+  if (asp < 0.40f) asp = 0.40f;
+  if (asp > 1.30f) asp = 1.30f;
+  float ch = cw * asp;
+  float row_h = ch + gap;
+  int rows = (s_item_count + cols - 1) / cols;
+
+  ImVec2 org;
+  igGetCursorScreenPos(&org);
+  org.y += margin * 0.6f;
+  ImDrawList *dl = igGetWindowDrawList();
+  int hover = -1;
+
+  /* Keep memory bounded: when close to the thumbnail limit, drop a couple of
+     pictures that are scrolled out of view. */
+  int loaded_count = 0;
+  for (int j = 0; j < s_item_count; j++)
+    if (s_items[j].tex) loaded_count++;
+  int to_unload = loaded_count >= MAX_LOADED_THUMBS - 4 ? 2 : 0;
 
   for (int i = 0; i < s_item_count; i++) {
-    int col = i % cols;
-    if (col != 0) igSameLine(0, pad);
-
-    ImVec2 cell_pos;
-    igGetCursorScreenPos(&cell_pos);
-    bool visible = igIsRectVisible_Vec2(
-        cell_pos, (ImVec2){cell_pos.x + cell, cell_pos.y + cell});
-
+    int r = i / cols, c = i % cols;
+    ImVec2 p0 = {org.x + margin + c * (cw + gap), org.y + r * row_h};
+    ImVec2 p1 = {p0.x + cw, p0.y + ch};
     gallery_item *it = &s_items[i];
-    if (visible) load_item(env, it);
+    bool visible = igIsRectVisible_Vec2(p0, p1);
+    if (visible) {
+      load_item(env, it);
+      if (igIsMouseHoveringRect(p0, p1, true)) hover = i;
+    } else if (to_unload > 0 && it->tex) {
+      unload_item(env, it);
+      to_unload--;
+    }
+    if (!visible) continue;
 
-    char btn_id[32];
-    snprintf(btn_id, sizeof(btn_id), "##kill_item_%d", i);
     if (it->tex) {
       ImTextureRef tref = {NULL, (ImTextureID)it->ds};
-      if (igImageButton(btn_id, tref, (ImVec2){cell, cell}, (ImVec2){0, 0},
-                        (ImVec2){1, 1}, (ImVec4){0, 0, 0, 0},
-                        (ImVec4){1, 1, 1, 1})) {
-        s_viewing_index = i;
-        s_confirm_delete = false;
-      }
+      ImDrawList_AddImageRounded(dl, tref, p0, p1, (ImVec2){0, 0},
+                                 (ImVec2){1, 1}, IM_COL32(255, 255, 255, 255),
+                                 10.0f, 0);
     } else {
-      igPushStyleColor_Vec4(ImGuiCol_Button,
-                            (ImVec4){0.220f, 0.157f, 0.353f, 0.55f});
-      igButton(btn_id, (ImVec2){cell, cell});
-      igPopStyleColor(1);
+      ImDrawList_AddRectFilled(dl, p0, p1, IM_COL32(56, 40, 90, 140), 10.0f, 0);
     }
+    bool hot = hover == i;
+    ImDrawList_AddRect(dl, p0, p1,
+                       hot ? IM_COL32(220, 196, 255, 255)
+                           : IM_COL32(176, 148, 245, 120),
+                       10.0f, 0, hot ? 2.5f : 1.3f);
   }
+  igDummy((ImVec2){1.0f, margin + rows * row_h});
 
-  igEndChild();
+  /* Tap = press + release without dragging, so a scroll-drag never opens a
+     picture and dragging on a picture scrolls the list. */
+  static int press_idx = -1;
+  static bool press_dragged = false;
+  if (igIsWindowHovered(0) && igIsMouseClicked_Bool(0, false)) {
+    press_idx = hover;
+    press_dragged = false;
+  }
+  if (press_idx >= 0 && igIsMouseDragging(0, 12.0f)) press_dragged = true;
+  if (igIsMouseReleased_Nil(0)) {
+    if (press_idx >= 0 && !press_dragged) {
+      s_viewing_index = press_idx;
+      s_confirm_delete = false;
+    }
+    press_idx = -1;
+  }
+  (void)style;
 }
 
 #endif /* ANDROID */
@@ -270,7 +274,14 @@ static void draw_grid(tenv *env, float sw, float sh) {
 void ui_kills_gallery(tenv *env) {
   tuser_data *usr = env->usr;
   game_data *gdata = &usr->gdata;
-  tcontext *ctx = env->ctx;
+
+#ifdef ANDROID
+  if (s_pending_delete >= 0) {
+    int idx = s_pending_delete;
+    s_pending_delete = -1;
+    delete_item(env, idx);
+  }
+#endif
 
   usr->r->global.bg_opacity = 0;
   usr->r->global.bd_opacity = 0;
@@ -283,68 +294,143 @@ void ui_kills_gallery(tenv *env) {
   crystal_draw_background(env);
   crystal_push_theme();
 
-  float sw = ctx->size[0];
-  float sh = ctx->size[1];
   ImGuiStyle *style = igGetStyle();
-  ImDrawList *bg = igGetWindowDrawList();
 
-  const char *title = "Kill Shots";
-  ImVec2 title_size;
-  igCalcTextSize(&title_size, title, NULL, false, -1.0f);
-  ImDrawList_AddText_Vec2(bg, (ImVec2){sw * 0.5f - title_size.x * 0.5f, 18.0f},
-                          IM_COL32(255, 255, 255, 235), title, NULL);
+  /* Centred, fixed-size popup. The X, tapping outside and Back all return to
+     the title screen. */
+  static bool popup_open = false;
+  if (!popup_open) igOpenPopup_Str("Kill Shots", 0);
+  float footer_h = igGetFrameHeight() * 1.6f + style->ItemSpacing.y * 2.0f;
+  crystal_panel_set_layout(0.74f, 0.88f, footer_h);
 
 #ifdef ANDROID
-  {
-    /* SCREENSHOT ON/OFF -- whether kills get captured during a run at all.
-       OFF by default (see screenshot.h): capturing costs a brief hitch, so
-       it is opt-in. Uses a constant ### id so the button keeps the same
-       identity when its label flips between ON and OFF. */
-    bool ss_on = screenshot_capture_enabled();
-    float tb_w = 300.0f;
-    float tb_h = igGetFrameHeight() * 1.25f;
-    igSetCursorPos((ImVec2){sw - tb_w - style->WindowPadding.x - 12.0f, 12.0f});
-    if (ss_on) {
+  if (!s_scanned) {
+    scan_kills_dir();
+    s_scanned = true;
+  }
+  bool viewing = s_viewing_index >= 0 && s_viewing_index < s_item_count;
+  const char *subtitle = viewing ? "Viewing a kill shot"
+                                 : "Tap a picture to open it";
+#else
+  bool viewing = false;
+  const char *subtitle = "Android only";
+#endif
+
+  if (crystal_panel_begin(env, "Kill Shots", "KILL SHOTS", subtitle, 760.0f)) {
+    popup_open = true;
+    float fb_h = igGetFrameHeight() * 1.6f;
+
+#ifdef ANDROID
+    if (viewing) {
+      draw_viewer_body(env);
+    } else {
+      ui_touch_scroll(env, 24);
+      draw_grid_body(env);
+    }
+    crystal_panel_end_body();
+
+    ImVec2 fav;
+    igGetContentRegionAvail(&fav);
+    float sp = style->ItemSpacing.x;
+
+    if (viewing) {
+      gallery_item *it = &s_items[s_viewing_index];
+      float btn_w = (fav.x - sp * 2.0f) / 3.0f;
+      if (igButton("Close", (ImVec2){btn_w, fb_h})) {
+        s_viewing_index = -1;
+        s_confirm_delete = false;
+      }
+      crystal_sheen();
+      igSameLine(0, sp);
+
+      bool already_saved = it->saved_to_gallery;
+      igBeginDisabled(already_saved);
       igPushStyleColor_Vec4(ImGuiCol_Button,
                             (ImVec4){0.16f, 0.55f, 0.30f, 1.0f});
       igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
                             (ImVec4){0.20f, 0.65f, 0.36f, 1.0f});
       igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
                             (ImVec4){0.13f, 0.45f, 0.25f, 1.0f});
-    }
-    if (igButton(ss_on ? "SCREENSHOT: ON###kill_ss_toggle"
-                       : "SCREENSHOT: OFF###kill_ss_toggle",
-                 (ImVec2){tb_w, tb_h})) {
-      screenshot_set_capture_enabled(!ss_on);
-    }
-    if (ss_on) igPopStyleColor(3);
-    crystal_sheen();
-  }
+      if (igButton(already_saved ? "Saved" : "\uea1a Save",
+                   (ImVec2){btn_w, fb_h})) {
+        android_jni_save_image_to_gallery(it->filename);
+        it->saved_to_gallery = true;
+      }
+      igPopStyleColor(3);
+      igEndDisabled();
+      crystal_sheen();
+      igSameLine(0, sp);
 
-  if (!s_scanned) {
-    scan_kills_dir();
-    s_scanned = true;
-  }
-  if (s_viewing_index >= 0 && s_viewing_index < s_item_count) {
-    draw_viewer(env, sw, sh);
-  } else {
-    draw_grid(env, sw, sh);
-  }
+      igPushStyleColor_Vec4(ImGuiCol_Button,
+                            (ImVec4){0.647f, 0.176f, 0.176f, 1.0f});
+      igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                            (ImVec4){0.75f, 0.22f, 0.22f, 1.0f});
+      igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                            (ImVec4){0.55f, 0.14f, 0.14f, 1.0f});
+      if (igButton(s_confirm_delete ? "Confirm delete?" : "Delete",
+                   (ImVec2){btn_w, fb_h})) {
+        if (s_confirm_delete) {
+          s_pending_delete = s_viewing_index;
+          s_viewing_index = -1;
+          s_confirm_delete = false;
+        } else {
+          s_confirm_delete = true;
+        }
+      }
+      crystal_sheen();
+      igPopStyleColor(3);
+    } else {
+      /* SCREENSHOT ON/OFF -- whether kills get captured during a run at all.
+         OFF by default (see screenshot.h): capturing costs a brief hitch, so
+         it is opt-in. Constant ### id so the button keeps its identity when
+         the label flips between ON and OFF. */
+      float btn_w = (fav.x - sp) * 0.5f;
+      bool ss_on = screenshot_capture_enabled();
+      if (ss_on) {
+        igPushStyleColor_Vec4(ImGuiCol_Button,
+                              (ImVec4){0.16f, 0.55f, 0.30f, 1.0f});
+        igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                              (ImVec4){0.20f, 0.65f, 0.36f, 1.0f});
+        igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                              (ImVec4){0.13f, 0.45f, 0.25f, 1.0f});
+      }
+      if (igButton(ss_on ? "SCREENSHOT: ON###kill_ss_toggle"
+                         : "SCREENSHOT: OFF###kill_ss_toggle",
+                   (ImVec2){btn_w, fb_h})) {
+        screenshot_set_capture_enabled(!ss_on);
+      }
+      if (ss_on) igPopStyleColor(3);
+      crystal_sheen();
+      igSameLine(0, sp);
+      if (igButton("Back", (ImVec2){btn_w, fb_h})) {
+        gdata->curr_screen = TITLE_SCREEN;
+        popup_open = false;
+        igCloseCurrentPopup();
+      }
+      crystal_sheen();
+    }
 #else
-  igSetCursorPos((ImVec2){sw * 0.5f - 160.0f, sh * 0.45f});
-  igTextWrapped(
-      "Kill screenshots are an Android-only feature and aren't available "
-      "on this build.");
+    igTextWrapped(
+        "Kill screenshots are an Android-only feature and aren't available "
+        "on this build.");
+    crystal_panel_end_body();
+    ImVec2 fav;
+    igGetContentRegionAvail(&fav);
+    if (igButton("Back", (ImVec2){fav.x, fb_h})) {
+      gdata->curr_screen = TITLE_SCREEN;
+      popup_open = false;
+      igCloseCurrentPopup();
+    }
+    crystal_sheen();
+    (void)viewing;
 #endif
 
-  float btn_w = 220.0f;
-  float btn_h = igGetFrameHeight() * 1.4f;
-  igSetCursorPos(
-      (ImVec2){sw * 0.5f - btn_w * 0.5f, sh - style->WindowPadding.y - btn_h});
-  if (igButton("Back", (ImVec2){btn_w, btn_h})) {
+    crystal_panel_end();
+  } else if (popup_open) {
+    /* closed with the X / by tapping outside = Back */
+    popup_open = false;
     gdata->curr_screen = TITLE_SCREEN;
   }
-  crystal_sheen();
 
   crystal_pop_theme();
   igPopFont();

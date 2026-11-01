@@ -529,9 +529,14 @@ void read_user_settings(user_settings* usr_settings) {
     float opacity_floor = (i == 1 && loaded.modes[i].render_mode == 2)
                                ? 0.0f
                                : 0.15f;
-    if (loaded.transparent_skin_opacity[i] < opacity_floor ||
-        loaded.transparent_skin_opacity[i] > 0.85f)
+    /* Keep what the player chose: only a corrupt value goes back to the
+       default; an out-of-range one is clamped to the nearest allowed value. */
+    if (!isfinite(loaded.transparent_skin_opacity[i]))
       loaded.transparent_skin_opacity[i] = 0.35f;
+    else if (loaded.transparent_skin_opacity[i] < opacity_floor)
+      loaded.transparent_skin_opacity[i] = opacity_floor;
+    else if (loaded.transparent_skin_opacity[i] > 0.85f)
+      loaded.transparent_skin_opacity[i] = 0.85f;
   }
   /* The centre ring is always on; center_ring_enabled and
      turn_path_min_score are kept only so the settings file layout does not

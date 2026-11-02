@@ -112,7 +112,8 @@ workspace "vlither"
     files { "app/src/**.c", "app/src/**.cpp" }
     defines {
       "APP_VERSION=\"2.5\"",
-      "SETTINGS_VERSION=\"1.7\""
+      "SETTINGS_VERSION=\"1.7\"",
+      "MG_MAX_RECV_SIZE=25165824UL"
     }
 
     filter { "platforms:linux" }

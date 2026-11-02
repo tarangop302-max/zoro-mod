@@ -14,8 +14,457 @@
 #include "lobby_bg.h"
 #include "kills_gallery.h"
 #include "clips_gallery.h"
+#include "settings.h" /* ui_touch_scroll */
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 bool g_sl_popup_open = false;
+
+/* ============================================================================
+ * Server picker (the list button next to the IPv4 box).
+ *
+ * A themed, fixed-size panel with: search (IP / id / name), filter chips,
+ * favorites (starred servers are pinned first and remembered between
+ * launches), sortable PING / SLOTS / ID columns like NTL's picker, ping bars,
+ * a FASTEST badge and a "Use fastest server" button.
+ * ========================================================================== */
+enum { SL_F_ALL, SL_F_FAV, SL_F_BD, SL_F_OFFICIAL, SL_F_FAST, SL_F_COUNT };
+static const char* SL_FILTER_NAMES[SL_F_COUNT] = {
+    "All", "\xe2\x98\x85 Favorites", "Battledome", "Official", "Fast (<80ms)"};
+enum { SL_S_PING, SL_S_SLOTS, SL_S_ID };
+
+static int  s_sl_filter = SL_F_ALL;
+static int  s_sl_sort   = SL_S_PING;
+static bool s_sl_desc   = false;
+static char s_sl_search[40] = "";
+static const game_data* s_sl_cmp_gd = NULL;
+static bool s_sl_isfav[MAX_SERVER_LIST];
+
+static bool sl_ping_ok(int p) { return p >= 0 && p < 9999; }
+
+static long sl_sort_key(const game_data* g, int i, bool* unknown) {
+  switch (s_sl_sort) {
+    case SL_S_SLOTS:
+      *unknown = g->server_list.slots[i] < 0;
+      return g->server_list.slots[i];
+    case SL_S_ID:
+      *unknown = g->server_list.sids[i] < 0;
+      return g->server_list.sids[i];
+    default:
+      *unknown = !sl_ping_ok(g->server_list.pings[i]);
+      return g->server_list.pings[i];
+  }
+}
+
+/* Favorites first (like NTL), then the chosen column; unknown values last. */
+static int sl_cmp(const void* a, const void* b) {
+  int i = *(const int*)a, j = *(const int*)b;
+  if (s_sl_isfav[i] != s_sl_isfav[j]) return s_sl_isfav[i] ? -1 : 1;
+  bool ui, uj;
+  long ki = sl_sort_key(s_sl_cmp_gd, i, &ui);
+  long kj = sl_sort_key(s_sl_cmp_gd, j, &uj);
+  if (ui != uj) return ui ? 1 : -1;
+  int r = 0;
+  if (!ui) {
+    r = ki < kj ? -1 : (ki > kj ? 1 : 0);
+    if (s_sl_desc) r = -r;
+  }
+  return r ? r : i - j;
+}
+
+static bool sl_contains_ci(const char* hay, const char* needle) {
+  size_t nl = strlen(needle);
+  if (nl == 0) return true;
+  for (; *hay; hay++) {
+    size_t k = 0;
+    while (k < nl && hay[k] &&
+           tolower((unsigned char)hay[k]) == tolower((unsigned char)needle[k]))
+      k++;
+    if (k == nl) return true;
+  }
+  return false;
+}
+
+static ImVec4 sl_ping_color(int ping) {
+  if (!sl_ping_ok(ping)) return (ImVec4){0.70f, 0.64f, 0.88f, 1.0f};
+  if (ping < 80)  return (ImVec4){0.30f, 1.00f, 0.40f, 1.0f};
+  if (ping < 150) return (ImVec4){1.00f, 1.00f, 0.30f, 1.0f};
+  if (ping < 300) return (ImVec4){1.00f, 0.65f, 0.20f, 1.0f};
+  return (ImVec4){1.00f, 0.40f, 0.40f, 1.0f};
+}
+
+static ImU32 sl_col(ImVec4 c) { return igColorConvertFloat4ToU32(c); }
+static ImU32 sl_col_tinted(ImVec4 c) {
+  return igColorConvertFloat4ToU32(crystal_tint(c));
+}
+
+static void sl_text_r(ImDrawList* dl, float right, float y, ImU32 col,
+                      const char* s) {
+  ImVec2 ts;
+  igCalcTextSize(&ts, s, NULL, false, -1.0f);
+  ImDrawList_AddText_Vec2(dl, (ImVec2){right - ts.x, y}, col, s, NULL);
+}
+
+typedef struct {
+  float star_w, name_x, name_right, id_r, slots_r, ping_r, ping_w, slots_w, id_w;
+  bool show_id;
+} sl_cols;
+
+/* Column positions for a row starting at screen x0 and `w` wide. Used by the
+   header and every row so they always line up. */
+static sl_cols sl_layout(float x0, float w, float u, float row_h) {
+  sl_cols c;
+  c.star_w  = row_h;
+  c.ping_w  = u * 7.5f;
+  c.slots_w = u * 4.5f;
+  c.id_w    = u * 3.8f;
+  c.name_x  = x0 + c.star_w + u * 0.6f;
+  c.ping_r  = x0 + w - u * 0.7f;
+  c.slots_r = c.ping_r - c.ping_w - u * 0.4f;
+  c.id_r    = c.slots_r - c.slots_w;
+  c.show_id = (c.id_r - c.id_w - c.name_x) > u * 12.0f;
+  c.name_right = (c.show_id ? c.id_r - c.id_w : c.slots_r - c.slots_w) -
+                 u * 0.5f;
+  return c;
+}
+
+static void sl_header_cell(ImDrawList* dl, const char* label, int col_id,
+                           float right, float width, float y, float h,
+                           bool left_aligned, float left_x) {
+  float x0 = left_aligned ? left_x : right - width;
+  igSetCursorScreenPos((ImVec2){x0, y});
+  char id[24];
+  snprintf(id, sizeof(id), "##slh%d", col_id);
+  if (igInvisibleButton(id, (ImVec2){width, h}, 0)) {
+    if (s_sl_sort == col_id) {
+      s_sl_desc = !s_sl_desc;
+    } else {
+      s_sl_sort = col_id;
+      s_sl_desc = (col_id == SL_S_SLOTS); /* busiest first by default */
+    }
+  }
+  ImU32 col = sl_col((ImVec4){0.80f, 0.72f, 0.98f, s_sl_sort == col_id ? 1.0f : 0.75f});
+  float ty = y + (h - igGetTextLineHeight()) * 0.5f;
+  ImVec2 ts;
+  igCalcTextSize(&ts, label, NULL, false, -1.0f);
+  float arrow = 0.0f;
+  if (s_sl_sort == col_id) arrow = igGetFontSize() * 0.9f;
+  float tx = left_aligned ? left_x : right - ts.x - arrow;
+  ImDrawList_AddText_Vec2(dl, (ImVec2){tx, ty}, col, label, NULL);
+  if (s_sl_sort == col_id) {
+    float ax = tx + ts.x + igGetFontSize() * 0.25f;
+    float ay = y + h * 0.5f;
+    float s  = igGetFontSize() * 0.22f;
+    if (s_sl_desc)
+      ImDrawList_AddTriangleFilled(dl, (ImVec2){ax, ay - s}, (ImVec2){ax + s * 2, ay - s},
+                                   (ImVec2){ax + s, ay + s}, col);
+    else
+      ImDrawList_AddTriangleFilled(dl, (ImVec2){ax, ay + s}, (ImVec2){ax + s * 2, ay + s},
+                                   (ImVec2){ax + s, ay - s}, col);
+  }
+}
+
+static void draw_server_picker(tenv* env) {
+  tuser_data* usr = env->usr;
+  user_settings* usrs = &usr->usrs;
+  game_data* gdata = &usr->gdata;
+  ImGuiStyle* style = igGetStyle();
+  const int total = gdata->server_list.count;
+
+  /* ---- status line shown under the panel title ---- */
+  char subtitle[96];
+  if (gdata->server_list.fetching) {
+    snprintf(subtitle, sizeof(subtitle), "Fetching official server list...");
+  } else if (gdata->server_list.fetch_error) {
+    snprintf(subtitle, sizeof(subtitle),
+             "Couldn't fetch official list \xe2\x80\x94 custom servers still available.");
+  } else if (gdata->server_list.pinging) {
+    snprintf(subtitle, sizeof(subtitle), "Pinging... %d/%d",
+             gdata->server_list.pings_done, total);
+  } else if (gdata->server_list.pings_done > 0) {
+    snprintf(subtitle, sizeof(subtitle), "%d servers \xe2\x80\x94 pinged just now",
+             total);
+  } else {
+    snprintf(subtitle, sizeof(subtitle), "%d servers", total);
+  }
+
+  float frame_h = igGetFrameHeight();
+  float footer_h = frame_h * 1.6f + style->ItemSpacing.y * 2.0f;
+  crystal_panel_set_layout(0.70f, 0.90f, footer_h);
+  g_sl_popup_open =
+      crystal_panel_begin(env, "Select Server", "SELECT SERVER", subtitle, 700.0f);
+  if (!g_sl_popup_open) return;
+
+  igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
+             usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
+  const float u = igGetFontSize();
+
+  /* ---- search + refresh ---- */
+  ImVec2 av;
+  igGetContentRegionAvail(&av);
+  float rf_w = frame_h * 3.4f;
+  igPushItemWidth(av.x - rf_w - style->ItemSpacing.x);
+  igInputTextWithHint("##sl_search", "Search IP, ID or name", s_sl_search,
+                      sizeof(s_sl_search), ImGuiInputTextFlags_None, NULL, NULL);
+  crystal_sheen();
+  igPopItemWidth();
+  igSameLine(0, -1);
+  igBeginDisabled(gdata->server_list.fetching);
+  if (igButton("Refresh##sl_refresh", (ImVec2){rf_w, 0})) server_list_fetch(env);
+  igEndDisabled();
+  crystal_sheen();
+
+  /* ---- filter chips (wrap onto a second line on narrow screens) ---- */
+  {
+    float line_w = 0.0f;
+    for (int f = 0; f < SL_F_COUNT; f++) {
+      ImVec2 ts;
+      igCalcTextSize(&ts, SL_FILTER_NAMES[f], NULL, false, -1.0f);
+      float w = ts.x + style->FramePadding.x * 2.0f + 8.0f;
+      if (f > 0) {
+        if (line_w + style->ItemSpacing.x + w <= av.x) {
+          igSameLine(0, -1);
+          line_w += style->ItemSpacing.x;
+        } else {
+          line_w = 0.0f;
+        }
+      }
+      line_w += w;
+      bool sel = (s_sl_filter == f);
+      if (sel) {
+        igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+        igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+        igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
+      }
+      char lab[48];
+      snprintf(lab, sizeof(lab), "%s##slf%d", SL_FILTER_NAMES[f], f);
+      if (igButton(lab, (ImVec2){w, 0})) s_sl_filter = f;
+      if (sel) igPopStyleColor(3);
+    }
+  }
+
+  /* ---- build the visible list ---- */
+  static int order[MAX_SERVER_LIST];
+  int n = 0;
+  int best = -1;
+  for (int i = 0; i < total; i++) {
+    int p = gdata->server_list.pings[i];
+    if (sl_ping_ok(p) && (best < 0 || p < gdata->server_list.pings[best])) best = i;
+  }
+  const bool show_badge = best >= 0 && !gdata->server_list.pinging;
+  for (int i = 0; i < total; i++) {
+    const char* ip = gdata->server_list.ips[i];
+    bool is_custom = i < gdata->server_list.custom_count;
+    int p = gdata->server_list.pings[i];
+    s_sl_isfav[i] = server_fav_is(ip);
+    switch (s_sl_filter) {
+      case SL_F_FAV:      if (!s_sl_isfav[i]) continue; break;
+      case SL_F_BD:       if (!is_custom) continue; break;
+      case SL_F_OFFICIAL: if (is_custom) continue; break;
+      case SL_F_FAST:     if (!(sl_ping_ok(p) && p < 80)) continue; break;
+      default: break;
+    }
+    if (s_sl_search[0]) {
+      char idbuf[16];
+      snprintf(idbuf, sizeof(idbuf), "%d", gdata->server_list.sids[i]);
+      if (!sl_contains_ci(ip, s_sl_search) &&
+          !(is_custom && sl_contains_ci(CUSTOM_SERVER_NAMES[i], s_sl_search)) &&
+          !(gdata->server_list.sids[i] >= 0 && sl_contains_ci(idbuf, s_sl_search)))
+        continue;
+    }
+    order[n++] = i;
+  }
+  s_sl_cmp_gd = gdata;
+  qsort(order, (size_t)n, sizeof(int), sl_cmp);
+
+  /* ---- sortable column header ---- */
+  const float row_h = frame_h * 1.25f;
+  const float hdr_h = frame_h * 0.9f;
+  {
+    ImDrawList* dl = igGetWindowDrawList();
+    ImVec2 hp;
+    igGetCursorScreenPos(&hp);
+    ImVec2 av_h;
+    igGetContentRegionAvail(&av_h);
+    float hw = av_h.x - style->ScrollbarSize; /* rows lose this to the scrollbar */
+    sl_cols c = sl_layout(hp.x, hw, u, row_h);
+    igDummy((ImVec2){av_h.x, hdr_h});
+    ImVec2 after;
+    igGetCursorScreenPos(&after);
+    ImDrawList_AddText_Vec2(dl, (ImVec2){c.name_x, hp.y + (hdr_h - igGetTextLineHeight()) * 0.5f},
+                            sl_col((ImVec4){0.80f, 0.72f, 0.98f, 0.75f}), "SERVER", NULL);
+    sl_header_cell(dl, "PING", SL_S_PING, c.ping_r, c.ping_w, hp.y, hdr_h, false, 0);
+    sl_header_cell(dl, "SLOTS", SL_S_SLOTS, c.slots_r, c.slots_w, hp.y, hdr_h, false, 0);
+    if (c.show_id)
+      sl_header_cell(dl, "ID", SL_S_ID, c.id_r, c.id_w, hp.y, hdr_h, false, 0);
+    igSetCursorScreenPos(after);
+  }
+
+  /* ---- rows ---- */
+  int toggle_idx = -1;
+  igBeginChild_Str("##sl_scroll", (ImVec2){0, 0}, ImGuiChildFlags_None, 0);
+  ui_touch_scroll(env, 25);
+  {
+    ImDrawList* dl = igGetWindowDrawList();
+    ImVec2 av2;
+    igGetContentRegionAvail(&av2);
+    const float row_w = av2.x;
+
+    if (n == 0) {
+      igTextDisabled(total == 0 ? "No servers yet." : "No servers match.");
+    }
+
+    for (int j = 0; j < n; j++) {
+      int i = order[j];
+      const char* ip = gdata->server_list.ips[i];
+      bool is_custom = i < gdata->server_list.custom_count;
+      bool fav = s_sl_isfav[i];
+      bool is_best = show_badge && i == best;
+      int ping = gdata->server_list.pings[i];
+      int slots = gdata->server_list.slots[i];
+      int sid = gdata->server_list.sids[i];
+
+      ImVec2 rp;
+      igGetCursorScreenPos(&rp);
+      sl_cols c = sl_layout(rp.x, row_w, u, row_h);
+
+      ImVec4 bgc = is_best ? (ImVec4){0.30f, 1.00f, 0.40f, 0.12f}
+                  : fav    ? (ImVec4){1.00f, 0.82f, 0.25f, 0.10f}
+                           : (ImVec4){0.510f, 0.294f, 0.910f, 0.16f};
+      ImDrawList_AddRectFilled(dl, rp, (ImVec2){rp.x + row_w, rp.y + row_h},
+                               sl_col_tinted(bgc), 10.0f, 0);
+
+      igPushID_Int(i);
+      if (igInvisibleButton("##fav", (ImVec2){c.star_w, row_h}, 0)) toggle_idx = i;
+      igSameLine(0, 0);
+      bool pick = igSelectable_Bool("##pick", false, ImGuiSelectableFlags_None,
+                                    (ImVec2){row_w - c.star_w, row_h});
+      bool hovered = igIsItemHovered(0);
+      igPopID();
+
+      float ty = rp.y + (row_h - igGetTextLineHeight()) * 0.5f;
+
+      /* favorite star */
+      {
+        ImVec2 ts;
+        igCalcTextSize(&ts, "\xe2\x98\x85", NULL, false, -1.0f);
+        ImDrawList_AddText_Vec2(
+            dl, (ImVec2){rp.x + (c.star_w - ts.x) * 0.5f, ty},
+            fav ? sl_col((ImVec4){1.00f, 0.82f, 0.25f, 1.0f})
+                : sl_col((ImVec4){0.70f, 0.64f, 0.88f, 0.35f}),
+            "\xe2\x98\x85", NULL);
+      }
+
+      /* name (custom servers by name, official ones by IP) + FASTEST badge */
+      {
+        char name[48];
+        if (is_custom)
+          snprintf(name, sizeof(name), "%s", CUSTOM_SERVER_NAMES[i]);
+        else
+          snprintf(name, sizeof(name), "%s", ip);
+        ImDrawList_PushClipRect(dl, (ImVec2){c.name_x, rp.y},
+                                (ImVec2){c.name_right, rp.y + row_h}, true);
+        ImDrawList_AddText_Vec2(
+            dl, (ImVec2){c.name_x, ty},
+            is_custom ? sl_col((ImVec4){1.0f, 0.82f, 0.25f, 1.0f})
+                      : sl_col((ImVec4){0.945f, 0.925f, 1.0f, 1.0f}),
+            name, NULL);
+        if (is_best) {
+          ImVec2 ns, bs;
+          igCalcTextSize(&ns, name, NULL, false, -1.0f);
+          igCalcTextSize(&bs, "FASTEST", NULL, false, -1.0f);
+          float bx = c.name_x + ns.x + u * 0.7f;
+          float pad = u * 0.4f;
+          if (bx + bs.x + pad * 2 < c.name_right) {
+            ImDrawList_AddRectFilled(dl, (ImVec2){bx, ty - 1},
+                                     (ImVec2){bx + bs.x + pad * 2, ty + bs.y + 1},
+                                     sl_col((ImVec4){0.30f, 1.0f, 0.40f, 1.0f}), 8.0f, 0);
+            ImDrawList_AddText_Vec2(dl, (ImVec2){bx + pad, ty},
+                                    sl_col((ImVec4){0.03f, 0.14f, 0.06f, 1.0f}),
+                                    "FASTEST", NULL);
+          }
+        }
+        ImDrawList_PopClipRect(dl);
+      }
+
+      char buf[24];
+      ImU32 dim = sl_col((ImVec4){0.78f, 0.72f, 0.95f, 1.0f});
+      if (c.show_id) {
+        if (sid >= 0) snprintf(buf, sizeof(buf), "%d", sid);
+        else snprintf(buf, sizeof(buf), "-");
+        sl_text_r(dl, c.id_r, ty, dim, buf);
+      }
+      if (slots >= 0) snprintf(buf, sizeof(buf), "%d", slots);
+      else snprintf(buf, sizeof(buf), "-");
+      sl_text_r(dl, c.slots_r, ty, dim, buf);
+
+      /* ping: signal bars + milliseconds */
+      {
+        ImVec4 pc = sl_ping_color(ping);
+        if (ping < 0)            snprintf(buf, sizeof(buf), "--");
+        else if (ping >= 9999)   snprintf(buf, sizeof(buf), "!!ms");
+        else                     snprintf(buf, sizeof(buf), "%dms", ping);
+        sl_text_r(dl, c.ping_r, ty, sl_col(pc), buf);
+
+        int lvl = !sl_ping_ok(ping) ? 0 : ping < 80 ? 4 : ping < 150 ? 3 : ping < 300 ? 2 : 1;
+        float bw = u * 0.28f, gap = u * 0.14f;
+        float bx = c.ping_r - u * 3.6f - 4 * (bw + gap);
+        float base = rp.y + row_h * 0.5f + u * 0.55f;
+        for (int b = 0; b < 4; b++) {
+          float bh = u * (0.35f + 0.28f * (float)b);
+          ImU32 bc = b < lvl ? sl_col(pc)
+                             : sl_col((ImVec4){0.78f, 0.72f, 0.95f, 0.25f});
+          ImDrawList_AddRectFilled(
+              dl, (ImVec2){bx + (float)b * (bw + gap), base - bh},
+              (ImVec2){bx + (float)b * (bw + gap) + bw, base}, bc, 1.0f, 0);
+        }
+      }
+
+      if (is_custom && hovered) igSetTooltip("%s", ip);
+
+      if (pick) {
+        strncpy(usrs->ipv4, ip, MAX_IPV4_LEN);
+        usrs->ipv4[MAX_IPV4_LEN] = '\0';
+        igCloseCurrentPopup();
+      }
+    }
+  }
+  igEndChild();
+  if (toggle_idx >= 0) server_fav_toggle(gdata->server_list.ips[toggle_idx]);
+
+  crystal_panel_end_body();
+
+  /* ---- pinned footer: use the fastest server ---- */
+  {
+    float fb_h = frame_h * 1.6f;
+    ImVec2 fav;
+    igGetContentRegionAvail(&fav);
+    bool can = best >= 0 && !gdata->server_list.pinging;
+    igBeginDisabled(!can);
+    igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+    igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+    igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
+    char lab[64];
+    if (best >= 0 && !gdata->server_list.pinging)
+      snprintf(lab, sizeof(lab), "Use fastest server (%dms)##sl_best",
+               gdata->server_list.pings[best]);
+    else
+      snprintf(lab, sizeof(lab), "Use fastest server##sl_best");
+    if (igButton(lab, (ImVec2){fav.x, fb_h}) && can) {
+      strncpy(usrs->ipv4, gdata->server_list.ips[best], MAX_IPV4_LEN);
+      usrs->ipv4[MAX_IPV4_LEN] = '\0';
+      igCloseCurrentPopup();
+    }
+    igPopStyleColor(3);
+    igEndDisabled();
+    crystal_sheen();
+  }
+
+  igPopFont();
+  crystal_panel_end();
+}
 
 /* The crystal/purple glass theme helpers (crystal_draw_background,
    crystal_push_theme/pop_theme, crystal_sheen, crystal_glow_rect) used to
@@ -218,8 +667,10 @@ void ui_title_screen(tenv* env) {
   float sl_btn_w = frame_height;
   igPushItemWidth(logo_size);
   igPushItemWidth(logo_size - sl_btn_w - style->ItemSpacing.x);
+  /* No blanks: an address never contains a space, and keyboards that insert
+     one after a word/number would otherwise break the IP. */
   igInputTextWithHint("##ipv4_input", "IPv4:Port", usrs->ipv4, MAX_IPV4_LEN + 1,
-                      ImGuiInputTextFlags_None, NULL, NULL);
+                      ImGuiInputTextFlags_CharsNoBlank, NULL, NULL);
   crystal_sheen();
   igPopItemWidth();
   igPopItemWidth();
@@ -230,7 +681,7 @@ void ui_title_screen(tenv* env) {
   if (igButton("\ue9c9##sl_btn", (ImVec2){sl_btn_w, sl_btn_w})) {
     if (!gdata->server_list.fetching && !gdata->server_list.fetched)
       server_list_fetch(env);
-    igOpenPopup_Str("##sl_popup", 0);
+    igOpenPopup_Str("Select Server", 0);
   }
   crystal_sheen();
   igPopFont();
@@ -242,101 +693,7 @@ void ui_title_screen(tenv* env) {
     server_list_start_ping(env);
   }
 
-  g_sl_popup_open = igBeginPopup("##sl_popup", 0);
-  if (g_sl_popup_open) {
-    igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
-               usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
-
-    if (gdata->server_list.fetching) {
-      igTextColored((ImVec4){0.8f, 0.8f, 0.3f, 1.0f},
-                    "Fetching official server list...");
-    } else if (gdata->server_list.fetch_error) {
-      igTextColored((ImVec4){0.9f, 0.4f, 0.4f, 1.0f},
-                    "Couldn't fetch official list \xe2\x80\x94 custom servers still available.");
-    } else if (gdata->server_list.fetched && gdata->server_list.count > 0) {
-      if (gdata->server_list.pinging) {
-        char prog[56];
-        snprintf(prog, sizeof(prog), "Pinging... %d/%d",
-                 gdata->server_list.pings_done, gdata->server_list.count);
-        igTextColored((ImVec4){0.8f, 0.8f, 0.3f, 1.0f}, prog);
-      } else {
-        char hdr[48];
-        snprintf(hdr, sizeof(hdr), "%d servers (best ping first)",
-                 gdata->server_list.count);
-        igTextColored((ImVec4){0.5f, 0.9f, 0.5f, 1.0f}, hdr);
-      }
-    }
-
-    igSeparator();
-
-    if (gdata->server_list.count > 0) {
-      igBeginChild_Str("##sl_scroll", (ImVec2){340, 320},
-                       ImGuiChildFlags_None, 0);
-
-      bool sorted = !gdata->server_list.pinging &&
-                    gdata->server_list.pings_done > 0;
-
-      for (int j = 0; j < gdata->server_list.count; j++) {
-        int i         = sorted ? gdata->server_list.sorted_order[j] : j;
-        int ping      = gdata->server_list.pings[i];
-        bool is_custom = i < gdata->server_list.custom_count;
-
-        char name_buf[40];
-        if (is_custom) {
-          snprintf(name_buf, sizeof(name_buf), "\xe2\x98\x85 %s",
-                    CUSTOM_SERVER_NAMES[i]);
-        } else {
-          snprintf(name_buf, sizeof(name_buf), "%s", gdata->server_list.ips[i]);
-        }
-
-        char label[80];
-        if (ping < 0) {
-          snprintf(label, sizeof(label), "%-26s  --", name_buf);
-        } else if (ping >= 9999) {
-          snprintf(label, sizeof(label), "%-26s  !!ms", name_buf);
-        } else {
-          snprintf(label, sizeof(label), "%-26s  %dms", name_buf, ping);
-        }
-
-        bool pushed_color = false;
-        if (is_custom) {
-          igPushStyleColor_Vec4(ImGuiCol_Text,
-            (ImVec4){1.0f, 0.82f, 0.25f, 1.0f});
-          pushed_color = true;
-        } else if (ping >= 0 && ping < 9999) {
-          ImVec4 col;
-          if      (ping <  80) col = (ImVec4){0.3f, 1.0f, 0.4f, 1.0f};
-          else if (ping < 150) col = (ImVec4){1.0f, 1.0f, 0.3f, 1.0f};
-          else if (ping < 300) col = (ImVec4){1.0f, 0.65f, 0.2f, 1.0f};
-          else                  col = (ImVec4){1.0f, 0.4f, 0.4f, 1.0f};
-          igPushStyleColor_Vec4(ImGuiCol_Text, col);
-          pushed_color = true;
-        }
-
-        if (igSelectable_Bool(label, false,
-                              ImGuiSelectableFlags_None, (ImVec2){0, 0})) {
-          strncpy(usrs->ipv4, gdata->server_list.ips[i], MAX_IPV4_LEN);
-          usrs->ipv4[MAX_IPV4_LEN] = '\0';
-          igCloseCurrentPopup();
-        }
-        if (is_custom && igIsItemHovered(0)) {
-          igSetTooltip("%s", gdata->server_list.ips[i]);
-        }
-
-        if (pushed_color) igPopStyleColor(1);
-      }
-      igEndChild();
-      igSeparator();
-    }
-
-    if (!gdata->server_list.fetching) {
-      if (igButton("Refresh##sl_refresh", (ImVec2){0, 0}))
-        server_list_fetch(env);
-    }
-
-    igPopFont();
-    igEndPopup();
-  }
+  draw_server_picker(env);
 
   igSetCursorPosX(ctx->size[0] / 2.0f - logo_size / 2);
   igSetCursorPosY(ctx->size[1] / 2.0f + style->ItemSpacing.y * 3 +

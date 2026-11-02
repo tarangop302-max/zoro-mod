@@ -46,7 +46,8 @@
 #define NT_CPAD 2
 #define NT_MAX_AUTH 64
 #define NT_IMG_RETRY_S 120.0
-#define NT_CFG_MAGIC 0x3147544Eu /* "NTG1" */
+#define NT_CFG_MAGIC 0x3247544Eu /* "NTG2": assist byte = show tags in Assist */
+#define NT_CFG_MAGIC_V1 0x3147544Eu /* "NTG1": old file, assist byte = hide */
 
 /* ---- state -------------------------------------------------------------- */
 typedef struct {
@@ -62,7 +63,7 @@ static int16_t s_index[NT_ID_MAX];        /* tag id -> index in ntl_tag_defs */
 static unsigned long long s_tex = 0;      /* atlas descriptor set            */
 
 static bool s_show_normal = true;         /* "Show NTL tags", Normal mode    */
-static bool s_show_assist = true;         /* "Show NTL tags", Assist mode    */
+static bool s_show_assist = false;        /* "Show NTL tags", Assist mode (off by default) */
 static int s_sel = NTL_TAG_NONE;          /* our own tag id                  */
 
 /* community tag store */
@@ -769,9 +770,11 @@ static void cfg_load(void) {
   cfg_file c;
   size_t got = fread(&c, 1, sizeof c, f);
   fclose(f);
-  if (got != sizeof c || c.magic != NT_CFG_MAGIC) return;
+  if (got != sizeof c || (c.magic != NT_CFG_MAGIC && c.magic != NT_CFG_MAGIC_V1)) return;
   s_show_normal = c.show != 0;
-  s_show_assist = c.assist_hide == 0; /* old "hide in Assist" byte, same meaning */
+  /* New file: the byte is "show in Assist". An old (NTG1) file never had that
+     choice, so Assist starts OFF for it as well. */
+  s_show_assist = c.magic == NT_CFG_MAGIC ? c.assist_hide != 0 : false;
   s_sel = (ntl_tags_valid(c.selected) || (comm_id_ok(c.selected) && auth_find(c.selected)))
               ? c.selected
               : NTL_TAG_NONE;
@@ -781,7 +784,7 @@ static void cfg_save(void) {
   FILE *f = open_cfg("wb");
   if (!f) return;
   cfg_file c = {NT_CFG_MAGIC, s_sel, (uint8_t)(s_show_normal ? 1 : 0),
-                (uint8_t)(s_show_assist ? 0 : 1), {0, 0}};
+                (uint8_t)(s_show_assist ? 1 : 0), {0, 0}};
   fwrite(&c, 1, sizeof c, f);
   fclose(f);
 }

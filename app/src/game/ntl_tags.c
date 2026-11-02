@@ -61,9 +61,9 @@ static ant_t s_ants[NT_SLOTS];
 static int16_t s_index[NT_ID_MAX];        /* tag id -> index in ntl_tag_defs */
 static unsigned long long s_tex = 0;      /* atlas descriptor set            */
 
-static bool s_show = true;                /* "Show NTL tags"                 */
+static bool s_show_normal = true;         /* "Show NTL tags", Normal mode    */
+static bool s_show_assist = true;         /* "Show NTL tags", Assist mode    */
 static int s_sel = NTL_TAG_NONE;          /* our own tag id                  */
-static bool s_assist_hide = false;        /* "ASSIST HIDE TAGS"            */
 
 /* community tag store */
 enum { CT_META = 0, CT_NEED_IMG, CT_HAVE_WEBP, CT_READY, CT_FAILED };
@@ -770,8 +770,8 @@ static void cfg_load(void) {
   size_t got = fread(&c, 1, sizeof c, f);
   fclose(f);
   if (got != sizeof c || c.magic != NT_CFG_MAGIC) return;
-  s_show = c.show != 0;
-  s_assist_hide = c.assist_hide != 0;
+  s_show_normal = c.show != 0;
+  s_show_assist = c.assist_hide == 0; /* old "hide in Assist" byte, same meaning */
   s_sel = (ntl_tags_valid(c.selected) || (comm_id_ok(c.selected) && auth_find(c.selected)))
               ? c.selected
               : NTL_TAG_NONE;
@@ -780,13 +780,21 @@ static void cfg_load(void) {
 static void cfg_save(void) {
   FILE *f = open_cfg("wb");
   if (!f) return;
-  cfg_file c = {NT_CFG_MAGIC, s_sel, (uint8_t)(s_show ? 1 : 0),
-                (uint8_t)(s_assist_hide ? 1 : 0), {0, 0}};
+  cfg_file c = {NT_CFG_MAGIC, s_sel, (uint8_t)(s_show_normal ? 1 : 0),
+                (uint8_t)(s_show_assist ? 0 : 1), {0, 0}};
   fwrite(&c, 1, sizeof c, f);
   fclose(f);
 }
 
-bool ntl_tags_show_enabled(void) { return s_show; }
+bool ntl_tags_show_enabled(void) { return s_show_normal; }
+bool ntl_tags_show_get(int mode) { return mode ? s_show_assist : s_show_normal; }
+void ntl_tags_show_set(int mode, bool on) {
+  if (mode)
+    s_show_assist = on;
+  else
+    s_show_normal = on;
+  cfg_save();
+}
 int ntl_tags_selected(void) { return s_sel; }
 
 /* ---- spawn-packet skin header (NTL "e" array) --------------------------- */
@@ -1056,8 +1064,8 @@ static int quad(ImVec2 *pts, int n, ImVec2 a, ImVec2 c, ImVec2 b) {
 
 void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
                          float screen_cx, float screen_cy, float alive) {
-  if (!s_show || !o || o->ntl_tag1 <= 0) return;
-  if (s_assist_hide && env->usr->usrs.hotkeys[HOTKEY_ASSIST].active) return;
+  if (!o || o->ntl_tag1 <= 0) return;
+  if (!ntl_tags_show_get(env->usr->usrs.hotkeys[HOTKEY_ASSIST].active ? 1 : 0)) return;
   int tid = o->ntl_tag1 - 1;
   const ntl_tag_def *def;
   unsigned long long atlas_tex;
@@ -1173,15 +1181,6 @@ void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
 }
 
 /* ---- settings UI -------------------------------------------------------- */
-void ntl_tags_assist_settings_ui(void) {
-  bool v = s_assist_hide;
-  if (igCheckbox("ASSIST HIDE TAGS", &v)) {
-    s_assist_hide = v;
-    cfg_save();
-  }
-  igTextDisabled("Hides all NTL tags while Assist is on.");
-}
-
 /* ---- Skin Editor tag block ----------------------------------------------
  * Drawn by ui/skin_editor.c between the "Saved skins" and "Custom" rows:
  *
@@ -1218,10 +1217,43 @@ static void thumb(ImDrawList *dl, const ntl_tag_def *d, unsigned long long tex_i
                       0xFFFFFFFFu);
 }
 
-static bool s_open_add = false, s_open_pw = false;
+static void draw_cell(ImDrawList *dl, ImVec2 a, ImVec2 b, int id, bool sel, bool hot,
+                      bool show_id) {
+  const ntl_tag_def *def;
+  unsigned long long tex;
+  int atw, ath;
+  float r = (b.x - a.x) * 0.12f;
+  ImDrawList_AddRectFilled(dl, a, b,
+                           sel   ? tcol(0.45f, 0.30f, 0.80f, 0.60f)
+                           : hot ? tcol(0.30f, 0.20f, 0.50f, 0.75f)
+                                 : tcol(0.10f, 0.07f, 0.18f, 0.60f),
+                           r, 0);
+  float pad = (b.x - a.x) * 0.06f + 2.0f;
+  if (resolve(id, &def, &tex, &atw, &ath))
+    thumb(dl, def, tex, atw, ath, (ImVec2){a.x + pad, a.y + pad},
+          (ImVec2){b.x - pad, b.y - pad - (show_id ? igGetFontSize() * 0.9f : 0.0f)});
+  if (sel) ImDrawList_AddRect(dl, a, b, tcol(0.85f, 0.75f, 1.0f, 0.95f), r, 0, 2.0f);
+  if (show_id) {
+    char t[16];
+    snprintf(t, sizeof t, "#%d", id);
+    ImVec2 ts;
+    igCalcTextSize(&ts, t, NULL, false, -1.0f);
+    ImDrawList_AddText_Vec2(dl, (ImVec2){a.x + ((b.x - a.x) - ts.x) * 0.5f, b.y - ts.y - 4.0f},
+                            tcol(0.78f, 0.70f, 0.95f, 0.9f), t, NULL);
+  }
+  if (!ntl_tags_valid(id)) { /* community tag: amber = needs password, green = unlocked */
+    bool unlocked = auth_find(id) != NULL;
+    ImDrawList_AddCircleFilled(dl, (ImVec2){b.x - 7, a.y + 7}, 4.0f,
+                               unlocked ? 0xFF60D060u : 0xFF3CBEFFu, 12);
+  }
+}
+
+static bool s_open_add = false, s_open_pw = false, s_open_big = false;
 static char s_id_buf[160];
 static char s_pw_buf[64];
 static int s_pw_id = 0;
+static float s_goal_big = -1.0f;
+static bool s_scroll_big_sel = false;
 
 static void select_tag(int id) {
   if (ntl_tags_valid(id) || auth_find(id)) {
@@ -1241,6 +1273,159 @@ static void tag_modals(tenv *env) {
   ImVec2 center = {W * 0.5f, H * 0.38f};
   ImGuiWindowFlags wf = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+
+  /* ---- big tag screen: every tag as a large tile, drag to scroll, tap to pick ---- */
+  if (s_open_big) {
+    igOpenPopup_Str("NTL tags##big", 0);
+    s_open_big = false;
+    s_goal_big = -1.0f;
+    s_scroll_big_sel = true;
+  }
+  igSetNextWindowPos((ImVec2){W * 0.5f, H * 0.5f}, ImGuiCond_Always, (ImVec2){0.5f, 0.5f});
+  igSetNextWindowSize((ImVec2){fminf(W * 0.62f, W - 40.0f), H * 0.88f}, ImGuiCond_Always);
+  if (igBeginPopupModal("NTL tags##big", NULL,
+                        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar |
+                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+    ImGuiStyle *bst = igGetStyle();
+    ImGuiIO *io = igGetIO_Nil();
+    double nowb = now_s();
+    float fh = igGetFrameHeight();
+    /* header */
+    {
+      igAlignTextToFramePadding();
+      igTextColored((ImVec4){0.80f, 0.72f, 1.0f, 1.0f}, "NTL TAGS");
+      igSameLine(0, bst->ItemSpacing.x * 2);
+      bool is_status = nowb < s_status_until && s_status[0];
+      if (is_status)
+        igTextDisabled("%s", s_status);
+      else if (s_sel >= 0)
+        igTextDisabled("Your tag: #%d", s_sel);
+      else
+        igTextDisabled("Tap a tag to use it");
+    }
+    ImVec2 av;
+    igGetContentRegionAvail(&av);
+    float footer_h = fh + bst->ItemSpacing.y;
+    igPushStyleVar_Float(ImGuiStyleVar_ChildRounding, 10.0f);
+    igPushStyleColor_Vec4(ImGuiCol_ChildBg, (ImVec4){0.176f, 0.106f, 0.306f, 0.35f});
+    bool vis = igBeginChild_Str("##ntl_big_grid", (ImVec2){av.x, av.y - footer_h},
+                                ImGuiChildFlags_Borders,
+                                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    if (vis) {
+      ImVec2 org, cav;
+      igGetCursorScreenPos(&org); /* top-left of the first row, already scrolled */
+      igGetContentRegionAvail(&cav);
+      float gap = bst->ItemSpacing.x;
+      float cell = igGetFontSize() * 4.4f;
+      int cols = (int)((cav.x + gap) / (cell + gap));
+      if (cols < 1) cols = 1;
+      cell = (cav.x - gap * (cols - 1)) / cols; /* stretch tiles to fill the row */
+      float pitch_y = cell + gap;
+      int n = s_ndisp, rows = (n + cols - 1) / cols;
+      igDummy((ImVec2){cav.x, rows * pitch_y - gap});
+      ImVec2 wp, wsz;
+      igGetWindowPos(&wp);
+      igGetWindowSize(&wsz);
+      ImDrawList *dl = igGetWindowDrawList();
+
+      if (s_scroll_big_sel) {
+        s_scroll_big_sel = false;
+        for (int i = 0; i < n; ++i)
+          if (s_disp[i] == s_sel) {
+            s_goal_big = (i / cols) * pitch_y - (wsz.y - cell) * 0.5f;
+            if (s_goal_big < 0) s_goal_big = 0;
+          }
+      }
+      static bool drag_on = false, drag_moved = false;
+      static float drag_y0 = 0, vel = 0;
+      bool hov = igIsWindowHovered(ImGuiHoveredFlags_None);
+      int tap = -1;
+      if (hov && igIsMouseClicked_Bool(0, false)) {
+        drag_on = true;
+        drag_moved = false;
+        drag_y0 = io->MousePos.y;
+        vel = 0;
+        s_goal_big = -1.0f;
+      }
+      if (hov && io->MouseWheel != 0.0f) {
+        igSetScrollY_Float(igGetScrollY() - io->MouseWheel * pitch_y);
+        s_goal_big = -1.0f;
+      }
+      if (drag_on) {
+        if (igIsMouseDown_Nil(0)) {
+          if (!drag_moved && fabsf(io->MousePos.y - drag_y0) > 10.0f) drag_moved = true;
+          if (drag_moved) {
+            igSetScrollY_Float(igGetScrollY() - io->MouseDelta.y);
+            vel = io->MouseDelta.y;
+          }
+        } else {
+          if (!drag_moved) {
+            float mx = io->MousePos.x - org.x, my = io->MousePos.y - org.y;
+            int c = (int)floorf(mx / (cell + gap)), r = (int)floorf(my / pitch_y);
+            if (mx >= 0 && my >= 0 && c >= 0 && c < cols && r >= 0 &&
+                mx - c * (cell + gap) <= cell && my - r * pitch_y <= cell && r * cols + c < n)
+              tap = r * cols + c;
+          }
+          drag_on = false;
+        }
+      } else if (fabsf(vel) > 0.5f) {
+        igSetScrollY_Float(igGetScrollY() - vel);
+        vel *= 0.92f;
+      } else {
+        vel = 0;
+      }
+      if (s_goal_big >= 0.0f && !drag_on) {
+        float cur = igGetScrollY(), nd = cur + (s_goal_big - cur) * 0.3f;
+        if (fabsf(s_goal_big - cur) < 1.0f) {
+          nd = s_goal_big;
+          s_goal_big = -1.0f;
+        }
+        igSetScrollY_Float(nd);
+      }
+      for (int i = 0; i < n; ++i) {
+        int r = i / cols, c = i % cols;
+        ImVec2 a = {org.x + c * (cell + gap), org.y + r * pitch_y};
+        ImVec2 b = {a.x + cell, a.y + cell};
+        if (b.y < wp.y || a.y > wp.y + wsz.y) continue;
+        bool hot = hov && !drag_moved && io->MousePos.x >= a.x && io->MousePos.x <= b.x &&
+                   io->MousePos.y >= a.y && io->MousePos.y <= b.y;
+        draw_cell(dl, a, b, s_disp[i], s_disp[i] == s_sel, hot, true);
+      }
+      if (tap >= 0) {
+        int id = s_disp[tap];
+        if (ntl_tags_valid(id) || auth_find(id)) {
+          select_tag(id);
+          igCloseCurrentPopup();
+        } else {
+          select_tag(id); /* asks for the password */
+          igCloseCurrentPopup();
+        }
+      }
+    }
+    igEndChild();
+    igPopStyleColor(1);
+    igPopStyleVar(1);
+    /* footer */
+    float bw3 = (av.x - 2 * bst->ItemSpacing.x) / 3.0f;
+    igBeginDisabled(s_list_busy);
+    if (igButton(s_list_busy ? "Syncing..." : "Sync", (ImVec2){bw3, 0})) comm_request_refresh();
+    crystal_sheen();
+    igEndDisabled();
+    igSameLine(0, -1);
+    igBeginDisabled(s_sel < 0);
+    if (igButton("Remove tag", (ImVec2){bw3, 0})) {
+      s_sel = NTL_TAG_NONE;
+      cfg_save();
+      status_set("Tag removed");
+    }
+    crystal_sheen();
+    igEndDisabled();
+    igSameLine(0, -1);
+    if (igButton("Done", (ImVec2){bw3, 0})) igCloseCurrentPopup();
+    crystal_sheen();
+    igEndPopup();
+  }
 
   if (s_open_add) {
     igOpenPopup_Str("Add NTL tag", 0);
@@ -1325,13 +1510,8 @@ void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w) {
 
   ImDrawList *dl = igGetWindowDrawList();
 
-  /* ---- header: label + value/status on the left, "Show tags" on the right */
+  /* ---- header: "NTL tag" + your tag number, or the latest status message --- */
   {
-    const char *lbl = "Show tags";
-    ImVec2 ts;
-    igCalcTextSize(&ts, lbl, NULL, false, -1.0f);
-    float cbw = fh + st->ItemInnerSpacing.x + ts.x;
-
     igSetCursorPos((ImVec2){x, y});
     ImVec2 p0;
     igGetCursorScreenPos(&p0);
@@ -1346,7 +1526,7 @@ void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w) {
       snprintf(val, sizeof val, "none");
     ImVec2 lw;
     igCalcTextSize(&lw, "NTL tag", NULL, false, -1.0f);
-    ImDrawList_PushClipRect(dl, p0, (ImVec2){p0.x + w - cbw - spx, p0.y + fh}, true);
+    ImDrawList_PushClipRect(dl, p0, (ImVec2){p0.x + w, p0.y + fh}, true);
     ImDrawList_AddText_Vec2(dl, (ImVec2){p0.x, ty}, tcol(0.62f, 0.55f, 0.80f, 1.0f), "NTL tag", NULL);
     ImDrawList_AddText_Vec2(dl, (ImVec2){p0.x + lw.x + spx, ty},
                             is_status ? tcol(0.95f, 0.85f, 1.0f, 1.0f)
@@ -1354,13 +1534,6 @@ void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w) {
                                                     : tcol(0.62f, 0.55f, 0.80f, 0.8f)),
                             val, NULL);
     ImDrawList_PopClipRect(dl);
-
-    igSetCursorPos((ImVec2){x + w - cbw, y});
-    bool show = s_show;
-    if (igCheckbox(lbl, &show)) {
-      s_show = show;
-      cfg_save();
-    }
   }
 
   /* ---- strip ---- */
@@ -1467,27 +1640,10 @@ void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w) {
       float cx = org.x + i * pitch;
       if (cx + cell < wp.x || cx > wp.x + wsz.x) continue;
       int id = s_disp[i];
-      const ntl_tag_def *def;
-      unsigned long long tex;
-      int atw, ath;
       ImVec2 a = {cx, org.y}, b = {cx + cell, org.y + cell};
-      bool sel = id == s_sel;
       bool hot = hov && !drag_moved && io->MousePos.x >= a.x && io->MousePos.x <= b.x &&
                  io->MousePos.y >= a.y && io->MousePos.y <= b.y;
-      ImDrawList_AddRectFilled(dl, a, b,
-                               sel   ? tcol(0.45f, 0.30f, 0.80f, 0.60f)
-                               : hot ? tcol(0.30f, 0.20f, 0.50f, 0.75f)
-                                     : tcol(0.10f, 0.07f, 0.18f, 0.60f),
-                               8.0f, 0);
-      if (resolve(id, &def, &tex, &atw, &ath))
-        thumb(dl, def, tex, atw, ath, (ImVec2){a.x + 4, a.y + 4}, (ImVec2){b.x - 4, b.y - 4});
-      if (sel)
-        ImDrawList_AddRect(dl, a, b, tcol(0.85f, 0.75f, 1.0f, 0.95f), 8.0f, 0, 2.0f);
-      if (!ntl_tags_valid(id)) { /* community tag: amber = needs password, green = unlocked */
-        bool unlocked = auth_find(id) != NULL;
-        ImDrawList_AddCircleFilled(dl, (ImVec2){b.x - 7, a.y + 7}, 4.0f,
-                                   unlocked ? 0xFF60D060u : 0xFF3CBEFFu, 12);
-      }
+      draw_cell(dl, a, b, id, id == s_sel, hot, false);
     }
     if (tap >= 0) select_tag(s_disp[tap]);
 
@@ -1523,10 +1679,8 @@ void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w) {
   if (igButton("Add ID", (ImVec2){bw, 0})) s_open_add = true;
   crystal_sheen();
   igSameLine(0, -1);
-  igBeginDisabled(s_list_busy);
-  if (igButton(s_list_busy ? "..." : "Sync", (ImVec2){bw, 0})) comm_request_refresh();
+  if (igButton("Browse", (ImVec2){bw, 0})) s_open_big = true;
   crystal_sheen();
-  igEndDisabled();
   igSameLine(0, -1);
   igBeginDisabled(s_sel < 0);
   if (igButton("Remove", (ImVec2){bw, 0})) {

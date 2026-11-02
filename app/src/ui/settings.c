@@ -412,8 +412,6 @@ void ui_settings(tenv* env) {
     igTextDisabled("VSync can also cap rendering to the current display mode.");
     igTextWrapped("%s", "Latency compensation: your own turns appear on screen when the server actually receives them, and other snakes' heads are drawn where the server has them now. What you see is what can hit you, at the cost of your turns showing about half your ping later. Turn delay sets how much of that wait is applied: 0% shows your turns instantly (the old behaviour), 100% shows them exactly when the server gets them. Keep it at 100% for a true picture: lowering it makes turns look faster than they really are.");
     igSpacing();
-    ntl_tags_settings_ui(env);
-    igSpacing();
     igSeparatorText("Backup");
     igTextWrapped("Save all your settings, control layouts and Team Chat quick messages to a file, so you can restore them after clearing data or reinstalling.");
     if (igButton("Export backup", (ImVec2){0, 0})) backup_request_export(env);

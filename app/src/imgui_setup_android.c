@@ -62,19 +62,88 @@ static ImGuiKey android_ime_key_to_imgui(int keycode) {
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Duplicate-character guard.
+ *
+ * A typed character can reach ImGui through two independent routes: the IME
+ * bridge (commitText / sendKeyEvent in GameActivity.kt, drained below) AND the
+ * native key-event handler (handle_input in twindow_android.c, which turns a
+ * key press into a character itself). Many keyboards deliver digits and '.'
+ * as real key events, so with both routes live every digit was inserted twice
+ * ("148" became "114488").
+ *
+ * Both routes now funnel single characters through char_is_dup(): the same
+ * character arriving from a DIFFERENT route within a few milliseconds is the
+ * same keypress seen twice, so it is dropped. Two quick presses of the same
+ * key come from the SAME route and are never dropped.
+ * ------------------------------------------------------------------------- */
+enum { CHAR_SRC_NONE = 0, CHAR_SRC_NATIVE = 1, CHAR_SRC_IME = 2 };
+
+static bool char_is_dup(int src, unsigned int cp) {
+    static int          s_last_src = CHAR_SRC_NONE;
+    static unsigned int s_last_cp  = 0;
+    static double       s_last_t   = 0.0;
+    double now = monotonic_seconds();
+    bool dup = s_last_src != CHAR_SRC_NONE && s_last_src != src &&
+               s_last_cp == cp && (now - s_last_t) < 0.06;
+    if (!dup) {
+        s_last_src = src;
+        s_last_cp  = cp;
+        s_last_t   = now;
+    }
+    return dup;
+}
+
+/* Called by twindow_android.c for characters derived from native key events. */
+void android_imgui_add_char(unsigned int cp) {
+    if (cp == 0) return;
+    if (char_is_dup(CHAR_SRC_NATIVE, cp)) return;
+    ImGuiIO_AddInputCharacter(igGetIO_Nil(), cp);
+}
+
+/* If `s` is exactly ONE UTF-8 codepoint, store it in *cp and return true. */
+static bool utf8_single_cp(const char* s, unsigned int* cp) {
+    if (!s || !s[0]) return false;
+    const unsigned char* u = (const unsigned char*)s;
+    int len;
+    unsigned int v;
+    if (u[0] < 0x80)              { len = 1; v = u[0]; }
+    else if ((u[0] >> 5) == 0x6)  { len = 2; v = u[0] & 0x1f; }
+    else if ((u[0] >> 4) == 0xe)  { len = 3; v = u[0] & 0x0f; }
+    else if ((u[0] >> 3) == 0x1e) { len = 4; v = u[0] & 0x07; }
+    else return false;
+    for (int i = 1; i < len; ++i) {
+        if ((u[i] & 0xc0) != 0x80) return false;
+        v = (v << 6) | (u[i] & 0x3f);
+    }
+    if (u[len] != '\0') return false; /* more than one codepoint */
+    *cp = v;
+    return true;
+}
+
 static void android_drain_ime_events(ImGuiIO* io) {
     android_ime_event event;
     while (android_jni_poll_ime_event(&event)) {
+        unsigned int one_cp = 0;
         if (event.type == ANDROID_IME_EVENT_TEXT) {
-            if (event.text && event.text[0] != '\0')
-                ImGuiIO_AddInputCharactersUTF8(io, event.text);
+            if (event.text && event.text[0] != '\0') {
+                if (!(utf8_single_cp(event.text, &one_cp) &&
+                      char_is_dup(CHAR_SRC_IME, one_cp)))
+                    ImGuiIO_AddInputCharactersUTF8(io, event.text);
+            }
         } else if (event.type == ANDROID_IME_EVENT_COMPOSITION) {
             for (int i = 0; i < event.replace_codepoints; ++i) {
                 ImGuiIO_AddKeyEvent(io, ImGuiKey_Backspace, true);
                 ImGuiIO_AddKeyEvent(io, ImGuiKey_Backspace, false);
             }
-            if (event.text && event.text[0] != '\0')
-                ImGuiIO_AddInputCharactersUTF8(io, event.text);
+            if (event.text && event.text[0] != '\0') {
+                /* Only a plain single character (no replacement of earlier
+                   composing text) can be a duplicate of a key press. */
+                if (!(event.replace_codepoints == 0 &&
+                      utf8_single_cp(event.text, &one_cp) &&
+                      char_is_dup(CHAR_SRC_IME, one_cp)))
+                    ImGuiIO_AddInputCharactersUTF8(io, event.text);
+            }
         } else if (event.type == ANDROID_IME_EVENT_KEY) {
             const bool down = event.action == AKEY_EVENT_ACTION_DOWN ||
                               event.action == AKEY_EVENT_ACTION_MULTIPLE;

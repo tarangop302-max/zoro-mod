@@ -7,6 +7,7 @@
 #include "../user.h"
 #include "crystal_theme.h"
 #include "lobby_bg.h"
+#include "../game/ntl_tags.h"
 
 int skin_code_filter(ImGuiInputTextCallbackData* data) {
   return !((data->EventChar >= 'a' && data->EventChar <= 'z') ||
@@ -157,8 +158,12 @@ void ui_skin_editor(tenv* env) {
        not editing: [Default skins] [<>] [Saved skins] [<>]
                     [Custom] [OK]                                   -> 6 */
   int picker_rows = gdata->skin_editing ? 4 : 6;
-  float reserved_h = (style->ItemSpacing.y + frame_height) * picker_rows +
-                     (scale + style->ItemSpacing.y) * 2.0f;
+  /* The NTL tag block (label + sliding picker + buttons) sits between the
+     "Saved skins" arrows and the Custom button; editing a custom skin needs
+     the room for its colour grid instead, so it only shows when not editing. */
+  float tag_h = gdata->skin_editing ? 0.0f : ntl_tags_block_height();
+  float stack_h = (style->ItemSpacing.y + frame_height) * picker_rows + tag_h;
+  float reserved_h = stack_h + (scale + style->ItemSpacing.y) * 2.0f;
   float min_grid_y = pop_y + header_h + style->WindowPadding.y + reserved_h;
   float grid_y;
   if (gdata->skin_editing) {
@@ -184,8 +189,8 @@ void ui_skin_editor(tenv* env) {
      generously for the shadow sprites (which extend 10*(scale/48) past
      each segment) and the eyes/accessory (small offsets past the last
      segment). */
-  float preview_row_a_y = grid_y - ((style->ItemSpacing.y + frame_height) * picker_rows + scale + style->ItemSpacing.y);
-  float preview_row_b_y = grid_y - ((style->ItemSpacing.y + frame_height) * picker_rows + 2 * (scale + style->ItemSpacing.y));
+  float preview_row_a_y = grid_y - (stack_h + scale + style->ItemSpacing.y);
+  float preview_row_b_y = grid_y - (stack_h + 2 * (scale + style->ItemSpacing.y));
   float preview_pad = scale * 0.5f;
   ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - sk_w * 0.5f - preview_pad,
                              fminf(preview_row_a_y, preview_row_b_y) - preview_pad};
@@ -245,9 +250,7 @@ void ui_skin_editor(tenv* env) {
 
 
   igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
-  igSetCursorPosY((grid_y) -
-                  ((style->ItemSpacing.y + frame_height) * picker_rows + scale +
-                   style->ItemSpacing.y));
+  igSetCursorPosY((grid_y) - (stack_h + scale + style->ItemSpacing.y));
 
   for (int i = strlen(usrs->skin_code); i < MAX_SKIN_CODE_LEN + 1; i++)
     usrs->skin_code[i] = 0;
@@ -291,9 +294,7 @@ void ui_skin_editor(tenv* env) {
   }
 
   igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
-  igSetCursorPosY((grid_y) -
-                  ((style->ItemSpacing.y + frame_height) * picker_rows +
-                   2 * (scale + style->ItemSpacing.y)));
+  igSetCursorPosY((grid_y) - (stack_h + 2 * (scale + style->ItemSpacing.y)));
 
   for (int i = 0; i < MAX_SKIN_CODE_LEN / 2; i++) {
     bp_renderer_push(
@@ -451,11 +452,11 @@ void ui_skin_editor(tenv* env) {
   } else {
     /* Row 6-5: "Default skins" label + arrows (image 1, unchanged). */
     igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - row_h * 6);
+    igSetCursorPosY((grid_y) - tag_h - row_h * 6);
     igTextDisabled("Default skins");
 
     igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - row_h * 5);
+    igSetCursorPosY((grid_y) - tag_h - row_h * 5);
     if (igButton("\uea38##default_prev", (ImVec2){half_w, 0})) {
       usrs->default_skin =
           (usrs->default_skin + (NUM_DEFAULT_SKINS - 1)) % NUM_DEFAULT_SKINS;
@@ -475,11 +476,11 @@ void ui_skin_editor(tenv* env) {
        list instead of the built-ins. Disabled until you've saved at least
        one (via Custom > Save). */
     igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - row_h * 4);
+    igSetCursorPosY((grid_y) - tag_h - row_h * 4);
     igTextDisabled("Saved skins");
 
     igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - row_h * 3);
+    igSetCursorPosY((grid_y) - tag_h - row_h * 3);
     bool has_saved = usrs->saved_skin_count > 0;
     int base = usrs->active_saved_skin < 0 ? 0 : usrs->active_saved_skin;
     igBeginDisabled(!has_saved);
@@ -502,6 +503,9 @@ void ui_skin_editor(tenv* env) {
     }
     crystal_sheen();
     igEndDisabled();
+
+    /* NTL tags: label + show toggle, sliding picker, Upload/Add ID/Sync/Remove. */
+    ntl_tags_skin_editor_ui(env, picker_x, grid_y - row_h * 2 - tag_h, tot_size[0]);
   }
 
   igSetCursorPosX(picker_x);

@@ -1,4 +1,3 @@
-
 #ifdef ANDROID
 
 #include "twindow.h"

@@ -1,5 +1,8 @@
 #include "settings.h"
 
+#include <ctype.h>
+#include <string.h>
+
 #include "hud_layout_editor.h"
 #include "key_buttons.h"
 #include "../game/backup.h"
@@ -84,6 +87,537 @@ static void popup_touch_scroll(tenv* env, int idx) {
 
 /* Shared with controls.c so its panel can drag-scroll on touch screens. */
 void ui_touch_scroll(tenv* env, int idx) { popup_touch_scroll(env, idx); }
+
+/* ---- option rows -----------------------------------------------------------
+ * Every option is one row: its name on the left, its widget on the right, and
+ * a dimmed one-line description underneath. All options go through opt_begin()
+ * / opt_end(), which is also what the search bar filters on (name + description,
+ * every word typed must match). */
+static struct {
+  char query[64];      /* search text, "" = no search                          */
+  bool searching;
+  const char* section; /* header drawn before the first visible row           */
+  bool section_shown;
+  const char* desc;    /* description of the row being drawn                  */
+  float col_x;         /* x where the widgets start                           */
+  int hits;            /* rows drawn so far (search results)                  */
+} SO;
+
+static bool ci_has(const char* hay, const char* needle) {
+  size_t n = strlen(needle);
+  if (!n) return true;
+  for (; *hay; ++hay) {
+    size_t k = 0;
+    while (k < n && hay[k] && tolower((unsigned char)hay[k]) == tolower((unsigned char)needle[k])) ++k;
+    if (k == n) return true;
+  }
+  return false;
+}
+
+/* Every space-separated word of the query must appear in the name or text. */
+static bool opt_matches(const char* name, const char* desc) {
+  if (!SO.searching) return true;
+  char word[64];
+  const char* p = SO.query;
+  while (*p) {
+    while (*p == ' ') ++p;
+    size_t n = 0;
+    while (p[n] && p[n] != ' ' && n < sizeof word - 1) { word[n] = p[n]; ++n; }
+    word[n] = 0;
+    p += n;
+    if (n && !ci_has(name, word) && !ci_has(desc, word) && !ci_has(SO.section, word))
+      return false;
+  }
+  return true;
+}
+
+static void section_begin(tenv* env, const char* title) {
+  (void)env;
+  SO.section = title;
+  SO.section_shown = false;
+  ImVec2 av;
+  igGetContentRegionAvail(&av);
+  SO.col_x = igGetCursorPosX() + av.x * 0.46f;
+}
+
+static void section_header_now(void) {
+  if (SO.section && !SO.section_shown) {
+    /* the options are indented; the header line spans the full width */
+    igIndent(-igGetStyle()->WindowPadding.x);
+    igSeparatorText(SO.section);
+    igIndent(igGetStyle()->WindowPadding.x);
+    SO.section_shown = true;
+    ImVec2 av;
+    igGetContentRegionAvail(&av);
+    SO.col_x = igGetCursorPosX() + av.x * 0.46f;
+  }
+}
+
+/* Returns false when the search hides this option. */
+static bool opt_begin(const char* name, const char* desc) {
+  if (!opt_matches(name, desc)) return false;
+  section_header_now();
+  SO.hits++;
+  SO.desc = desc;
+  igAlignTextToFramePadding();
+  igTextUnformatted(name, NULL);
+  igSameLine(SO.col_x, 0);
+  return true;
+}
+
+static void opt_end(void) {
+  if (SO.desc && SO.desc[0]) {
+    igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){0.58f, 0.52f, 0.74f, 1.0f});
+    igTextWrapped("%s", SO.desc);
+    igPopStyleColor(1);
+  }
+  igDummy((ImVec2){0, 2.0f});
+  SO.desc = NULL;
+}
+
+/* A free-standing note under a section (e.g. the backup status line). */
+static void opt_note(const char* text) {
+  igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){0.58f, 0.52f, 0.74f, 1.0f});
+  igTextWrapped("%s", text);
+  igPopStyleColor(1);
+}
+
+static const char* const kSizeNames[] = {"Small", "Regular", "Large"};
+
+static void sec_general(tenv* env) {
+  user_settings* usrs = &env->usr->usrs;
+  section_begin(env, "General");
+  igIndent(igGetStyle()->WindowPadding.x);
+
+  if (opt_begin("VSync", "Waits for the screen's refresh to avoid tearing. Can also cap your FPS.")) {
+    if (igCheckbox("##vsync", &usrs->vsync)) {
+      env->config.vsync = usrs->vsync;
+      twindow_request_refresh(env->wnd);
+    }
+    opt_end();
+  }
+  if (opt_begin("FPS limit",
+                "A maximum, not a forced refresh rate: FPS cannot exceed your display's refresh "
+                "rate. Android Auto may keep 60 Hz - pick 90/120/144 Hz in the phone's Display "
+                "settings to use a matching limit.")) {
+    int fps_index = 0;
+    const int fps_values[] = {0, 60, 90, 120, 144};
+    for (int fi = 0; fi < 5; ++fi)
+      if (usrs->fps_limit == fps_values[fi]) fps_index = fi;
+    igSetNextItemWidth(-1);
+    if (igCombo_Str_arr("##fps limit", &fps_index,
+                        (const char*[]){"Device/VSync", "60 FPS", "90 FPS", "120 FPS", "144 FPS"},
+                        5, -1))
+      usrs->fps_limit = fps_values[fps_index];
+    opt_end();
+  }
+  if (opt_begin("Performance mode", "Turns off shadows so the game runs smoother on weaker phones.")) {
+    igCheckbox("##performance mode", &usrs->performance_mode);
+    opt_end();
+  }
+  bool lat_on = user_settings_latency_comp(usrs);
+  if (opt_begin("Latency compensation",
+                "Your turns show when the server receives them, and other snakes' heads are drawn "
+                "where the server has them now - what you see is what can hit you.")) {
+    if (igCheckbox("##latency comp", &lat_on)) user_settings_set_latency_comp(usrs, lat_on);
+    opt_end();
+  }
+  if (opt_begin("Turn delay",
+                "How much of that wait is applied: 0% shows your turns instantly, 100% exactly when "
+                "the server gets them. Keep 100% for a true picture.")) {
+    int delay_pct = user_settings_turn_delay_pct(usrs);
+    igBeginDisabled(!lat_on);
+    igSetNextItemWidth(-1);
+    if (igSliderInt("##turn delay", &delay_pct, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp))
+      user_settings_set_turn_delay_pct(usrs, delay_pct);
+    igEndDisabled();
+    opt_end();
+  }
+  if (opt_begin("Cursor size", "Size of the on-screen cursor.")) {
+    igSetNextItemWidth(-1);
+    igSliderInt("##cursor size", &usrs->cursor_size, 16, 64, "%d px", ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Dynamic minimap", "Shrinks the minimap a little as the arena gets smaller.")) {
+    bool dyn_mm = user_settings_dynamic_minimap(usrs);
+    if (igCheckbox("##dynamic minimap", &dyn_mm)) user_settings_set_dynamic_minimap(usrs, dyn_mm);
+    opt_end();
+  }
+  if (opt_begin("UI font size", "Size of the text in menus and windows.")) {
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr("##ui font size", (int*)&usrs->ui_font_size, kSizeNames, 3, -1);
+    opt_end();
+  }
+  if (opt_begin("Stats font size", "Size of the stats text on the in-game HUD.")) {
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr("##stats font size", (int*)&usrs->stats_font_size, kSizeNames, 3, -1);
+    opt_end();
+  }
+  if (opt_begin("Leaderboard font size", "Size of the text in the leaderboard.")) {
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr("##leaderboard font size", (int*)&usrs->lb_font_size, kSizeNames, 3, -1);
+    opt_end();
+  }
+  if (opt_begin("Names font size", "Size of the player names shown above snakes.")) {
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr("##snake name font size", (int*)&usrs->snake_names_font_size, kSizeNames, 3, -1);
+    opt_end();
+  }
+  if (opt_begin("Show snake scores", "Shows each snake's score next to its name.")) {
+    igCheckbox("##snake scores", &usrs->snake_scores);
+    opt_end();
+  }
+  if (opt_begin("Smooth zoom", "Zoom changes glide smoothly instead of jumping.")) {
+    igCheckbox("##smooth zoom", &usrs->smooth_zoom);
+    opt_end();
+  }
+  if (opt_begin("Ping / FPS graph", "Shows a small ping and FPS graph while you play.")) {
+    igCheckbox("##net graph", &usrs->show_net_graph);
+    opt_end();
+  }
+  if (opt_begin("Zoom step", "How much the view changes with each zoom step (mouse wheel / zoom keys).")) {
+    igSetNextItemWidth(-1);
+    igSliderFloat("##zoom step", &usrs->zoom_step, 0.05f, 0.5f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Border color", "Color of the arena border.")) {
+    igSetNextItemWidth(-1);
+    igColorEdit3("##border color", usrs->bd_color, ImGuiColorEditFlags_None);
+    opt_end();
+  }
+  if (opt_begin("Adjust HUD Layout", "Move and resize the on-screen HUD elements. Works mid-match too.")) {
+    if (igButton("Open editor##hud_layout", (ImVec2){-1, 0})) ui_hud_layout_editor_enter(env);
+    opt_end();
+  }
+  if (opt_begin("Keyboard layout", "Place and edit the on-screen keyboard buttons.")) {
+    if (igButton("Open editor##key_layout", (ImVec2){-1, 0})) {
+      save_user_settings(usrs);
+      ui_key_buttons_open_editor(env);
+    }
+    opt_end();
+  }
+  if (opt_begin("Instant restart", "After you die, jump straight into a new game without waiting.")) {
+    igCheckbox("##instant restart", &usrs->instant_restart);
+    opt_end();
+  }
+  if (opt_begin("Restart with right click", "The right mouse button restarts the game.")) {
+    igCheckbox("##restart rc", &usrs->restart_rc);
+    opt_end();
+  }
+  if (opt_begin("Quit with middle click", "The middle mouse button leaves the game.")) {
+    igCheckbox("##quit mc", &usrs->quit_mc);
+    opt_end();
+  }
+  if (opt_begin("Laser color", "Color of the aiming laser line.")) {
+    igSetNextItemWidth(-1);
+    igColorEdit4("##laser color", usrs->laser_color, ImGuiColorEditFlags_AlphaBar);
+    opt_end();
+  }
+  if (opt_begin("Laser thickness", "Thickness of the aiming laser line.")) {
+    igSetNextItemWidth(-1);
+    igSliderInt("##laser thickness", &usrs->laser_thickness, 1, 4, "%d px", ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+#ifdef ANDROID
+  if (opt_begin("Joystick laser length", "How far the laser reaches with the joystick (100% = to the screen edge).")) {
+    int laser_pct = user_settings_joy_laser_pct(usrs);
+    igSetNextItemWidth(-1);
+    if (igSliderInt("##joy laser length", &laser_pct, 10, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp))
+      user_settings_set_joy_laser_pct(usrs, laser_pct);
+    opt_end();
+  }
+#endif
+  if (opt_begin("Centre ring radius", "Radius of the ring drawn around the arena centre.")) {
+    igSetNextItemWidth(-1);
+    igSliderFloat("##center ring radius", &usrs->center_ring_radius, 16.0f, 600.0f, "%.0f",
+                  ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Centre ring colour", "Color of the arena centre ring.")) {
+    igSetNextItemWidth(-1);
+    igColorEdit3("##center ring colour", usrs->center_ring_color, ImGuiColorEditFlags_None);
+    opt_end();
+  }
+  if (opt_begin("Assist turn path", "In Assist mode, draws the path your snake will take when turning.")) {
+    igCheckbox("##turn path", &usrs->turn_path_enabled);
+    opt_end();
+  }
+  if (opt_begin("Turn path width", "Line width of the Assist turn path.")) {
+    igSetNextItemWidth(-1);
+    igSliderFloat("##turn path width", &usrs->turn_path_width, 1.0f, 12.0f, "%.1f px",
+                  ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Turn path colour", "Color of the turn path while it is clear.")) {
+    igSetNextItemWidth(-1);
+    igColorEdit3("##turn path colour", usrs->turn_path_color, ImGuiColorEditFlags_None);
+    opt_end();
+  }
+  if (opt_begin("Turn path danger colour", "Color of the turn path where it would hit something.")) {
+    igSetNextItemWidth(-1);
+    igColorEdit3("##turn path danger colour", usrs->turn_path_danger_color, ImGuiColorEditFlags_None);
+    opt_end();
+  }
+  if (opt_begin("Show bot thinking", "While the bot plays, draws on screen what it is thinking.")) {
+    igCheckbox("##bot vis", &usrs->bot_vis);
+    opt_end();
+  }
+  if (opt_begin("Bot circle after score", "Score at which the bot stops hunting and starts circling.")) {
+    igSetNextItemWidth(-1);
+    igSliderInt("##circle after", &usrs->bot_follow_circle_score, 1000, 6000, "%d",
+                ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Bot radius multiplier", "How wide the bot's turning circle is (higher = wider).")) {
+    igSetNextItemWidth(-1);
+    igSliderInt("##rad mult", &usrs->bot_radius_mult, 10, 40, "%dx", ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  igIndent(-igGetStyle()->WindowPadding.x);
+
+  /* Backup */
+  section_begin(env, "Backup");
+  igIndent(igGetStyle()->WindowPadding.x);
+  if (opt_begin("Export backup",
+                "Saves all your settings, control layouts and Team Chat quick messages to a file.")) {
+    if (igButton("Export##backup_export", (ImVec2){-1, 0})) backup_request_export(env);
+    opt_end();
+  }
+  if (opt_begin("Import backup",
+                "Restores everything from a backup file, e.g. after clearing data or reinstalling.")) {
+    if (igButton("Import##backup_import", (ImVec2){-1, 0})) backup_request_import();
+    opt_end();
+  }
+  if (SO.section_shown && backup_status()[0]) opt_note(backup_status());
+  igIndent(-igGetStyle()->WindowPadding.x);
+}
+
+static void sec_mode(tenv* env, int i) {
+  user_settings* usrs = &env->usr->usrs;
+  gameplay_mode* mode = usrs->modes + i;
+  igPushID_Int(i + 1);
+  section_begin(env, i == 0 ? "Normal mode" : "Assist mode");
+  igIndent(igGetStyle()->WindowPadding.x);
+
+  if (opt_begin("Show crosshair", "Shows a crosshair on the screen.")) {
+    igCheckbox("##crosshair", &mode->show_crosshair);
+    opt_end();
+  }
+  if (opt_begin("Show background", "Draws the game's background pattern.")) {
+    igCheckbox("##bg", &mode->show_background);
+    opt_end();
+  }
+  if (opt_begin("Show accessories", "Draws snake accessories such as hats and glasses.")) {
+    igCheckbox("##acc", &mode->show_accessories);
+    opt_end();
+  }
+  if (opt_begin("Show NTL tags", "Shows NTL players' tags on their snakes in this mode. On by default.")) {
+    bool on = ntl_tags_show_get(i);
+    if (igCheckbox("##ntl tags", &on)) ntl_tags_show_set(i, on);
+    opt_end();
+  }
+  if (opt_begin("Show shadows", "Draws shadows under snakes (off while Performance mode is on).")) {
+    igCheckbox("##shad", &mode->show_shadows);
+    opt_end();
+  }
+  if (opt_begin("Death effect", "Plays the explosion effect when a snake dies.")) {
+    igCheckbox("##death effect", &mode->death_effect);
+    opt_end();
+  }
+  if (opt_begin("Outline player names", "Gives names an outline so they are easier to read.")) {
+    igCheckbox("##player names outline", &mode->player_names_outline);
+    opt_end();
+  }
+  if (opt_begin("Segment separation", "Spacing between the drawn body segments of snakes.")) {
+    igSetNextItemWidth(-1);
+    igSliderFloat("##bps", &mode->qsm, 1, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Background scale", "Size of the background pattern.")) {
+    igSetNextItemWidth(-1);
+    igSliderFloat("##bgs", &mode->bg_scale, 0.05, 4, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Render mode", "How snakes are drawn: textured skins, solid colour or a flat style.")) {
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr("##render mode", &mode->render_mode,
+                    (const char*[]){"Texture", "Solid", "Flat", "Rounded plain", "Squared plain",
+                                    "Vlither textured", "Striped plain"},
+                    NUM_RENDER_MODES, -1);
+    opt_end();
+  }
+  if (opt_begin("Transparent skin", "Makes snakes see-through so you can see what is underneath.")) {
+    igCheckbox("##transparent skin", &mode->transparent_skin);
+    opt_end();
+  }
+  if (opt_begin("Skin opacity", "How see-through snakes are when Transparent skin is on.")) {
+    igBeginDisabled(!mode->transparent_skin);
+    int opacity_percent = (int)(usrs->transparent_skin_opacity[i] * 100.0f + 0.5f);
+    igSetNextItemWidth(-1);
+    /* Assist mode's Flat render mode has no per-segment pattern to misalign
+       at zero opacity (see redraw.c's flatten comment), so its floor is
+       relaxed to 0% instead of the usual 15% minimum. */
+    int opacity_min = (i == 1 && mode->render_mode == 2) ? 0 : 15;
+    if (igSliderInt("##skin opacity", &opacity_percent, opacity_min, 85, "%d%%",
+                    ImGuiSliderFlags_AlwaysClamp))
+      usrs->transparent_skin_opacity[i] = opacity_percent / 100.0f;
+    igEndDisabled();
+    opt_end();
+  }
+  if (opt_begin("Center line (your snake)", "Draws a thin line down the middle of your own snake.")) {
+    igCheckbox("##center line", &mode->center_line);
+    opt_end();
+  }
+  if (i == 1 && opt_begin("White skin (enemies)", "Draws every other snake as a plain white silhouette.")) {
+    igCheckbox("##white skin enemies", &usrs->white_skin_enemies[1]);
+    opt_end();
+  }
+  if (opt_begin("Head dot", "Draws a dot on your snake's head.")) {
+    igCheckbox("##head dot", &usrs->head_dot_enabled[i]);
+    opt_end();
+  }
+  if (opt_begin("Head dot size", "Size of the head dot.")) {
+    igBeginDisabled(!usrs->head_dot_enabled[i]);
+    igSetNextItemWidth(-1);
+    igSliderFloat("##head dot size", &usrs->head_dot_size[i], HEAD_DOT_SIZE_MIN, HEAD_DOT_SIZE_MAX,
+                  "%.0f px", ImGuiSliderFlags_AlwaysClamp);
+    igEndDisabled();
+    opt_end();
+  }
+  if (opt_begin("Head dot colour", "Color of the head dot.")) {
+    igBeginDisabled(!usrs->head_dot_enabled[i]);
+    igSetNextItemWidth(-1);
+    igColorEdit3("##head dot colour", usrs->head_dot_colors[i], ImGuiColorEditFlags_None);
+    igEndDisabled();
+    opt_end();
+  }
+  if (opt_begin("Boost effect", "Shows the boost effect on snakes; the box picks its style.")) {
+    igCheckbox("##boost", &mode->show_boost);
+    igSameLine(0, -1);
+    igBeginDisabled(!mode->show_boost);
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr("##boost type", &mode->boost_type, (const char*[]){"Normal", "Simple"}, 2, -1);
+    igEndDisabled();
+    opt_end();
+  }
+  if (opt_begin("Boost effect strength", "How strong the boost effect looks.")) {
+    igBeginDisabled(!mode->show_boost);
+    igSetNextItemWidth(-1);
+    igSliderFloat("##boost strength", &mode->boost_strength, 0.25f, 3, "%.2fx",
+                  ImGuiSliderFlags_AlwaysClamp);
+    igEndDisabled();
+    opt_end();
+  }
+  if (opt_begin("Food shader", "The shape and style food is drawn in.")) {
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr("##food type", &mode->food_type,
+                    (const char*[]){"Solid", "Rings", "Hollow square", "Star outline", "Star solid",
+                                    "Hollow triangle", "Asterisk", "Sparkle"},
+                    8, 8);
+    opt_end();
+  }
+  if (opt_begin("Food glow", "Adds a glow around food.")) {
+    igCheckbox("##food glow", &usrs->food_glow[i]);
+    opt_end();
+  }
+  if (opt_begin("Food scale", "Size of food.")) {
+    igSetNextItemWidth(-1);
+    igSliderFloat("##food scale", &mode->food_scale, 0.25f, 3, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Food float", "Food drifts gently around instead of staying still.")) {
+    igCheckbox("##food float", &mode->food_float);
+    opt_end();
+  }
+  if (opt_begin("Food flicker", "Food flickers instead of shining steadily.")) {
+    igCheckbox("##food flicker", &mode->food_flicker);
+    opt_end();
+  }
+  if (opt_begin("Uniform food color", "Draws all food in one color; pick the color in the box.")) {
+    igCheckbox("##uniform food color", &mode->uniform_food_color);
+    igSameLine(0, -1);
+    igBeginDisabled(!mode->uniform_food_color);
+    igSetNextItemWidth(-1);
+    igColorEdit3("##fdcolor", mode->food_color, ImGuiColorEditFlags_None);
+    igEndDisabled();
+    opt_end();
+  }
+  igIndent(-igGetStyle()->WindowPadding.x);
+  igPopID();
+}
+
+static const char* hotkey_desc(int i) {
+  switch (i) {
+    case HOTKEY_HUD: return "Shows or hides the HUD.";
+    case HOTKEY_SHOW_NAMES: return "Shows or hides player names above snakes.";
+    case HOTKEY_BIG_FOOD: return "Hides small food so only the big food shows.";
+    case HOTKEY_ASSIST: return "Switches between Normal and Assist mode.";
+    case HOTKEY_BOT: return "Turns the auto-play bot on or off.";
+    case HOTKEY_MENU: return "Shows or hides the on-screen list of hotkeys.";
+    case HOTKEY_RESTART: return "Leaves this game and starts a new one.";
+    case HOTKEY_QUIT: return "Leaves the game and returns to the lobby.";
+    case HOTKEY_OPEN_SETTINGS: return "Opens this Settings window during a match.";
+    case HOTKEY_EYES_BACK: return "Toggles the Eyes back steering trick (from NTL).";
+    case HOTKEY_KEY_EDITOR: return "Opens the on-screen keyboard layout editor.";
+    default: return "";
+  }
+}
+
+static void sec_hotkeys(tenv* env) {
+  user_settings* usrs = &env->usr->usrs;
+  ImGuiStyle* style = igGetStyle();
+  float frame_height = igGetFrameHeight();
+  section_begin(env, "Hotkeys");
+  igIndent(style->WindowPadding.x);
+  for (int i = 0; i < NUM_HOTKEYS; i++) {
+    hotkey* hk = usr_hotkey(usrs, i);
+    igPushID_Int(i);
+    if (opt_begin(hk->description, hotkey_desc(i))) {
+      igSetNextItemWidth(frame_height * 2);
+      char preview_char[2] = {(char)hk->key, 0};
+      if (igBeginCombo("##hotkey code", preview_char, ImGuiComboFlags_None)) {
+        for (int c = 48; c < 58; c++) {
+          char selectable_char[2] = {c, 0};
+          bool is_in_use = false;
+          for (int d = 0; d < NUM_HOTKEYS; d++)
+            if (c == usr_hotkey(usrs, d)->key && hk->key != usr_hotkey(usrs, d)->key)
+              is_in_use = true;
+          if (igSelectable_Bool(selectable_char, c == hk->key,
+                                is_in_use ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None,
+                                (ImVec2){}))
+            hk->key = c;
+        }
+        for (int c = 65; c < 91; c++) {
+          char selectable_char[2] = {c, 0};
+          bool is_in_use = false;
+          for (int d = 0; d < NUM_HOTKEYS; d++)
+            if (c == usr_hotkey(usrs, d)->key && hk->key != usr_hotkey(usrs, d)->key)
+              is_in_use = true;
+          is_in_use = is_in_use || c == GLFW_KEY_M || c == GLFW_KEY_N;
+          if (igSelectable_Bool(selectable_char, c == hk->key,
+                                is_in_use ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None,
+                                (ImVec2){}))
+            hk->key = c;
+        }
+        igEndCombo();
+      }
+      igSameLine(0, -1);
+      ImVec2 rest;
+      igGetContentRegionAvail(&rest);
+      igSetNextItemWidth(rest.x - style->ItemInnerSpacing.x);
+      if (i == HOTKEY_RESTART || i == HOTKEY_QUIT) {
+        igBeginDisabled(true);
+        igCombo_Str_arr("##hotkey mode", &(int){0}, (const char*[]){"Toggle"}, 1, -1);
+        igEndDisabled();
+      } else {
+        igCombo_Str_arr("##hotkey mode", &hk->mode, (const char*[]){"Toggle", "Press and hold"}, 2, -1);
+      }
+      opt_end();
+    }
+    igPopID();
+  }
+  igIndent(-style->WindowPadding.x);
+}
 
 void ui_settings(tenv* env) {
   tuser_data* usr = env->usr;
@@ -209,477 +743,80 @@ void ui_settings(tenv* env) {
       if (igButton(tab_names[t], (ImVec2){tw, popup_btn_h})) popup_tab = t;
       igPopStyleColor(1);
     }
+    /* Search: finds options in all four tabs by name or description. */
+    {
+      ImVec2 sav;
+      igGetContentRegionAvail(&sav);
+      igSetNextItemWidth(sav.x - popup_btn_h - style->ItemSpacing.x);
+      igInputTextWithHint("##settings_search", "Search settings...", SO.query,
+                          sizeof SO.query, ImGuiInputTextFlags_None, NULL, NULL);
+      igSameLine(0, -1);
+      igBeginDisabled(SO.query[0] == 0);
+      if (igButton("X##search_clear", (ImVec2){popup_btn_h, 0})) SO.query[0] = 0;
+      igEndDisabled();
+    }
     igSeparator();
     igGetContentRegionAvail(&av);
     child_window_height =
         av.y - popup_btn_h - style->ItemSpacing.y * 2 - style->WindowPadding.y;
   }
 
-  if (igBeginTable("settings_table", panel_columns, ImGuiTableFlags_None, (ImVec2){}, 0)) {
+  SO.searching = popup && SO.query[0] != 0;
+  SO.hits = 0;
+
+  if (popup && SO.searching) {
+    /* one list with every matching option from all four tabs */
+    igBeginChild_Str("settings_search_child", (ImVec2){-1, child_window_height},
+                     ImGuiChildFlags_None, ImGuiWindowFlags_None);
+    popup_touch_scroll(env, 3);
+    sec_general(env);
+    sec_mode(env, 0);
+    sec_mode(env, 1);
+    sec_hotkeys(env);
+    if (SO.hits == 0) igTextDisabled("No settings match \"%s\".", SO.query);
+    igEndChild();
+  } else if (popup) {
+    igBeginChild_Str(popup_tab == 0 ? "general_settings_child_holder"
+                     : popup_tab == 3 ? "hotkey_child_window"
+                                      : "mode_settings_child_holder",
+                     (ImVec2){-1, child_window_height}, ImGuiChildFlags_None,
+                     ImGuiWindowFlags_None);
+    popup_touch_scroll(env, popup_tab == 0 ? 0 : popup_tab == 3 ? 2 : 1);
+    if (popup_tab == 0) sec_general(env);
+    else if (popup_tab == 3) sec_hotkeys(env);
+    else sec_mode(env, popup_tab - 1);
+    igEndChild();
+  } else if (igBeginTable("settings_table", panel_columns, ImGuiTableFlags_None, (ImVec2){}, 0)) {
+    /* full-screen (non-popup) layout: one column per page */
     igTableNextRow(ImGuiTableRowFlags_None, 0);
     igTableSetColumnIndex(0);
-
-    if (!popup || popup_tab == 0) {
-    igBeginChild_Str("general_settings_child_holder",
-                     (ImVec2){-1, child_window_height}, ImGuiChildFlags_None,
-                     ImGuiWindowFlags_None);
-    if (popup) popup_touch_scroll(env, 0);
-    igSeparatorText("General");
-    if (igBeginTable("field:value", 2, ImGuiTableFlags_None, (ImVec2){}, 0)) {
-      igTableNextRow(ImGuiTableRowFlags_None, 0);
-      igTableSetColumnIndex(0);
-      igIndent(style->WindowPadding.x);
-      igAlignTextToFramePadding();
-      igText("VSync");
-      igAlignTextToFramePadding();
-      igText("FPS limit");
-      igAlignTextToFramePadding();
-      igText("Performance mode");
-      igAlignTextToFramePadding();
-      igText("Latency compensation");
-      igAlignTextToFramePadding();
-      igText("Turn delay");
-      igAlignTextToFramePadding();
-      igText("Cursor size");
-      igAlignTextToFramePadding();
-      igText("Dynamic minimap");
-      igAlignTextToFramePadding();
-      igText("UI font size");
-      igAlignTextToFramePadding();
-      igText("Stats font size");
-      igAlignTextToFramePadding();
-      igText("Leaderboard font size");
-      igAlignTextToFramePadding();
-      igText("Names font size");
-      igAlignTextToFramePadding();
-      igText("Show snake scores");
-      igAlignTextToFramePadding();
-      igText("Smooth zoom");
-      igAlignTextToFramePadding();
-      igText("Ping / FPS graph");
-      igAlignTextToFramePadding();
-      igText("Zoom step");
-      igAlignTextToFramePadding();
-      igText("Border color");
-      igAlignTextToFramePadding();
-      igText("Adjust HUD Layout");
-      igAlignTextToFramePadding();
-      igText("Keyboard layout");
-      igAlignTextToFramePadding();
-      igText("Instant restart");
-      igAlignTextToFramePadding();
-      igText("Restart with right click");
-      igAlignTextToFramePadding();
-      igText("Quit with middle click");
-      igAlignTextToFramePadding();
-      igText("Laser color");
-      igAlignTextToFramePadding();
-      igText("Laser thickness");
-#ifdef ANDROID
-      igAlignTextToFramePadding();
-      igText("Joystick laser length");
-#endif
-      igAlignTextToFramePadding();
-      igText("Centre ring radius");
-      igAlignTextToFramePadding();
-      igText("Centre ring colour");
-      igAlignTextToFramePadding();
-      igText("Assist turn path");
-      igAlignTextToFramePadding();
-      igText("Turn path width");
-      igAlignTextToFramePadding();
-      igText("Turn path colour");
-      igAlignTextToFramePadding();
-      igText("Turn path danger colour");
-      igAlignTextToFramePadding();
-      igText("Show bot thinking");
-      igAlignTextToFramePadding();
-      igText("Bot circle after score");
-      igAlignTextToFramePadding();
-      igText("Bot radius multiplier");
-
-      igTableSetColumnIndex(1);
-      if (igCheckbox("##vsync", &usrs->vsync)) {
-        env->config.vsync = usrs->vsync;
-        twindow_request_refresh(env->wnd);
-      }
-      int fps_index = 0;
-      const int fps_values[] = {0, 60, 90, 120, 144};
-      for (int fi = 0; fi < 5; ++fi)
-        if (usrs->fps_limit == fps_values[fi]) fps_index = fi;
-      igSetNextItemWidth(-1);
-      if (igCombo_Str_arr("##fps limit", &fps_index,
-                          (const char*[]){"Device/VSync", "60 FPS", "90 FPS",
-                                          "120 FPS", "144 FPS"}, 5, -1))
-        usrs->fps_limit = fps_values[fps_index];
-      igCheckbox("##performance mode", &usrs->performance_mode);
-      {
-        bool lat_on = user_settings_latency_comp(usrs);
-        if (igCheckbox("##latency comp", &lat_on))
-          user_settings_set_latency_comp(usrs, lat_on);
-        int delay_pct = user_settings_turn_delay_pct(usrs);
-        igBeginDisabled(!lat_on);
-        igSetNextItemWidth(-1);
-        if (igSliderInt("##turn delay", &delay_pct, 0, 100, "%d%%",
-                        ImGuiSliderFlags_AlwaysClamp))
-          user_settings_set_turn_delay_pct(usrs, delay_pct);
-        igEndDisabled();
-      }
-      igSetNextItemWidth(-1);
-      igSliderInt("##cursor size", &usrs->cursor_size, 16, 64, "%d px",
-                  ImGuiSliderFlags_AlwaysClamp);
-      {
-        bool dyn_mm = user_settings_dynamic_minimap(usrs);
-        if (igCheckbox("##dynamic minimap", &dyn_mm))
-          user_settings_set_dynamic_minimap(usrs, dyn_mm);
-      }
-      igSetNextItemWidth(-1);
-      igCombo_Str_arr("##ui font size", (int*)&usrs->ui_font_size,
-                      (const char*[]){"Small", "Regular", "Large"}, 3, -1);
-      igSetNextItemWidth(-1);
-      igCombo_Str_arr("##stats font size", (int*)&usrs->stats_font_size,
-                      (const char*[]){"Small", "Regular", "Large"}, 3, -1);
-      igSetNextItemWidth(-1);
-      igCombo_Str_arr("##leaderboard font size", (int*)&usrs->lb_font_size,
-                      (const char*[]){"Small", "Regular", "Large"}, 3, -1);
-      igSetNextItemWidth(-1);
-      igCombo_Str_arr("##snake name font size",
-                      (int*)&usrs->snake_names_font_size,
-                      (const char*[]){"Small", "Regular", "Large"}, 3, -1);
-      igCheckbox("##snake scores", &usrs->snake_scores);
-      igCheckbox("##smooth zoom", &usrs->smooth_zoom);
-      igCheckbox("##net graph", &usrs->show_net_graph);
-      igSetNextItemWidth(-1);
-      igSliderFloat("##zoom step", &usrs->zoom_step, 0.05f, 0.5f, "%.2f",
-                    ImGuiSliderFlags_AlwaysClamp);
-      igSetNextItemWidth(-1);
-      igColorEdit3("##border color", usrs->bd_color, ImGuiColorEditFlags_None);
-      /* Works mid-match too: the editor closes this popup, runs on top of the
-         live game and brings the popup back when you leave it. */
-      if (igButton("Open editor##hud_layout", (ImVec2){-1, 0})) {
-        ui_hud_layout_editor_enter(env);
-      }
-      if (igButton("Open editor##key_layout", (ImVec2){-1, 0})) {
-        save_user_settings(usrs);
-        ui_key_buttons_open_editor(env);
-      }
-      igCheckbox("##instant restart", &usrs->instant_restart);
-      igCheckbox("##restart rc", &usrs->restart_rc);
-      igCheckbox("##quit mc", &usrs->quit_mc);
-      igSetNextItemWidth(-1);
-      igColorEdit4("##laser color", usrs->laser_color,
-                   ImGuiColorEditFlags_AlphaBar);
-      igSetNextItemWidth(-1);
-      igSliderInt("##laser thickness", &usrs->laser_thickness, 1, 4, "%d px",
-                  ImGuiSliderFlags_AlwaysClamp);
-#ifdef ANDROID
-      {
-        int laser_pct = user_settings_joy_laser_pct(usrs);
-        igSetNextItemWidth(-1);
-        if (igSliderInt("##joy laser length", &laser_pct, 10, 100, "%d%%",
-                        ImGuiSliderFlags_AlwaysClamp))
-          user_settings_set_joy_laser_pct(usrs, laser_pct);
-      }
-#endif
-      igSetNextItemWidth(-1);
-      igSliderFloat("##center ring radius", &usrs->center_ring_radius, 16.0f,
-                    600.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-      igSetNextItemWidth(-1);
-      igColorEdit3("##center ring colour", usrs->center_ring_color,
-                   ImGuiColorEditFlags_None);
-      igCheckbox("##turn path", &usrs->turn_path_enabled);
-      igSetNextItemWidth(-1);
-      igSliderFloat("##turn path width", &usrs->turn_path_width, 1.0f, 12.0f,
-                    "%.1f px", ImGuiSliderFlags_AlwaysClamp);
-      igSetNextItemWidth(-1);
-      igColorEdit3("##turn path colour", usrs->turn_path_color,
-                   ImGuiColorEditFlags_None);
-      igSetNextItemWidth(-1);
-      igColorEdit3("##turn path danger colour", usrs->turn_path_danger_color,
-                   ImGuiColorEditFlags_None);
-      igCheckbox("##bot vis", &usrs->bot_vis);
-                  igSetNextItemWidth(-1);
-      igSliderInt("##circle after", &usrs->bot_follow_circle_score, 1000, 6000, "%d",
-                  ImGuiSliderFlags_AlwaysClamp);
-                  igSetNextItemWidth(-1);
-      igSliderInt("##rad mult", &usrs->bot_radius_mult, 10, 40, "%dx",
-                  ImGuiSliderFlags_AlwaysClamp);
-      igIndent(-style->WindowPadding.x);
-      igEndTable();
-    }
-    igSpacing();
-    igTextWrapped("FPS limit is a maximum, not a forced refresh rate. Actual FPS cannot exceed your phone's active display refresh rate. Android Auto mode may keep the screen at 60 Hz; select 90/120/144 Hz in the phone's Display settings to use a matching Vlither limit.");
-    igTextDisabled("VSync can also cap rendering to the current display mode.");
-    igTextWrapped("%s", "Latency compensation: your own turns appear on screen when the server actually receives them, and other snakes' heads are drawn where the server has them now. What you see is what can hit you, at the cost of your turns showing about half your ping later. Turn delay sets how much of that wait is applied: 0% shows your turns instantly (the old behaviour), 100% shows them exactly when the server gets them. Keep it at 100% for a true picture: lowering it makes turns look faster than they really are.");
-    igSpacing();
-    igSeparatorText("Backup");
-    igTextWrapped("Save all your settings, control layouts and Team Chat quick messages to a file, so you can restore them after clearing data or reinstalling.");
-    if (igButton("Export backup", (ImVec2){0, 0})) backup_request_export(env);
-    igSameLine(0, -1);
-    if (igButton("Import backup", (ImVec2){0, 0})) backup_request_import();
-    if (backup_status()[0]) igTextWrapped("%s", backup_status());
+    igBeginChild_Str("general_settings_child_holder", (ImVec2){-1, child_window_height},
+                     ImGuiChildFlags_None, ImGuiWindowFlags_None);
+    sec_general(env);
     igEndChild();
-    }
 
-    if (!popup || popup_tab == 1 || popup_tab == 2) {
-    if (popup) {
-      igTableNextRow(ImGuiTableRowFlags_None, 0);
-      igTableSetColumnIndex(0);
-    } else {
-      igTableSetColumnIndex(1);
-    }
-    igBeginChild_Str("mode_settings_child_holder",
-                     (ImVec2){-1, child_window_height}, ImGuiChildFlags_None,
-                     ImGuiWindowFlags_None);
-    if (popup) popup_touch_scroll(env, 1);
-    for (int i = 0; i < 2; i++) {
-      if (popup && i != popup_tab - 1) continue;
-      igPushID_Int(i + 1);
-      gameplay_mode* mode = usrs->modes + i;
-      igSeparatorText(i == 0 ? "Normal mode" : "Assist mode");
-
-      if (igBeginTable("field:value", 2, ImGuiTableFlags_None, (ImVec2){}, 0)) {
-        igTableNextRow(ImGuiTableRowFlags_None, 0);
-        igTableSetColumnIndex(0);
-        igIndent(style->WindowPadding.x);
-        igAlignTextToFramePadding();
-        igText("Show crosshair");
-        igAlignTextToFramePadding();
-        igText("Show background");
-        igAlignTextToFramePadding();
-        igText("Show accessories");
-        igAlignTextToFramePadding();
-        igText("Show shadows");
-        igAlignTextToFramePadding();
-        igText("Death effect");
-        igAlignTextToFramePadding();
-        igText("Outline player names");
-        igAlignTextToFramePadding();
-        igText("Segment separation");
-        igAlignTextToFramePadding();
-        igText("Background scale");
-        igAlignTextToFramePadding();
-        igText("Render mode");
-        igAlignTextToFramePadding();
-        igText("Transparent skin");
-        igAlignTextToFramePadding();
-        igText("Skin opacity");
-        igAlignTextToFramePadding();
-        igText("Center line (your snake)");
-        if (i == 1) {
-          igAlignTextToFramePadding();
-          igText("White skin (enemies)");
-        }
-        igAlignTextToFramePadding();
-        igText("Head dot");
-        igAlignTextToFramePadding();
-        igText("Head dot size");
-        igAlignTextToFramePadding();
-        igText("Head dot colour");
-        igAlignTextToFramePadding();
-        igText("Boost effect");
-        igAlignTextToFramePadding();
-        igText("Boost effect strength");
-        igAlignTextToFramePadding();
-        igText("Food shader");
-        igAlignTextToFramePadding();
-        igText("Food glow");
-        igAlignTextToFramePadding();
-        igText("Food scale");
-        igAlignTextToFramePadding();
-        igText("Food float");
-        igAlignTextToFramePadding();
-        igText("Food flicker");
-        igAlignTextToFramePadding();
-        igText("Uniform food color");
-
-        igTableSetColumnIndex(1);
-        igCheckbox("##crosshair", &mode->show_crosshair);
-        igCheckbox("##bg", &mode->show_background);
-        igCheckbox("##acc", &mode->show_accessories);
-        igCheckbox("##shad", &mode->show_shadows);
-        igCheckbox("##death effect", &mode->death_effect);
-        igCheckbox("##player names outline", &mode->player_names_outline);
-        igSetNextItemWidth(-1);
-        igSliderFloat("##bps", &mode->qsm, 1, 4, "%.2f",
-                      ImGuiSliderFlags_AlwaysClamp);
-        igSetNextItemWidth(-1);
-        igSliderFloat("##bgs", &mode->bg_scale, 0.05, 4, "%.2fx",
-                      ImGuiSliderFlags_AlwaysClamp);
-        igSetNextItemWidth(-1);
-        igCombo_Str_arr("##render mode", &mode->render_mode,
-                        (const char*[]){"Texture", "Solid", "Flat",
-                                        "Rounded plain", "Squared plain",
-                                        "Vlither textured", "Striped plain"},
-                        NUM_RENDER_MODES, -1);
-
-        igCheckbox("##transparent skin", &mode->transparent_skin);
-        igBeginDisabled(!mode->transparent_skin);
-        int opacity_percent =
-            (int)(usrs->transparent_skin_opacity[i] * 100.0f + 0.5f);
-        igSetNextItemWidth(-1);
-        /* Assist mode's Flat render mode has no per-segment pattern to
-           misalign at zero opacity (see redraw.c's flatten comment), so
-           its floor is relaxed to 0% instead of the usual 15% minimum. */
-        int opacity_min = (i == 1 && mode->render_mode == 2) ? 0 : 15;
-        if (igSliderInt("##skin opacity", &opacity_percent, opacity_min, 85,
-                        "%d%%", ImGuiSliderFlags_AlwaysClamp))
-          usrs->transparent_skin_opacity[i] = opacity_percent / 100.0f;
-        igEndDisabled();
-        igCheckbox("##center line", &mode->center_line);
-        if (i == 1) igCheckbox("##white skin enemies", &usrs->white_skin_enemies[1]);
-        igCheckbox("##head dot", &usrs->head_dot_enabled[i]);
-        igBeginDisabled(!usrs->head_dot_enabled[i]);
-        igSetNextItemWidth(-1);
-        igSliderFloat("##head dot size", &usrs->head_dot_size[i],
-                      HEAD_DOT_SIZE_MIN, HEAD_DOT_SIZE_MAX, "%.0f px",
-                      ImGuiSliderFlags_AlwaysClamp);
-        igSetNextItemWidth(-1);
-        igColorEdit3("##head dot colour", usrs->head_dot_colors[i],
-                     ImGuiColorEditFlags_None);
-        igEndDisabled();
-
-        igCheckbox("##boost", &mode->show_boost);
-        igSameLine(0, -1);
-        igBeginDisabled(!mode->show_boost);
-        igSetNextItemWidth(-1);
-        igCombo_Str_arr("##boost type", &mode->boost_type,
-                        (const char*[]){"Normal", "Simple"}, 2, -1);
-        igSetNextItemWidth(-1);
-        igSliderFloat("##boost strength", &mode->boost_strength, 0.25f, 3,
-                      "%.2fx", ImGuiSliderFlags_AlwaysClamp);
-        igEndDisabled();
-        igSetNextItemWidth(-1);
-        igCombo_Str_arr("##food type", &mode->food_type,
-                        (const char*[]){"Solid", "Rings", "Hollow square",
-                                        "Star outline", "Star solid",
-                                        "Hollow triangle", "Asterisk",
-                                        "Sparkle"},
-                        8, 8);
-        igCheckbox("##food glow", &usrs->food_glow[i]);
-        igSetNextItemWidth(-1);
-        igSliderFloat("##food scale", &mode->food_scale, 0.25f, 3, "%.2f",
-                      ImGuiSliderFlags_AlwaysClamp);
-        igCheckbox("##food float", &mode->food_float);
-        igCheckbox("##food flicker", &mode->food_flicker);
-        igCheckbox("##uniform food color", &mode->uniform_food_color);
-        igSameLine(0, -1);
-        igBeginDisabled(!mode->uniform_food_color);
-        igSetNextItemWidth(-1);
-        igColorEdit3("##fdcolor", mode->food_color, ImGuiColorEditFlags_None);
-        igEndDisabled();
-        igIndent(-style->WindowPadding.x);
-
-        igEndTable();
-      }
-      if (i == 1) ntl_tags_assist_settings_ui();
-      igPopID();
-    }
+#ifdef ANDROID
+    igTableNextRow(ImGuiTableRowFlags_None, 0);
+    igTableSetColumnIndex(0);
+#else
+    igTableSetColumnIndex(1);
+#endif
+    igBeginChild_Str("mode_settings_child_holder", (ImVec2){-1, child_window_height},
+                     ImGuiChildFlags_None, ImGuiWindowFlags_None);
+    sec_mode(env, 0);
+    sec_mode(env, 1);
     igEndChild();
-    }
 
-    if (!popup || popup_tab == 3) {
-    if (popup) {
-      igTableNextRow(ImGuiTableRowFlags_None, 0);
-      igTableSetColumnIndex(0);
-    } else {
 #ifdef ANDROID
     igTableNextRow(ImGuiTableRowFlags_None, 0);
     igTableSetColumnIndex(0);
 #else
     igTableSetColumnIndex(2);
 #endif
-    }
     igBeginChild_Str("hotkey_child_window", (ImVec2){-1, child_window_height},
                      ImGuiChildFlags_None, ImGuiWindowFlags_None);
-    if (popup) popup_touch_scroll(env, 2);
-    igSeparatorText("Hotkeys");
-    if (igBeginTable("field:value", 2, ImGuiTableFlags_None, (ImVec2){}, 0)) {
-      igTableNextRow(ImGuiTableRowFlags_None, 0);
-      igTableSetColumnIndex(0);
-      igIndent(style->WindowPadding.x);
-      for (int i = 0; i < NUM_HOTKEYS; i++) {
-        hotkey* hk = usr_hotkey(usrs, i);
-        igAlignTextToFramePadding();
-        igText(hk->description);
-      }
-      igTableSetColumnIndex(1);
-
-      for (int i = 0; i < NUM_HOTKEYS; i++) {
-        hotkey* hk = usr_hotkey(usrs, i);
-        igPushID_Int(i);
-        igSetNextItemWidth(frame_height * 2);
-        char preview_char[2] = {(char)hk->key, 0};
-        if (igBeginCombo("##hotkey code", preview_char, ImGuiComboFlags_None)) {
-          for (int c = 48; c < 58; c++) {
-            char selectable_char[2] = {c, 0};
-            bool is_in_use = false;
-            for (int d = 0; d < NUM_HOTKEYS; d++) {
-              if (c == usr_hotkey(usrs, d)->key &&
-                  hk->key != usr_hotkey(usrs, d)->key) {
-                is_in_use = true;
-              }
-            }
-            if (igSelectable_Bool(selectable_char, c == hk->key,
-                                  is_in_use ? ImGuiSelectableFlags_Disabled
-                                            : ImGuiSelectableFlags_None,
-                                  (ImVec2){})) {
-              hk->key = c;
-            }
-          }
-          for (int c = 65; c < 91; c++) {
-            char selectable_char[2] = {c, 0};
-            bool is_in_use = false;
-            for (int d = 0; d < NUM_HOTKEYS; d++) {
-              if (c == usr_hotkey(usrs, d)->key &&
-                  hk->key != usr_hotkey(usrs, d)->key) {
-                is_in_use = true;
-              }
-            }
-            is_in_use = is_in_use || c == GLFW_KEY_M || c == GLFW_KEY_N;
-            if (igSelectable_Bool(selectable_char, c == hk->key,
-                                  is_in_use ? ImGuiSelectableFlags_Disabled
-                                            : ImGuiSelectableFlags_None,
-                                  (ImVec2){})) {
-              hk->key = c;
-            }
-          }
-          igEndCombo();
-        }
-        igSameLine(0, -1);
-        ImVec2 rest;
-        igGetContentRegionAvail(&rest);
-        igSetNextItemWidth(rest.x - style->ItemInnerSpacing.x);
-        if (i == HOTKEY_RESTART || i == HOTKEY_QUIT) {
-          igBeginDisabled(true);
-          igCombo_Str_arr("##hotkey mode", &(int){0}, (const char*[]){"Toggle"},
-                          1, -1);
-          igEndDisabled();
-        } else {
-          igCombo_Str_arr("##hotkey mode", &hk->mode,
-                          (const char*[]){"Toggle", "Press and hold"}, 2, -1);
-        }
-        igPopID();
-      }
-      igIndent(-style->WindowPadding.x);
-
-      igEndTable();
-    }
+    sec_hotkeys(env);
     igEndChild();
-    }
-
-    if (!popup) {
-#ifdef ANDROID
-    igTableSetColumnIndex(1);
-#else
-    igTableSetColumnIndex(3);
-#endif
-    igBeginChild_Str("empty_col", (ImVec2){-1, child_window_height},
-                     ImGuiChildFlags_None, ImGuiWindowFlags_None);
-    igSeparatorText("Hotkeys");
-    igEndChild();
-    }
-
     igEndTable();
   }
 

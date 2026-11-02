@@ -62,7 +62,8 @@ void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
                          float screen_cx, float screen_cy, float alive);
 
 /* "Show NTL tags" option, one per gameplay mode (0 = Normal, 1 = Assist).
- * On by default; shown in the Normal / Assist pages of the Settings window. */
+ * On by default in Normal mode, OFF by default in Assist mode; shown in the
+ * Normal / Assist pages of the Settings window. */
 bool ntl_tags_show_get(int mode);
 void ntl_tags_show_set(int mode, bool on);
 

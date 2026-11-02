@@ -130,6 +130,68 @@ static sl_cols sl_layout(float x0, float w, float u, float row_h) {
   return c;
 }
 
+/* Globe icon for the server-list button, drawn with the draw list so it is
+   crisp at any size/DPI and follows the lobby theme colour.
+   state: 0 = pinged & ready (green), 1 = working (amber), 2 = error (red),
+          3 = idle (grey). */
+static void sl_draw_globe(ImDrawList* dl, ImVec2 bmin, ImVec2 bmax, bool hot,
+                          bool held, int state) {
+  const float w = bmax.x - bmin.x;
+  const float h = bmax.y - bmin.y;
+  const ImVec2 c = {bmin.x + w * 0.5f, bmin.y + h * 0.5f};
+  const float r = (w < h ? w : h) * 0.30f;
+  const float th = fmaxf(1.4f, w * 0.040f);
+
+  /* soft halo + body */
+  ImDrawList_AddCircleFilled(
+      dl, c, r * 1.38f,
+      sl_col_tinted((ImVec4){0.647f, 0.420f, 1.0f, hot ? 0.28f : 0.14f}), 40);
+  ImDrawList_AddCircleFilled(
+      dl, c, r,
+      sl_col_tinted((ImVec4){0.510f, 0.294f, 0.910f, held ? 0.85f : 0.55f}), 40);
+
+  const ImU32 line = sl_col((ImVec4){0.93f, 0.89f, 1.0f, hot ? 1.0f : 0.90f});
+  const ImU32 thin = sl_col((ImVec4){0.93f, 0.89f, 1.0f, hot ? 0.80f : 0.62f});
+
+  /* latitudes (equator + two parallels) and the polar axis */
+  ImDrawList_AddLine(dl, (ImVec2){c.x - r, c.y}, (ImVec2){c.x + r, c.y}, thin, th * 0.8f);
+  for (int s = -1; s <= 1; s += 2) {
+    float y = c.y + (float)s * r * 0.52f;
+    float hw = r * 0.854f; /* sqrt(1 - 0.52^2) */
+    ImDrawList_AddLine(dl, (ImVec2){c.x - hw, y}, (ImVec2){c.x + hw, y}, thin, th * 0.8f);
+  }
+  ImDrawList_AddLine(dl, (ImVec2){c.x, c.y - r}, (ImVec2){c.x, c.y + r}, thin, th * 0.8f);
+
+  /* meridian ellipse */
+  {
+    enum { N = 36 };
+    ImVec2 pts[N];
+    for (int i = 0; i < N; i++) {
+      float a = (float)i * 6.2831853f / (float)N;
+      pts[i] = (ImVec2){c.x + cosf(a) * r * 0.46f, c.y + sinf(a) * r};
+    }
+    ImDrawList_AddPolyline(dl, pts, N, thin, ImDrawFlags_Closed, th * 0.8f);
+  }
+
+  /* outline */
+  ImDrawList_AddCircle(dl, c, r, line, 40, th);
+
+  /* status light (top-right corner of the button) */
+  {
+    ImVec4 sc = state == 0 ? (ImVec4){0.30f, 1.00f, 0.40f, 1.0f}
+              : state == 1 ? (ImVec4){1.00f, 0.80f, 0.25f, 1.0f}
+              : state == 2 ? (ImVec4){1.00f, 0.40f, 0.40f, 1.0f}
+                           : (ImVec4){0.70f, 0.64f, 0.88f, 1.0f};
+    ImVec2 p = {bmax.x - w * 0.17f, bmin.y + h * 0.17f};
+    float pr = w * 0.085f;
+    if (state == 1) /* gentle pulse while fetching / pinging */
+      pr *= 0.85f + 0.25f * (0.5f + 0.5f * sinf((float)igGetTime() * 6.0f));
+    ImDrawList_AddCircleFilled(dl, p, pr + 1.6f,
+                               sl_col((ImVec4){0.04f, 0.02f, 0.10f, 0.85f}), 16);
+    ImDrawList_AddCircleFilled(dl, p, pr, sl_col(sc), 16);
+  }
+}
+
 static void sl_header_cell(ImDrawList* dl, const char* label, int col_id,
                            float right, float width, float y, float h,
                            bool left_aligned, float left_x) {
@@ -197,8 +259,10 @@ static void draw_server_picker(tenv* env) {
       crystal_panel_begin(env, "Select Server", "SELECT SERVER", subtitle, 700.0f);
   if (!g_sl_popup_open) return;
 
-  igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
-             usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
+  /* NOTE: no igPushFont here. crystal_panel_begin() already pushed the regular
+     UI font for the whole panel. A second push made inside the panel body
+     and still active at crystal_panel_end_body() (EndChild) trips Dear ImGui's
+     "Missing PopFont()" error-recovery assert and aborts the app. */
   const float u = igGetFontSize();
 
   /* ---- search + refresh ---- */
@@ -462,7 +526,6 @@ static void draw_server_picker(tenv* env) {
     crystal_sheen();
   }
 
-  igPopFont();
   crystal_panel_end();
 }
 
@@ -676,15 +739,25 @@ void ui_title_screen(tenv* env) {
   igPopItemWidth();
 
   igSameLine(0, style->ItemSpacing.x);
-  igPushFont(usr->imgui_data.mono_font[usrs->ui_font_size],
-             usr->imgui_data.mono_font[usrs->ui_font_size]->LegacySize);
-  if (igButton("\ue9c9##sl_btn", (ImVec2){sl_btn_w, sl_btn_w})) {
+  /* Server-list button: the globe is drawn as vectors on top of an empty
+     button (no icon-font glyph), with a small status light in the corner. */
+  if (igButton("##sl_btn", (ImVec2){sl_btn_w, sl_btn_w})) {
     if (!gdata->server_list.fetching && !gdata->server_list.fetched)
       server_list_fetch(env);
     igOpenPopup_Str("Select Server", 0);
   }
+  {
+    ImVec2 bmin, bmax;
+    igGetItemRectMin(&bmin);
+    igGetItemRectMax(&bmax);
+    int state = gdata->server_list.fetch_error ? 2
+              : (gdata->server_list.fetching || gdata->server_list.pinging) ? 1
+              : (gdata->server_list.pings_done > 0) ? 0 : 3;
+    sl_draw_globe(igGetWindowDrawList(), bmin, bmax, igIsItemHovered(0),
+                  igIsItemActive(), state);
+  }
+  if (igIsItemHovered(0)) igSetTooltip("Choose a server");
   crystal_sheen();
-  igPopFont();
 
   server_list_poll(env);
 

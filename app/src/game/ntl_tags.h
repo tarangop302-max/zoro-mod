@@ -5,6 +5,9 @@
  * NTL mod for slither.io (https://ntl-slither.com). This module is a port of
  * the NTL mod's tag system:
  *
+ *   - Tags uploaded on NTL's site (ids 368.. / 756..) are downloaded from
+ *     tags/cstags + newtag.php, decoded by webp_decode.c and packed into a
+ *     second, runtime atlas, so every NTL player's tag can be shown.
  *   - 164 tags (60 built-in t_N + 104 public "fstags") live in one atlas,
  *     app/res/textures/ntl_tags.png, described by ntl_tags_data.h (both made
  *     by tools/gen_ntl_tags.py). Tag ids are NTL's own ids, so every NTL
@@ -62,7 +65,17 @@ void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
  * Assist is on). */
 void ntl_tags_assist_settings_ui(void);
 
-/* Settings screen block: "NTL tags" header, show toggle, picker. */
-void ntl_tags_settings_ui(tenv *env);
+/* Is `tag_id` drawable right now: bundled, or an uploaded tag whose picture
+ * has been downloaded and decoded? (ntl_tags_valid() is bundled-only.) */
+bool ntl_tags_known(int tag_id);
+
+/* Opens NTL's tag upload page (ntl-slither.com/uploadtag.php) in the browser. */
+void ntl_tags_open_upload_page(void);
+
+/* The tag block of the Skin Editor window. Height it needs (call inside the
+ * same font as the editor), and the block itself, drawn at window position
+ * (x, y) with width w. */
+float ntl_tags_block_height(void);
+void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w);
 
 #endif

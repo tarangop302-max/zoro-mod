@@ -61,9 +61,10 @@ int ntl_tags_decode_header(const uint8_t *hdr, int len, int *plain_skin);
 void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
                          float screen_cx, float screen_cy, float alive);
 
-/* Assist mode settings: "ASSIST HIDE TAGS" checkbox (hides every tag while
- * Assist is on). */
-void ntl_tags_assist_settings_ui(void);
+/* "Show NTL tags" option, one per gameplay mode (0 = Normal, 1 = Assist).
+ * On by default; shown in the Normal / Assist pages of the Settings window. */
+bool ntl_tags_show_get(int mode);
+void ntl_tags_show_set(int mode, bool on);
 
 /* Is `tag_id` drawable right now: bundled, or an uploaded tag whose picture
  * has been downloaded and decoded? (ntl_tags_valid() is bundled-only.) */

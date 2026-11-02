@@ -1131,7 +1131,12 @@ open class GameActivity : NativeActivity() {
                 imm.restartInput(bridge)
                 bridge.post {
                     bridge.requestFocus()
-                    imm.showSoftInput(bridge, InputMethodManager.SHOW_IMPLICIT)
+                    /* Flag 0 = an explicit request. SHOW_IMPLICIT is dropped
+                     * (or hidden again) by many devices when the request
+                     * does not come straight from a touch on this view,
+                     * which is exactly the case here: the tap landed on the
+                     * ImGui surface, not on this 1px bridge view. */
+                    imm.showSoftInput(bridge, 0)
                 }
             } else {
                 clearImeEvents(this@GameActivity)
@@ -1286,6 +1291,15 @@ open class GameActivity : NativeActivity() {
             WindowManager.LayoutParams.FLAG_FULLSCREEN or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        )
+        /* Never resize the Vulkan surface when the keyboard opens: pan the
+         * window instead. A surface resize while the keyboard animates in
+         * forces a swapchain rebuild mid-frame (the "freeze" when tapping a
+         * text field), and the keyboard stays hidden until the next tap. */
+        @Suppress("DEPRECATION")
+        window.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN or
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
         )
         enableHighPerformanceDisplay()
         hideSystemBars()

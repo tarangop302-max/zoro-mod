@@ -1098,9 +1098,9 @@ static void sr_settings_contents(tenv *env, int scroll_idx) {
     if (shown > limit) shown = limit;
     if (shown < 1) shown = 1;
 
-    igSetWindowFontScale(2.0f);
+    igPushFont(igGetFont(), igGetFontSize() * 2.0f);
     igText("%d", shown);
-    igSetWindowFontScale(1.0f);
+    igPopFont();
     igSameLine(0.0f, 8.0f);
     igTextDisabled("bots max");
 

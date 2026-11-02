@@ -411,7 +411,7 @@ static void sec_mode(tenv* env, int i) {
     igCheckbox("##acc", &mode->show_accessories);
     opt_end();
   }
-  if (opt_begin("Show NTL tags", "Shows NTL players' tags on their snakes in this mode. On by default.")) {
+  if (opt_begin("Show NTL tags", "Shows NTL players' tags on their snakes in this mode.")) {
     bool on = ntl_tags_show_get(i);
     if (igCheckbox("##ntl tags", &on)) ntl_tags_show_set(i, on);
     opt_end();

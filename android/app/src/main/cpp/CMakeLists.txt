@@ -47,6 +47,7 @@ target_include_directories(vlither PRIVATE
 target_compile_definitions(vlither PRIVATE
     ANDROID
     MG_TLS=3
+    MG_MAX_RECV_SIZE=25165824UL  # NTL community tag list can exceed the 3 MB default
     CGLM_FORCE_DEPTH_ZERO_TO_ONE
     CIMGUI_NO_EXPORT
     APP_VERSION="4.2"

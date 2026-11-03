@@ -1363,7 +1363,11 @@ void redraw(tenv* env) {
           // Stroke only the local player's sampled centre path. Other snakes
           // keep their original skins without a centre line. Rounded capsules
           // keep the local line continuous and independent from transparency.
-          const float line_thickness = 2.0f;
+          float line_thickness = usrs->center_line_width[mode_index];
+          if (!(line_thickness >= CENTER_LINE_WIDTH_MIN))
+            line_thickness = CENTER_LINE_WIDTH_MIN;
+          if (line_thickness > CENTER_LINE_WIDTH_MAX)
+            line_thickness = CENTER_LINE_WIDTH_MAX;
           for (j = 1; j < bp; j++) {
             float x1 = ((gdata->data.pbx[(int)j - 1] - gdata->data.view_xx) *
                         gdata->data.gsc) +
@@ -1835,8 +1839,14 @@ void redraw(tenv* env) {
         if (usrs->head_dot_enabled[mode_index] &&
             o->id == gdata->data.snake_id) {
           float hdr = usrs->head_dot_size[mode_index] * 0.5f * ssc * gdata->data.gsc;
-          float hdx = mww2 + (hx - gdata->data.view_xx) * gdata->data.gsc;
-          float hdy = mhh2 + (hy - gdata->data.view_yy) * gdata->data.gsc;
+          /* Sit on the very front edge of the head circle (the tip in the
+           * direction the snake is heading) instead of its centre. The head
+           * radius in game units is lsz, so the dot centre is lsz ahead of
+           * the head centre along the heading. */
+          float hdx = mww2 + (hx + cosf(fang) * lsz - gdata->data.view_xx) *
+                                 gdata->data.gsc;
+          float hdy = mhh2 + (hy + sinf(fang) * lsz - gdata->data.view_yy) *
+                                 gdata->data.gsc;
           const float* hdc = usrs->head_dot_colors[mode_index];
           bp_renderer_push(
               usr->r->bpr,

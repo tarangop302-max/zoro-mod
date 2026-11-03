@@ -603,7 +603,69 @@ static void draw_bg_preview_blur(
 }
 
 
+#ifdef ANDROID
+/* ---- Background play ------------------------------------------------
+ * While a run is live (connected, own snake alive, no death popup, not the
+ * lobby preview) and the window is gone (app in the background / screen
+ * off), the game keeps ticking WITHOUT drawing: time step, input (so the
+ * bot keeps steering), network poll, entity update. The moment the run is
+ * over (death, disconnect, lobby) this reports "not active": GameActivity
+ * stops its foreground service and the normal paused behaviour takes over.
+ * Called from thermite/src/core/tentry.c while the swapchain is down. */
+#include <time.h>
+#include "game/input.h"
+#include "game/oef.h"
+#include "network/server.h"
+
+static bool s_bg_reported = false;
+static bool s_bg_seen = false;
+
+static bool bgplay_run_active(tuser_data* usr) {
+  game_data* g = &usr->gdata;
+  return g->conn == CONNECTED && g->connection != NULL &&
+         !g->connection->is_closing && !g->closed && !g->death_pending &&
+         !g->preview_active && !g->data.dead && g->data.snake_id >= 0;
+}
+
+/* Cheap; called every frame from trender() and from the background tick. */
+void bgplay_sync(tenv* env) {
+  bool a = bgplay_run_active(env->usr);
+  if (a != s_bg_reported) {
+    s_bg_reported = a;
+    android_jni_set_run_active(a);
+  }
+}
+
+/* Returns true when it ran a background tick (caller must `continue`). */
+bool bgplay_tick(tenv* env) {
+  bgplay_sync(env);
+  if (!s_bg_reported) {
+    s_bg_seen = false;
+    return false;
+  }
+  tuser_data* usr = env->usr;
+  if (!s_bg_seen) {
+    s_bg_seen = true;
+    /* A finger that was down when the app went away never comes up. */
+    env->wnd->touch.down = false;
+    env->wnd->touch.boost_down = false;
+  }
+  if (usr->tchat != NULL) tchat_update(usr->tchat, 1.0f / 60.0f);
+  time_step(env);
+  input(env);
+  server_poll(env);
+  oef(env);
+  struct timespec nap = {0, 16 * 1000 * 1000};
+  nanosleep(&nap, NULL);
+  return true;
+}
+#endif
+
+
 void trender(tenv* env) {
+#ifdef ANDROID
+  bgplay_sync(env);
+#endif
 
   tuser_data* usr =
       env->usr;

@@ -258,6 +258,35 @@ static void sec_general(tenv* env) {
     igCombo_Str_arr("##leaderboard font size", (int*)&usrs->lb_font_size, kSizeNames, 3, -1);
     opt_end();
   }
+  if (opt_begin("Leaderboard title", "Text shown above the leaderboard. Leave empty for the default.")) {
+    igSetNextItemWidth(-1);
+    igInputTextWithHint("##leaderboard title", LB_TITLE_DEFAULT, usrs->lb_title,
+                        LB_TITLE_MAX + 1, ImGuiInputTextFlags_None, NULL, NULL);
+    opt_end();
+  }
+  if (opt_begin("Leaderboard title colour", "Colour (and opacity) of the leaderboard title.")) {
+    igSetNextItemWidth(-1);
+    igColorEdit4("##leaderboard title colour", usrs->lb_title_color, ImGuiColorEditFlags_AlphaBar);
+    opt_end();
+  }
+  if (opt_begin("Leaderboard text colour", "Tick to colour every leaderboard name and score the same instead of using skin colours.")) {
+    igCheckbox("##leaderboard names colour on", &usrs->lb_names_color_enabled);
+    igSameLine(0, -1);
+    igBeginDisabled(!usrs->lb_names_color_enabled);
+    igSetNextItemWidth(-1);
+    igColorEdit4("##leaderboard names colour", usrs->lb_names_color, ImGuiColorEditFlags_AlphaBar);
+    igEndDisabled();
+    opt_end();
+  }
+  if (opt_begin("Leaderboard own line colour", "Tick to give your own leaderboard line its own colour.")) {
+    igCheckbox("##leaderboard own colour on", &usrs->lb_own_color_enabled);
+    igSameLine(0, -1);
+    igBeginDisabled(!usrs->lb_own_color_enabled);
+    igSetNextItemWidth(-1);
+    igColorEdit4("##leaderboard own colour", usrs->lb_own_color, ImGuiColorEditFlags_AlphaBar);
+    igEndDisabled();
+    opt_end();
+  }
   if (opt_begin("Names font size", "Size of the player names shown above snakes.")) {
     igSetNextItemWidth(-1);
     igCombo_Str_arr("##snake name font size", (int*)&usrs->snake_names_font_size, kSizeNames, 3, -1);
@@ -466,6 +495,14 @@ static void sec_mode(tenv* env, int i) {
   }
   if (opt_begin("Center line (your snake)", "Draws a thin line down the middle of your own snake.")) {
     igCheckbox("##center line", &mode->center_line);
+    opt_end();
+  }
+  if (opt_begin("Centre line width", "How thick the centre line on your snake is.")) {
+    igBeginDisabled(!mode->center_line);
+    igSetNextItemWidth(-1);
+    igSliderFloat("##center line width", &usrs->center_line_width[i], CENTER_LINE_WIDTH_MIN,
+                  CENTER_LINE_WIDTH_MAX, "%.1f px", ImGuiSliderFlags_AlwaysClamp);
+    igEndDisabled();
     opt_end();
   }
   if (i == 1 && opt_begin("White skin (enemies)", "Draws every other snake as a plain white silhouette.")) {

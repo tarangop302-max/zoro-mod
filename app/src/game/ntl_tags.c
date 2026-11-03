@@ -5,6 +5,7 @@
 #include "../ui/crystal_theme.h"
 #include "ntl_tags_data.h"
 #include "webp_decode.h"
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,6 +75,7 @@ typedef struct {
   size_t webp_n;
   uint8_t state;
   uint8_t meta_default; /* metadata guessed (only the id was known)       */
+  uint8_t tries;        /* failed downloads so far (auto retry up to 3)   */
   double retry_at;
 } ctag_t;
 static ctag_t s_ct[NT_COMM_MAX];
@@ -108,12 +110,13 @@ static double s_list_next = 0.0;
 static int s_list_ver = 1;
 static bool s_list_busy = false;
 static bool s_auth_pending = false;
+static int s_auth_tries = 0;
+static double s_auth_retry_at = 0.0;
 static int s_auth_id = 0;
 static char s_auth_md5[33];
 static char s_status[112];
 static double s_status_until = 0.0;
 static double s_last_ui = 0.0;
-static int s_scroll_to = -2;              /* tag id to bring into view, -2 none */
 
 /* passwords the user unlocked community tags with (md5, like the NTL mod) */
 static struct { int id; char md5[33]; } s_auth[NT_MAX_AUTH];
@@ -170,6 +173,7 @@ static bool ctag_ready(int id) {
 }
 
 bool ntl_tags_known(int tag_id) { return ntl_tags_valid(tag_id) || ctag_ready(tag_id); }
+static bool ctag_ready_or_bundled(int id) { return ntl_tags_known(id); }
 
 static int ct_add(int id) {
   if (!s_cindex_init) {
@@ -521,7 +525,7 @@ static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
     mg_printf(c,
               "GET %s HTTP/1.1\r\nHost: ntl-slither.com\r\n"
               "User-Agent: Vlither/4.2\r\nAccept: */*\r\n"
-              "Connection: close\r\n\r\n",
+              "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
               s_rq.path);
   } else if (ev == MG_EV_HTTP_MSG) {
     struct mg_http_message *hm = (struct mg_http_message *)ev_data;
@@ -559,6 +563,7 @@ static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
           t->state = CT_HAVE_WEBP;
         } else {
           t->state = CT_FAILED;
+          t->tries = 3; /* the server answered: it really has no such tag */
           t->retry_at = now + NT_IMG_RETRY_S;
           char m[64];
           snprintf(m, sizeof m, "Tag #%d was not found on the server", t->def.id);
@@ -583,19 +588,40 @@ static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
     s_rq.conn = NULL;
     c->is_draining = 1;
   } else if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE) {
-    if (s_rq.kind == RQ_LIST) {
-      s_list_busy = false;
-      s_list_next = now_s() + 60.0;
-    } else if (s_rq.kind == RQ_IMG) {
-      int i = ct_find(s_rq.id);
-      if (i >= 0) {
-        s_ct[i].state = CT_FAILED;
-        s_ct[i].retry_at = now_s() + 30.0;
-      }
-    }
-    if (s_rq.kind != RQ_NONE) status_set("NTL server did not answer");
+    /* The connection died before a full HTTP answer arrived. Say why (mongoose
+       gives the reason with MG_EV_ERROR) so a failure can be diagnosed. */
+    char why[96] = "";
+    if (ev == MG_EV_ERROR && ev_data) snprintf(why, sizeof why, "%.90s", (const char *)ev_data);
+    rq_kind k = s_rq.kind;
+    int id = s_rq.id;
     s_rq.kind = RQ_NONE;
     s_rq.conn = NULL;
+    if (k == RQ_LIST) {
+      s_list_busy = false;
+      s_list_next = now_s() + 60.0;
+    } else if (k == RQ_IMG) {
+      int i = ct_find(id);
+      if (i >= 0) {
+        s_ct[i].state = CT_FAILED;
+        s_ct[i].tries++;
+        s_ct[i].retry_at = now_s() + 15.0; /* retried automatically */
+      }
+    } else if (k == RQ_AUTH) {
+      if (++s_auth_tries < 3) { /* transient network trouble: try again */
+        s_auth_pending = true;
+        s_auth_id = id;
+        s_auth_retry_at = now_s() + 2.0;
+      }
+    }
+    if (k != RQ_NONE) {
+      char m[112];
+      if (why[0])
+        snprintf(m, sizeof m, "NTL server: %s", why);
+      else
+        snprintf(m, sizeof m, "NTL server did not answer");
+      status_set(m);
+    }
+    if (ev == MG_EV_ERROR) c->is_closing = 1;
   }
 }
 
@@ -631,13 +657,26 @@ static void net_pump(void) {
     return;
   }
   double now = now_s();
-  if (s_auth_pending) {
+  if (s_auth_pending && now >= s_auth_retry_at) {
     s_auth_pending = false;
     snprintf(s_rq.md5, sizeof s_rq.md5, "%s", s_auth_md5);
     char path[160];
     snprintf(path, sizeof path, "/tags/tag?id=%d&pass=%s", s_auth_id, s_auth_md5);
     rq_start(RQ_AUTH, s_auth_id, path);
     return;
+  }
+  for (int i = 0; i < s_nct; ++i) {
+    ctag_t *t = &s_ct[i];
+    if (t->state == CT_FAILED && t->tries < 3 && t->retry_at > 0.0 && now >= t->retry_at) {
+      t->retry_at = 0.0; /* retry a picture whose download failed */
+      t->state = CT_NEED_IMG;
+    }
+    if (t->state == CT_NEED_IMG) {
+      char path[80];
+      snprintf(path, sizeof path, "/newtag.php?id=%d", t->def.id);
+      rq_start(RQ_IMG, t->def.id, path);
+      return;
+    }
   }
   if (s_list_want && now >= s_list_next) {
     s_list_want = false;
@@ -647,15 +686,6 @@ static void net_pump(void) {
              NT_MOD_VERSION);
     rq_start(RQ_LIST, 0, path);
     return;
-  }
-  for (int i = 0; i < s_nct; ++i) {
-    ctag_t *t = &s_ct[i];
-    if (t->state == CT_NEED_IMG) {
-      char path[80];
-      snprintf(path, sizeof path, "/newtag.php?id=%d", t->def.id);
-      rq_start(RQ_IMG, t->def.id, path);
-      return;
-    }
   }
 }
 
@@ -700,20 +730,67 @@ static void comm_note_unknown(int id) {
 
 /* "!loadtag id w h c1 c2 bx by" (what NTL's upload page gives you) or a plain
  * id. Returns the id or -1. */
+static void ct_default_meta(ctag_t *t) {
+  t->meta_default = 1;
+  t->def.w = t->def.h = 140;
+  t->def.bx = -32;
+  t->def.by = -70;
+  t->def.c1 = 0xFFFFFF;
+  t->def.c2 = 0x92EFFE;
+}
+
+/* What the "Add ID" box accepts (all of NTL's own commands work):
+ *   !tag 476 mypassword        use tag 476 (checks the password with the server)
+ *   476 mypassword             same
+ *   !loadtag id w h c1 c2 bx by   the line NTL's upload page shows
+ *   476                        just download and show tag 476
+ * Returns the tag id, or -1 when the text is not understood. */
 static int comm_add_by_text(const char *text) {
   while (*text == ' ') text++;
-  if (*text == '!') {
+  bool is_tag_cmd = false;
+  if (*text == '!' || !strncmp(text, "tag ", 4)) { /* "!tag ..." (or just "tag ...") */
+    const char *w = *text == '!' ? text + 1 : text;
+    is_tag_cmd = !strncmp(w, "tag", 3) && (w[3] == ' ' || w[3] == 0);
     while (*text && *text != ' ') text++;
   }
   long id = 0;
-  int w = 0, h = 0, bx = -32, by = -70;
-  char c1[24] = "", c2[24] = "";
-  int got = sscanf(text, " %ld %d %d %23s %23s %d %d", &id, &w, &h, c1, c2, &bx, &by);
-  if (got < 1 || !comm_id_ok((int)id)) return -1;
+  char tok2[64] = "";
+  if (sscanf(text, " %ld %63s", &id, tok2) < 1 || !comm_id_ok((int)id)) {
+    status_set("That is not a valid uploaded-tag ID");
+    return -1;
+  }
   comm_ensure_loaded();
   int i = ct_add((int)id);
   if (i < 0) return -1;
   ctag_t *t = &s_ct[i];
+
+  /* a password was given: unlock the tag for use */
+  bool has_pass = tok2[0] && !isdigit((unsigned char)tok2[0]) && tok2[0] != '#' && tok2[0] != '-';
+  if (is_tag_cmd || has_pass) {
+    if (!tok2[0]) {
+      status_set("Use: !tag id password");
+      return -1;
+    }
+    md5_hex(tok2, s_auth_md5);
+    s_auth_id = (int)id;
+    s_auth_pending = true;
+    s_auth_tries = 0;
+    s_auth_retry_at = 0.0;
+    if (t->state == CT_META || t->state == CT_FAILED) {
+      if (!t->def.w) ct_default_meta(t);
+      t->tries = 0;
+      t->state = CT_NEED_IMG;
+    }
+    char m[64];
+    snprintf(m, sizeof m, "Checking tag #%ld...", id);
+    status_set(m);
+    return (int)id;
+  }
+
+  /* "!loadtag id w h c1 c2 bx by": the tag's picture settings */
+  int w = 0, h = 0, bx = -32, by = -70;
+  char c1[24] = "", c2[24] = "";
+  int got = sscanf(text, " %ld %d %d %23s %23s %d %d", &id, &w, &h, c1, c2, &bx, &by);
   if (got >= 7) {
     t->def.w = (short)w;
     t->def.h = (short)h;
@@ -722,15 +799,16 @@ static int comm_add_by_text(const char *text) {
     t->def.bx = (short)bx;
     t->def.by = (short)by;
     t->meta_default = 0;
-  } else if (t->state == CT_META || t->state == CT_FAILED) {
-    t->meta_default = 1;
-    t->def.w = t->def.h = 140;
-    t->def.bx = -32;
-    t->def.by = -70;
-    t->def.c1 = 0xFFFFFF;
-    t->def.c2 = 0x92EFFE;
+  } else if ((t->state == CT_META || t->state == CT_FAILED) && !t->def.w) {
+    ct_default_meta(t);
   }
-  if (t->state == CT_META || t->state == CT_FAILED) t->state = CT_NEED_IMG;
+  if (t->state == CT_META || t->state == CT_FAILED) {
+    t->tries = 0;
+    t->state = CT_NEED_IMG;
+  }
+  char m[64];
+  snprintf(m, sizeof m, "Downloading tag #%ld...", id);
+  status_set(m);
   return (int)id;
 }
 
@@ -1065,22 +1143,22 @@ static int quad(ImVec2 *pts, int n, ImVec2 a, ImVec2 c, ImVec2 b) {
   return n;
 }
 
-void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
-                         float screen_cx, float screen_cy, float alive) {
-  if (!o || o->ntl_tag1 <= 0) return;
-  if (!ntl_tags_show_get(env->usr->usrs.hotkeys[HOTKEY_ASSIST].active ? 1 : 0)) return;
-  int tid = o->ntl_tag1 - 1;
+/* Antenna + tag for one head. World coordinates map to the screen as
+ *   screen = (screen_cx, screen_cy) + (world - (view_x, view_y)) * gsc
+ * `owner` picks the physics slot (a snake id; the Skin Editor preview uses its
+ * own fixed id), `sc` is the snake scale (body diameter = 29 * sc). */
+static void draw_tag_chain(int tid, int owner, float ang, float sc, float gsc, float view_x,
+                           float view_y, float hx, float hy, float screen_cx, float screen_cy,
+                           float alive) {
   const ntl_tag_def *def;
   unsigned long long atlas_tex;
   int atw, ath;
   if (!resolve(tid, &def, &atlas_tex, &atw, &ath)) return;
-  game_data *g = &env->usr->gdata;
-  float gsc = g->data.gsc, sc = o->sc;
   float A = sc * gsc;
   double now = now_s();
 
-  ant_t *a = ant_get(o->id, now);
-  float cs = cosf(o->ang), sn = sinf(o->ang);
+  ant_t *a = ant_get(owner, now);
+  float cs = cosf(ang), sn = sinf(ang);
   a->x[0] = hx - 8.0f * cs * sc;
   a->y[0] = hy - 8.0f * sn * sc;
 
@@ -1091,7 +1169,7 @@ void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
       a->vx[i] = a->vy[i] = 0;
     }
     a->t = now;
-    a->atba = o->ang + (float)M_PI;
+    a->atba = ang + (float)M_PI;
     a->shown = true;
   }
 
@@ -1141,8 +1219,8 @@ void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
   ImDrawList *dl = igGetWindowDrawList();
   ImVec2 sp[NT_PTS];
   for (int i = 0; i < NT_PTS; ++i)
-    sp[i] = (ImVec2){screen_cx + (a->x[i] - g->data.view_xx) * gsc,
-                     screen_cy + (a->y[i] - g->data.view_yy) * gsc};
+    sp[i] = (ImVec2){screen_cx + (a->x[i] - view_x) * gsc,
+                     screen_cy + (a->y[i] - view_y) * gsc};
 
   /* antenna line: tip -> head, smoothed through the points like NTL */
   ImVec2 path[4 * NT_PTS + 4];
@@ -1183,27 +1261,52 @@ void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
                           pack(0xFFFFFF, alpha));
 }
 
+void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
+                         float screen_cx, float screen_cy, float alive) {
+  if (!o || o->ntl_tag1 <= 0) return;
+  if (!ntl_tags_show_get(env->usr->usrs.hotkeys[HOTKEY_ASSIST].active ? 1 : 0)) return;
+  game_data *g = &env->usr->gdata;
+  draw_tag_chain(o->ntl_tag1 - 1, o->id, o->ang, o->sc, g->data.gsc, g->data.view_xx,
+                 g->data.view_yy, hx, hy, screen_cx, screen_cy, alive);
+}
+
+/* The selected tag on the Skin Editor's preview snake. (hx, hy) is the centre of
+ * the head in window coordinates, `body_d` the diameter of one body segment;
+ * the head faces right. Drawn with the in-game antenna physics and a slight
+ * sway so the tag hangs and swings like it does in a match. */
+void ntl_tags_draw_preview(float hx, float hy, float body_d) {
+  if (s_sel < 0 || !ctag_ready_or_bundled(s_sel)) return;
+  ImVec2 wp;
+  igGetWindowPos(&wp);
+  double t = now_s();
+  float sway_x = sinf((float)t * 1.3f) * body_d * 0.12f;
+  float sway_y = sinf((float)t * 2.1f) * body_d * 0.07f;
+  draw_tag_chain(s_sel, -4242, 0.0f, body_d / 29.0f, 1.0f, 0.0f, 0.0f, wp.x + hx + sway_x,
+                 wp.y + hy + sway_y, 0.0f, 0.0f, 1.0f);
+}
+
 /* ---- settings UI -------------------------------------------------------- */
 /* ---- Skin Editor tag block ----------------------------------------------
  * Drawn by ui/skin_editor.c between the "Saved skins" and "Custom" rows:
  *
- *   NTL tag  #12                                         [x] Show tags
- *   [<] [ horizontally sliding strip of every tag, tap to pick ] [>]
- *   [ Upload ] [ Add ID ] [ Sync ] [ Remove ]
+ *   NTL tag  #12  (or the latest status message)
+ *   [ Select tag ............................ ] [ box: chosen tag ]
+ *   [ Upload ] [ Add ID ] [ Remove ]
  *
- * Colours go through crystal_tint(), so the whole block follows the lobby
- * background theme like the other windows. */
+ * "Select tag" (or the box) opens the big tag screen. Colours go through
+ * crystal_tint(), so the block follows the lobby background theme like the
+ * other windows. */
 static ImU32 tcol(float r, float g, float b, float a) {
   return igColorConvertFloat4ToU32(crystal_tint((ImVec4){r, g, b, a}));
 }
 
-static float tag_cell(void) { return igGetFrameHeight() * 1.5f; }
+/* Row holding the "Select tag" button and the box with the chosen tag. */
+static float sel_row_h(void) { return igGetFrameHeight() * 1.7f; }
 
 float ntl_tags_block_height(void) {
   ImGuiStyle *st = igGetStyle();
   float fh = igGetFrameHeight(), sp = st->ItemSpacing.y;
-  float strip_h = tag_cell() + 12.0f;
-  return (fh + sp) + (strip_h + sp) + (fh + sp);
+  return (fh + sp) + (sel_row_h() + sp) + (fh + sp);
 }
 
 static void thumb(ImDrawList *dl, const ntl_tag_def *d, unsigned long long tex_id,
@@ -1437,24 +1540,15 @@ static void tag_modals(tenv *env) {
   igSetNextWindowPos(center, ImGuiCond_Always, (ImVec2){0.5f, 0.5f});
   igSetNextWindowSize((ImVec2){pw, 0}, ImGuiCond_Always);
   if (igBeginPopupModal("Add NTL tag", NULL, wf)) {
-    igTextWrapped("Upload your tag on the NTL site, then paste its ID here, or the whole "
-                  "\"!loadtag ...\" line the site shows you. The picture is downloaded "
-                  "from ntl-slither.com.");
+    igTextWrapped("Type your tag's ID and password to use it, like in NTL: \"!tag 123 password\". "
+                  "A plain ID (or the \"!loadtag ...\" line from the upload page) just downloads "
+                  "the tag so you can see it.");
     igSetNextItemWidth(-1);
-    igInputTextWithHint("##ntl_add_id", "ID or !loadtag id w h c1 c2 bx by", s_id_buf,
+    igInputTextWithHint("##ntl_add_id", "!tag id password", s_id_buf,
                         sizeof s_id_buf, 0, NULL, NULL);
     float bw = (pw - igGetStyle()->WindowPadding.x * 2 - igGetStyle()->ItemSpacing.x) * 0.5f;
     if (igButton("Add", (ImVec2){bw, 0})) {
-      int id = comm_add_by_text(s_id_buf);
-      if (id < 0) {
-        status_set("That is not a valid custom tag ID");
-      } else {
-        s_scroll_to = id;
-        char m[64];
-        snprintf(m, sizeof m, "Downloading tag #%d...", id);
-        status_set(m);
-        s_id_buf[0] = 0;
-      }
+      if (comm_add_by_text(s_id_buf) >= 0) s_id_buf[0] = 0; /* sets its own status */
       igCloseCurrentPopup();
     }
     crystal_sheen();
@@ -1501,16 +1595,11 @@ static void tag_modals(tenv *env) {
 
 void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w) {
   ImGuiStyle *st = igGetStyle();
-  ImGuiIO *io = igGetIO_Nil();
   double now = now_s();
   float fh = igGetFrameHeight(), sp = st->ItemSpacing.y, spx = st->ItemSpacing.x;
 
-  bool fresh = now - s_last_ui > 0.5;
-  s_last_ui = now;
   comm_ensure_loaded();
   if (s_disp_dirty) disp_rebuild();
-  if (fresh && s_scroll_to == -2 && s_sel >= 0) s_scroll_to = s_sel;
-
   ImDrawList *dl = igGetWindowDrawList();
 
   /* ---- header: "NTL tag" + your tag number, or the latest status message --- */
@@ -1539,150 +1628,46 @@ void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w) {
     ImDrawList_PopClipRect(dl);
   }
 
-  /* ---- strip ---- */
-  float cell = tag_cell(), gap = sp * 0.7f;
-  float strip_h = cell + 12.0f;
-  float y2 = y + fh + sp;
-  float aw = fh * 0.85f, ssp = spx * 0.5f;
-  float child_w = w - 2 * aw - 2 * ssp;
-  static float s_goal = -1.0f;
-  float pitch = cell + gap;
-
-  static float s_arrow = 0.0f; /* pending arrow-button scroll, in pixels */
-  igSetCursorPos((ImVec2){x, y2});
-  if (igButton("\uea38##ntl_tag_prev", (ImVec2){aw, strip_h})) s_arrow = -3.0f * pitch;
+  /* ---- [ Select tag ] [ box with the chosen tag ] ---- */
+  float rowh = sel_row_h();
+  float y1 = y + fh + sp;
+  igSetCursorPos((ImVec2){x, y1});
+  if (igButton("Select tag", (ImVec2){w - rowh - spx, rowh})) s_open_big = true;
   crystal_sheen();
-  igSameLine(0, ssp);
-
-  ImVec2 child_a;
-  igGetCursorScreenPos(&child_a);
-  igPushStyleVar_Float(ImGuiStyleVar_ChildRounding, 10.0f);
-  igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){6.0f, 6.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ChildBg, (ImVec4){0.176f, 0.106f, 0.306f, 0.45f});
-  bool vis = igBeginChild_Str("##ntl_tag_strip", (ImVec2){child_w, strip_h}, ImGuiChildFlags_None,
-                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-  if (vis) {
-    ImVec2 org;
-    igGetCursorScreenPos(&org); /* left edge of cell 0, already scrolled */
-    int n = s_ndisp;
-    float total_w = n * pitch - gap;
-    if (total_w < 1.0f) total_w = 1.0f;
-    igDummy((ImVec2){total_w, cell});
-
-    ImVec2 wp, wsz;
-    igGetWindowPos(&wp);
-    igGetWindowSize(&wsz);
-    float vis_w = child_w - 12.0f;
-
-    /* bring a tag into view (selected one when the window opens, or one just added) */
-    if (s_scroll_to != -2) {
-      for (int i = 0; i < n; ++i)
-        if (s_disp[i] == s_scroll_to) {
-          s_goal = i * pitch - (vis_w - cell) * 0.5f;
-          if (s_goal < 0) s_goal = 0;
-          s_scroll_to = -2;
-          break;
-        }
-      if (s_scroll_to != -2 && now > s_status_until + 8.0) s_scroll_to = -2;
-    }
-
-    /* touch / mouse drag-scroll with a little momentum; tap picks a tag */
-    static bool drag_on = false, drag_moved = false;
-    static float drag_x0 = 0, vel = 0;
-    bool hov = igIsWindowHovered(ImGuiHoveredFlags_None);
-    int tap = -1;
-    if (hov && igIsMouseClicked_Bool(0, false)) {
-      drag_on = true;
-      drag_moved = false;
-      drag_x0 = io->MousePos.x;
-      vel = 0;
-      s_goal = -1.0f;
-    }
-    if (hov && (io->MouseWheel != 0.0f || io->MouseWheelH != 0.0f)) {
-      igSetScrollX_Float(igGetScrollX() - (io->MouseWheel + io->MouseWheelH) * pitch * 2.0f);
-      s_goal = -1.0f;
-    }
-    if (drag_on) {
-      if (igIsMouseDown_Nil(0)) {
-        if (!drag_moved && fabsf(io->MousePos.x - drag_x0) > 10.0f) drag_moved = true;
-        if (drag_moved) {
-          igSetScrollX_Float(igGetScrollX() - io->MouseDelta.x);
-          vel = io->MouseDelta.x;
-        }
-      } else {
-        if (!drag_moved) {
-          float mx = io->MousePos.x - org.x, my = io->MousePos.y - org.y;
-          int idx = (int)floorf(mx / pitch);
-          if (mx >= 0 && idx >= 0 && idx < n && mx - idx * pitch <= cell && my >= -6.0f &&
-              my <= cell + 6.0f)
-            tap = idx;
-        }
-        drag_on = false;
-      }
-    } else if (fabsf(vel) > 0.5f) {
-      igSetScrollX_Float(igGetScrollX() - vel);
-      vel *= 0.92f;
+  igSameLine(0, spx);
+  {
+    ImVec2 a;
+    igGetCursorScreenPos(&a);
+    ImVec2 b = {a.x + rowh, a.y + rowh};
+    if (igInvisibleButton("##ntl_sel_box", (ImVec2){rowh, rowh}, 0)) s_open_big = true;
+    bool hot = igIsItemHovered(ImGuiHoveredFlags_None);
+    ImDrawList_AddRectFilled(dl, a, b,
+                             hot ? tcol(0.30f, 0.20f, 0.50f, 0.75f) : tcol(0.176f, 0.106f, 0.306f, 0.60f),
+                             10.0f, 0);
+    ImDrawList_AddRect(dl, a, b, tcol(0.690f, 0.580f, 0.960f, 0.50f), 10.0f, 0, 1.4f);
+    const ntl_tag_def *def;
+    unsigned long long tex;
+    int atw, ath;
+    float pad = rowh * 0.10f;
+    if (s_sel >= 0 && resolve(s_sel, &def, &tex, &atw, &ath)) {
+      thumb(dl, def, tex, atw, ath, (ImVec2){a.x + pad, a.y + pad}, (ImVec2){b.x - pad, b.y - pad});
     } else {
-      vel = 0;
-    }
-    if (s_arrow != 0.0f) {
-      s_goal = igGetScrollX() + s_arrow;
-      if (s_goal < 0) s_goal = 0;
-      s_arrow = 0.0f;
-    }
-    if (s_goal >= 0.0f && !drag_on) {
-      float cur = igGetScrollX(), nd = cur + (s_goal - cur) * 0.3f;
-      if (fabsf(s_goal - cur) < 1.0f) {
-        nd = s_goal;
-        s_goal = -1.0f;
-      }
-      igSetScrollX_Float(nd);
-    }
-
-    for (int i = 0; i < n; ++i) {
-      float cx = org.x + i * pitch;
-      if (cx + cell < wp.x || cx > wp.x + wsz.x) continue;
-      int id = s_disp[i];
-      ImVec2 a = {cx, org.y}, b = {cx + cell, org.y + cell};
-      bool hot = hov && !drag_moved && io->MousePos.x >= a.x && io->MousePos.x <= b.x &&
-                 io->MousePos.y >= a.y && io->MousePos.y <= b.y;
-      draw_cell(dl, a, b, id, id == s_sel, hot, false);
-    }
-    if (tap >= 0) select_tag(s_disp[tap]);
-
-    /* slim position indicator under the strip's cells */
-    float max_scroll = total_w - vis_w;
-    if (max_scroll > 1.0f) {
-      float track_x0 = wp.x + 10.0f, track_x1 = wp.x + wsz.x - 10.0f;
-      float ty2 = wp.y + wsz.y - 4.0f;
-      float frac = vis_w / total_w, pos = igGetScrollX() / max_scroll;
-      float tl = (track_x1 - track_x0);
-      float tw = fmaxf(tl * frac, 16.0f);
-      float tx = track_x0 + (tl - tw) * (pos < 0 ? 0 : pos > 1 ? 1 : pos);
-      ImDrawList_AddRectFilled(dl, (ImVec2){tx, ty2 - 1.5f}, (ImVec2){tx + tw, ty2 + 1.5f},
-                               tcol(0.80f, 0.70f, 1.0f, 0.55f), 2.0f, 0);
+      const char *t = s_sel >= 0 ? "..." : "-";
+      ImVec2 ts;
+      igCalcTextSize(&ts, t, NULL, false, -1.0f);
+      ImDrawList_AddText_Vec2(dl, (ImVec2){a.x + (rowh - ts.x) * 0.5f, a.y + (rowh - ts.y) * 0.5f},
+                              tcol(0.62f, 0.55f, 0.80f, 0.8f), t, NULL);
     }
   }
-  igEndChild();
-  igPopStyleColor(1);
-  igPopStyleVar(2);
-  ImDrawList_AddRect(dl, child_a, (ImVec2){child_a.x + child_w, child_a.y + strip_h},
-                     tcol(0.690f, 0.580f, 0.960f, 0.40f), 10.0f, 0, 1.2f);
-  igSameLine(0, ssp);
-  if (igButton("\uea34##ntl_tag_next", (ImVec2){aw, strip_h})) s_arrow = 3.0f * pitch;
-  crystal_sheen();
 
-  /* ---- buttons: Upload / Add ID / Sync / Remove ---- */
-  float y3 = y2 + strip_h + sp;
+  /* ---- buttons: Upload / Add ID / Remove ---- */
+  float y3 = y1 + rowh + sp;
   igSetCursorPos((ImVec2){x, y3});
-  float bw = (w - 3 * spx) / 4.0f;
+  float bw = (w - 2 * spx) / 3.0f;
   if (igButton("Upload", (ImVec2){bw, 0})) ntl_tags_open_upload_page();
   crystal_sheen();
   igSameLine(0, -1);
   if (igButton("Add ID", (ImVec2){bw, 0})) s_open_add = true;
-  crystal_sheen();
-  igSameLine(0, -1);
-  if (igButton("Browse", (ImVec2){bw, 0})) s_open_big = true;
   crystal_sheen();
   igSameLine(0, -1);
   igBeginDisabled(s_sel < 0);

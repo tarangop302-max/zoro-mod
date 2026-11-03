@@ -97,6 +97,7 @@ static void reset_joystick(user_settings* usrs) {
   usrs->joy_rel_x = usrs->ctrl_swap_sides ? 0.875f : 0.125f;
   usrs->joy_rel_y = 0.825f;
   usrs->joy_rel_size = 0.175f;
+  user_settings_set_joy_laser_pct(usrs, 100);
 }
 
 static void reset_tab(user_settings* usrs, int tab) {
@@ -197,6 +198,13 @@ static void tab_layout(tenv* env, user_settings* usrs, ImGuiStyle* style,
     form_slider("Size", "##joy size", &usrs->joy_rel_size, 0.08f, 0.28f, "%.3f");
     igEndDisabled();
     form_slider("Opacity", "##joy opacity", &usrs->joy_opacity, 0.0f, 1.0f, "%.2f");
+    {
+      /* Assist laser length: 10% = short stub, 100% = to the screen edge. */
+      float laser_pct = (float)user_settings_joy_laser_pct(usrs);
+      if (form_slider("Laser length", "##joy laser length", &laser_pct, 10.0f,
+                      100.0f, "%.0f%%"))
+        user_settings_set_joy_laser_pct(usrs, (int)(laser_pct + 0.5f));
+    }
     igEndTable();
   }
   if (igButton("Reset joystick position", (ImVec2){-1, 0.0f})) reset_joystick(usrs);

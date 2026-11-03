@@ -323,6 +323,10 @@ void android_jni_play_sos_beep(int kind) {
     ajni_call_activity_int("playSosBeep", kind);
 }
 
+void android_jni_set_run_active(bool active) {
+    ajni_call_activity_int("setRunActive", active ? 1 : 0);
+}
+
 void android_jni_open_url(const char* url) {
     if (!g_android_app || !g_android_app->activity ||
         !g_android_app->activity->vm) {

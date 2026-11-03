@@ -470,7 +470,37 @@ typedef struct user_settings {
   uint8_t lobby_bg_reserved[8];
   int     lobby_bg_index;
   float   lobby_bg_dim;
+
+  /* v2.28 extension: centre line width and NTL-style leaderboard options.
+
+     center_line_width: per-mode ([0]=Normal, [1]=Assist) thickness in screen
+     pixels of the Center line drawn on your own snake (default 2).
+
+     lb_title: the text shown above the leaderboard (like NTL's "Top 10
+     Title"). Empty = the default "Leaderboard". lb_title_color: its colour
+     (with alpha). lb_names_color(+_enabled): optional colour that replaces
+     the skin-based names/scores colour. lb_own_color(+_enabled): optional
+     colour for your own line.
+
+     Appended after lobby_bg_dim so every earlier file stays a compatible
+     prefix (see v228_prefix in read_user_settings). The 16-byte reserved
+     block keeps sizeof(user_settings) strictly larger than the previous
+     release. */
+  uint8_t lb_style_reserved[16];
+  float   center_line_width[2];
+  vec4    lb_title_color;
+  vec4    lb_names_color;
+  vec4    lb_own_color;
+  bool    lb_names_color_enabled;
+  bool    lb_own_color_enabled;
+  char    lb_title[33];
 } user_settings;
+
+#define CENTER_LINE_WIDTH_MIN 1.0f
+#define CENTER_LINE_WIDTH_MAX 12.0f
+#define CENTER_LINE_WIDTH_DEFAULT 2.0f
+#define LB_TITLE_MAX 32
+#define LB_TITLE_DEFAULT "Leaderboard"
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {
   if (i < NUM_STORED_HOTKEYS) return &u->hotkeys[i];

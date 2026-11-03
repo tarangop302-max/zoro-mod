@@ -419,7 +419,7 @@ void ui_overlay(tenv* env) {
                                   : (ddx < -1e-4f ? (0.0f - sx) / ddx : 1e9f);
           float ty_ = ddy > 1e-4f ? (sh_ - sy) / ddy
                                   : (ddy < -1e-4f ? (0.0f - sy) / ddy : 1e9f);
-          float len = fminf(fminf(tx_, ty_), 0.95f * fminf(sw_, sh_));
+          float len = fminf(tx_, ty_); /* 100% = all the way to the screen edge */
           if (len < 0.0f) len = 0.0f;
           /* Settings > "Joystick laser length" (100% = to the screen edge). */
           len *= (float)user_settings_joy_laser_pct(usrs) / 100.0f;
@@ -671,8 +671,10 @@ void ui_overlay(tenv* env) {
       /* NTL-style title above the table (Settings > Leaderboard title). */
       const char* lb_title_txt =
           usrs->lb_title[0] ? usrs->lb_title : LB_TITLE_DEFAULT;
+      /* Title is drawn a little larger than the rows so it stands out. */
+      const float lb_title_font_size = lb_size_bold * 1.3f;
       igPushFont(usr->imgui_data.mono_font_bold[usrs->lb_font_size],
-                 lb_size_bold);
+                 lb_title_font_size);
       ImVec2 lb_title_size;
       igCalcTextSize(&lb_title_size, lb_title_txt, NULL, false, -1);
       igPopFont();
@@ -697,7 +699,7 @@ void ui_overlay(tenv* env) {
       igSetCursorPosY(lb_y);
 
       igPushFont(usr->imgui_data.mono_font_bold[usrs->lb_font_size],
-                 lb_size_bold);
+                 lb_title_font_size);
       igSetCursorPosX(lb_x + (lb_box_w - lb_title_size.x) * 0.5f);
       igTextColored((ImVec4){usrs->lb_title_color[0], usrs->lb_title_color[1],
                              usrs->lb_title_color[2], usrs->lb_title_color[3]},

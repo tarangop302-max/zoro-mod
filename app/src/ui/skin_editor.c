@@ -402,6 +402,9 @@ void ui_skin_editor(tenv* env) {
         &(bp_instance){{acx - m, acy - m, m * 2, 0}, acc->uv, {1, 1, 1, 1}});
   }
 
+  /* The chosen NTL tag, hanging off the preview snake's head like in a match. */
+  ntl_tags_draw_preview(last_bp_pos[0] + scale / 2, last_bp_pos[1] + scale / 2, scale);
+
   float row_h = style->ItemSpacing.y + frame_height;
   float picker_x = ctx->size[0] * 0.5 - tot_size[0] * 0.5f;
   float half_w = tot_size[0] / 2 - style->ItemSpacing.x / 2;

@@ -159,6 +159,25 @@ void user_settings_default(user_settings* usr_settings) {
          sizeof(usr_settings->lobby_bg_reserved));
   usr_settings->lobby_bg_index = -1;
   usr_settings->lobby_bg_dim = 0.25f;
+  memset(usr_settings->lb_style_reserved, 0,
+         sizeof(usr_settings->lb_style_reserved));
+  usr_settings->center_line_width[0] = CENTER_LINE_WIDTH_DEFAULT;
+  usr_settings->center_line_width[1] = CENTER_LINE_WIDTH_DEFAULT;
+  usr_settings->lb_title_color[0] = 1.0f;
+  usr_settings->lb_title_color[1] = 1.0f;
+  usr_settings->lb_title_color[2] = 1.0f;
+  usr_settings->lb_title_color[3] = 0.85f;
+  usr_settings->lb_names_color[0] = 1.0f;
+  usr_settings->lb_names_color[1] = 1.0f;
+  usr_settings->lb_names_color[2] = 1.0f;
+  usr_settings->lb_names_color[3] = 1.0f;
+  usr_settings->lb_own_color[0] = 0.0f;
+  usr_settings->lb_own_color[1] = 1.0f;
+  usr_settings->lb_own_color[2] = 1.0f;
+  usr_settings->lb_own_color[3] = 1.0f;
+  usr_settings->lb_names_color_enabled = false;
+  usr_settings->lb_own_color_enabled = false;
+  memset(usr_settings->lb_title, 0, sizeof(usr_settings->lb_title));
 
   for (int i = 0; i < MAX_KEY_BTNS; i++) {
     usr_settings->key_btns[i].active   = false;
@@ -383,9 +402,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v225_prefix = offsetof(user_settings, key_geom_reserved);
   size_t v226_prefix = offsetof(user_settings, key_editor_reserved);
   size_t v227_prefix = offsetof(user_settings, lobby_bg_reserved);
+  size_t v228_prefix = offsetof(user_settings, lb_style_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v228_prefix)
+    /* A file saved before the centre line width / leaderboard style options
+       existed ends at v228_prefix (it already contains the lobby background),
+       possibly followed only by compiler tail padding. Keep every saved
+       value; the new options keep their defaults. */
+    bytes_to_read = v228_prefix;
   else if ((size_t)file_size >= v227_prefix)
     /* A file saved before the lobby background existed ends at v227_prefix,
        possibly followed only by compiler tail padding. Keep every saved value;
@@ -850,6 +876,27 @@ void read_user_settings(user_settings* usr_settings) {
     loaded.lobby_bg_index = -1;
   if (!(loaded.lobby_bg_dim >= 0.0f && loaded.lobby_bg_dim <= 0.85f))
     loaded.lobby_bg_dim = 0.25f;
+
+  for (int m = 0; m < 2; ++m) {
+    if (!isfinite(loaded.center_line_width[m]))
+      loaded.center_line_width[m] = CENTER_LINE_WIDTH_DEFAULT;
+    else if (loaded.center_line_width[m] < CENTER_LINE_WIDTH_MIN)
+      loaded.center_line_width[m] = CENTER_LINE_WIDTH_MIN;
+    else if (loaded.center_line_width[m] > CENTER_LINE_WIDTH_MAX)
+      loaded.center_line_width[m] = CENTER_LINE_WIDTH_MAX;
+  }
+  {
+    float* lb_cols[3] = {loaded.lb_title_color, loaded.lb_names_color,
+                         loaded.lb_own_color};
+    for (int k = 0; k < 3; ++k)
+      for (int c = 0; c < 4; ++c)
+        if (!isfinite(lb_cols[k][c]) || lb_cols[k][c] < 0.0f ||
+            lb_cols[k][c] > 1.0f)
+          lb_cols[k][c] = 1.0f;
+  }
+  loaded.lb_names_color_enabled = loaded.lb_names_color_enabled ? true : false;
+  loaded.lb_own_color_enabled = loaded.lb_own_color_enabled ? true : false;
+  loaded.lb_title[sizeof loaded.lb_title - 1] = 0;
 
   *usr_settings = loaded;
 }

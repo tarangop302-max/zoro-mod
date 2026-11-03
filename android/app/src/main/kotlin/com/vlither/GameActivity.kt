@@ -61,6 +61,18 @@ open class GameActivity : NativeActivity() {
     companion object {
         private const val TAG = "VlitherGame"
 
+        /* Background play: set by native (android_jni_set_run_active) while a
+           live run is in progress. onStop starts the service only if true. */
+        @Volatile private var runActive = false
+
+        /** Signature must stay (Activity, Int)V (looked up from android_jni.c). */
+        @JvmStatic
+        fun setRunActive(activity: Activity, active: Int) {
+            runActive = active != 0
+            // Run ended (death / disconnect / lobby): nothing left to keep alive.
+            if (!runActive) BackgroundPlayService.stop(activity)
+        }
+
         /* Weak ref to the overlay so the static JNI callback can reach it */
         private var overlayRef: FrameLayout? = null
         private var scanAnimator: ObjectAnimator? = null
@@ -1347,6 +1359,18 @@ open class GameActivity : NativeActivity() {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
+    }
+
+    // Background play: back in front -> the service is no longer needed.
+    override fun onStart() {
+        super.onStart()
+        BackgroundPlayService.stop(this)
+    }
+
+    // Leaving the app mid-run: keep the process awake so the run continues.
+    override fun onStop() {
+        if (runActive) BackgroundPlayService.start(this)
+        super.onStop()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

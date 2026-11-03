@@ -78,6 +78,10 @@ void ntl_tags_open_upload_page(void);
  * same font as the editor), and the block itself, drawn at window position
  * (x, y) with width w. */
 float ntl_tags_block_height(void);
+
+/* The selected tag drawn on the Skin Editor's preview snake: (hx, hy) = centre of the
+ * head in window coordinates, body_d = diameter of one body segment. */
+void ntl_tags_draw_preview(float hx, float hy, float body_d);
 void ntl_tags_skin_editor_ui(tenv *env, float x, float y, float w);
 
 #endif

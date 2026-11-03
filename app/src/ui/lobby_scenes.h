@@ -1,7 +1,12 @@
 #ifndef LOBBY_SCENES_H
 #define LOBBY_SCENES_H
 
-#include <thermite.h>
+/* Only needs the cimgui draw-list types (not the whole mod / Vulkan headers),
+   so it is pulled in directly. Same define user.h uses before cimgui.h. */
+#ifndef CIMGUI_DEFINE_ENUMS_AND_STRUCTS
+#define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
+#endif
+#include "../cimgui/cimgui.h"
 
 /* Animated overlays for the lobby background presets.
  *

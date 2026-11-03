@@ -18,6 +18,10 @@ void android_jni_play_quick_sound(int id);
 /* SOS beep: kind 0 = urgent alert (teammate sent SOS), 1 = short confirm. */
 void android_jni_play_sos_beep(int kind);
 
+/* Background play: tells GameActivity whether a live run is in progress
+   (alive, connected). Only reported on change. */
+void android_jni_set_run_active(bool active);
+
 void android_jni_open_url(const char* url);
 
 const char* android_jni_get_clipboard_text(void);

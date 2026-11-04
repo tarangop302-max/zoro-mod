@@ -133,9 +133,11 @@ static inline int rt_gate(double now_ms, double last_ms, double min_ms) {
 #define NUM_STORED_HOTKEYS 8
 #define NUM_HOTKEYS 11
 #define MAX_KEY_BTNS 16
-/* Lobby (title screen) background: -1 = original gradient, 0..PRESET_COUNT-1
-   = built-in backgrounds, LOBBY_BG_CUSTOM = the picture uploaded from the
-   phone gallery. */
+/* Lobby (title screen) background: -1 = theme + colour chosen in the picker
+   (stored in lobby_bg_reserved[1]/[2], see ui/lobby_bg.c), LOBBY_BG_CUSTOM =
+   the picture uploaded from the phone gallery. 0..LOBBY_BG_PRESET_COUNT-1 are
+   values written by the older single-list picker; they are converted to
+   theme + colour on first use, so keep this at 14. */
 #define LOBBY_BG_PRESET_COUNT 14
 #define LOBBY_BG_CUSTOM 100
 

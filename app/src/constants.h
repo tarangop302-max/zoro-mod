@@ -125,13 +125,21 @@ static inline int rt_gate(double now_ms, double last_ms, double min_ms) {
 #define HOTKEY_QUIT 7
 #define HOTKEY_OPEN_SETTINGS 8
 #define HOTKEY_EYES_BACK 9
+#define HOTKEY_KEY_EDITOR 10
 /* Hotkeys 0..7 live in the middle of user_settings (layout must not change,
    or old user.dat files would be misread). HOTKEY_OPEN_SETTINGS and
    HOTKEY_EYES_BACK are stored at the end of the struct -- use usr_hotkey() to
    access any index. */
 #define NUM_STORED_HOTKEYS 8
-#define NUM_HOTKEYS 10
+#define NUM_HOTKEYS 11
 #define MAX_KEY_BTNS 16
+/* Lobby (title screen) background: -1 = theme + colour chosen in the picker
+   (stored in lobby_bg_reserved[1]/[2], see ui/lobby_bg.c), LOBBY_BG_CUSTOM =
+   the picture uploaded from the phone gallery. 0..LOBBY_BG_PRESET_COUNT-1 are
+   values written by the older single-list picker; they are converted to
+   theme + colour on first use, so keep this at 14. */
+#define LOBBY_BG_PRESET_COUNT 14
+#define LOBBY_BG_CUSTOM 100
 
 typedef enum conn_status {
   DISCONNECTED = 0,

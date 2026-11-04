@@ -34,6 +34,7 @@ static void set_tcp_nodelay(struct mg_connection* c) { (void)c; }
 #include "../game/eyes_back.h"
 #include "../game/snake.h"
 #include "../game/snakey_rain.h"
+#include "../game/ntl_tags.h"
 #include "../game/lifetime_stats.h"
 #include "../user.h"
 
@@ -214,7 +215,8 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       skin_compressed_len = tdarray_length(skin_compressed);
       ba = malloc(8 + 20 + nick_len + 8 + skin_compressed_len);
     } else {
-      ba = malloc(8 + 20 + nick_len);
+      /* +8: room for the NTL tag header (see below) */
+      ba = malloc(8 + 20 + nick_len + 8);
     }
 
     ba[0] = 115;
@@ -254,6 +256,28 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       }
 
       tdarray_destroy(skin_compressed);
+
+      /* NTL tag: bytes 0/1/6 of the 8-byte skin header carry the tag id
+         (the NTL mod's format). Skipped when no tag is selected. */
+      uint8_t tag_hdr[8] = {0};
+      if (ntl_tags_encode_header(tag_hdr)) {
+        int hdr_at = m - skin_compressed_len - 8;
+        ba[hdr_at + 0] = tag_hdr[0];
+        ba[hdr_at + 1] = tag_hdr[1];
+        ba[hdr_at + 6] = tag_hdr[6];
+      }
+    } else {
+      /* Default skin: send just the 8-byte header, with the skin id in byte
+         2 and the tag in bytes 0/1/6, exactly like the NTL mod. */
+      uint8_t tag_hdr[8] = {0};
+      if (ntl_tags_encode_header(tag_hdr)) {
+        tag_hdr[2] = (uint8_t)usrs->default_skin;
+        tag_hdr[3] = (uint8_t)(rand() % 256);
+        tag_hdr[4] = (uint8_t)(rand() % 256);
+        tag_hdr[5] = (uint8_t)(rand() % 256);
+        tag_hdr[7] = (uint8_t)(rand() % 256);
+        for (int i = 0; i < 8; i++) ba[m++] = tag_hdr[i];
+      }
     }
 
     mg_ws_send(c, ba, m, WEBSOCKET_OP_BINARY);
@@ -342,6 +366,10 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       m += nl;
       int skl = a[m];
       m++;
+      /* NTL tag (+ "plain default skin" flag) from the skin header */
+      int ntl_plain_skin = -1;
+      int ntl_tag = NTL_TAG_NONE;
+      if (skl >= 8) ntl_tag = ntl_tags_decode_header(a + m, skl, &ntl_plain_skin);
       if (skl > 0) {
 
         for (int j = 8; j < skl; j += 2) {
@@ -475,6 +503,13 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       o.yy = sny;
       o.cv = cv % NUM_DEFAULT_SKINS;
       o.cusk = skl != 0;
+      if (ntl_plain_skin >= 0) {
+        /* NTL spawn header with a default skin: not a custom skin */
+        o.cusk = false;
+        o.cv = ntl_plain_skin % NUM_DEFAULT_SKINS;
+      }
+      o.ntlid = id; /* the 'S' packet below refines this */
+      o.ntl_tag1 = (int16_t)(ntl_tag >= 0 ? ntl_tag + 1 : 0);
       o.sc = 1;
       o.ssp = gdata->data.nsp1 + gdata->data.nsp2 * o.sc;
       o.fsp = o.ssp + .1;
@@ -678,6 +713,22 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
         o->sp = speed;
         o->spang = o->sp / gdata->data.spangdv;
         if (o->spang > 1) o->spang = 1;
+      }
+    }
+  } else if (cmd == 'S') {
+    /* NTL id of a snake: low 10 bits of its id + 6 bits of the second value */
+    if (dlen >= 6) {
+      int sid = a[m] << 8 | a[m + 1];
+      uint32_t y = (uint32_t)a[m + 2] << 24 | (uint32_t)a[m + 3] << 16 |
+                   (uint32_t)a[m + 4] << 8 | (uint32_t)a[m + 5];
+      int ntlid = 65535 & ((63 & y) << 10 | (1023 & sid));
+      int snakes_len = tdarray_length(gdata->data.snakes);
+      for (int i = 0; i < snakes_len; i++) {
+        snake* o = gdata->data.snakes + i;
+        if (o->id == sid) {
+          o->ntlid = ntlid;
+          break;
+        }
       }
     }
   } else if (cmd == 'h') {

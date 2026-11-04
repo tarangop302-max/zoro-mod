@@ -151,6 +151,33 @@ void user_settings_default(user_settings* usr_settings) {
       (hotkey){GLFW_KEY_O, false, 0, "Open settings"};
   usr_settings->hotkey_eyes_back =
       (hotkey){GLFW_KEY_U, false, 0, "Eyes back"};
+  memset(usr_settings->key_editor_reserved, 0,
+         sizeof(usr_settings->key_editor_reserved));
+  usr_settings->hotkey_key_editor =
+      (hotkey){GLFW_KEY_L, false, 0, "Keyboard layout"};
+  memset(usr_settings->lobby_bg_reserved, 0,
+         sizeof(usr_settings->lobby_bg_reserved));
+  usr_settings->lobby_bg_index = -1;
+  usr_settings->lobby_bg_dim = 0.25f;
+  memset(usr_settings->lb_style_reserved, 0,
+         sizeof(usr_settings->lb_style_reserved));
+  usr_settings->center_line_width[0] = CENTER_LINE_WIDTH_DEFAULT;
+  usr_settings->center_line_width[1] = CENTER_LINE_WIDTH_DEFAULT;
+  usr_settings->lb_title_color[0] = 1.0f;
+  usr_settings->lb_title_color[1] = 1.0f;
+  usr_settings->lb_title_color[2] = 1.0f;
+  usr_settings->lb_title_color[3] = 0.85f;
+  usr_settings->lb_names_color[0] = 1.0f;
+  usr_settings->lb_names_color[1] = 1.0f;
+  usr_settings->lb_names_color[2] = 1.0f;
+  usr_settings->lb_names_color[3] = 1.0f;
+  usr_settings->lb_own_color[0] = 0.0f;
+  usr_settings->lb_own_color[1] = 1.0f;
+  usr_settings->lb_own_color[2] = 1.0f;
+  usr_settings->lb_own_color[3] = 1.0f;
+  usr_settings->lb_names_color_enabled = false;
+  usr_settings->lb_own_color_enabled = false;
+  memset(usr_settings->lb_title, 0, sizeof(usr_settings->lb_title));
 
   for (int i = 0; i < MAX_KEY_BTNS; i++) {
     usr_settings->key_btns[i].active   = false;
@@ -373,9 +400,28 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v223_prefix = offsetof(user_settings, center_ring_reserved);
   size_t v224_prefix = offsetof(user_settings, turn_path_reserved);
   size_t v225_prefix = offsetof(user_settings, key_geom_reserved);
+  size_t v226_prefix = offsetof(user_settings, key_editor_reserved);
+  size_t v227_prefix = offsetof(user_settings, lobby_bg_reserved);
+  size_t v228_prefix = offsetof(user_settings, lb_style_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v228_prefix)
+    /* A file saved before the centre line width / leaderboard style options
+       existed ends at v228_prefix (it already contains the lobby background),
+       possibly followed only by compiler tail padding. Keep every saved
+       value; the new options keep their defaults. */
+    bytes_to_read = v228_prefix;
+  else if ((size_t)file_size >= v227_prefix)
+    /* A file saved before the lobby background existed ends at v227_prefix,
+       possibly followed only by compiler tail padding. Keep every saved value;
+       the new fields keep their defaults. */
+    bytes_to_read = v227_prefix;
+  else if ((size_t)file_size >= v226_prefix)
+    /* A file saved before the Keyboard layout hotkey existed ends at
+       v226_prefix, possibly followed only by compiler tail padding. Keep every
+       saved value; the new hotkey keeps its default. */
+    bytes_to_read = v226_prefix;
   else if ((size_t)file_size >= v225_prefix)
     /* A file saved before the key width / zoom thickness fields existed ends
        at v225_prefix (it already contains the turn path width), possibly
@@ -509,9 +555,14 @@ void read_user_settings(user_settings* usr_settings) {
     float opacity_floor = (i == 1 && loaded.modes[i].render_mode == 2)
                                ? 0.0f
                                : 0.15f;
-    if (loaded.transparent_skin_opacity[i] < opacity_floor ||
-        loaded.transparent_skin_opacity[i] > 0.85f)
+    /* Keep what the player chose: only a corrupt value goes back to the
+       default; an out-of-range one is clamped to the nearest allowed value. */
+    if (!isfinite(loaded.transparent_skin_opacity[i]))
       loaded.transparent_skin_opacity[i] = 0.35f;
+    else if (loaded.transparent_skin_opacity[i] < opacity_floor)
+      loaded.transparent_skin_opacity[i] = opacity_floor;
+    else if (loaded.transparent_skin_opacity[i] > 0.85f)
+      loaded.transparent_skin_opacity[i] = 0.85f;
   }
   /* The centre ring is always on; center_ring_enabled and
      turn_path_min_score are kept only so the settings file layout does not
@@ -551,6 +602,9 @@ void read_user_settings(user_settings* usr_settings) {
   }
   loaded.net_graph_reserved[0] = loaded.net_graph_reserved[0] ? 1 : 0;
   if (loaded.net_graph_reserved[1] > 101) loaded.net_graph_reserved[1] = 0;
+  if (loaded.net_graph_reserved[3] != 0 &&
+      (loaded.net_graph_reserved[3] < 10 || loaded.net_graph_reserved[3] > 100))
+    loaded.net_graph_reserved[3] = 0;
   if (loaded.fps_limit != 0 && loaded.fps_limit != 60 &&
       loaded.fps_limit != 90 && loaded.fps_limit != 120 &&
       loaded.fps_limit != 144)
@@ -796,6 +850,53 @@ void read_user_settings(user_settings* usr_settings) {
     eb->active = false;
     strcpy(eb->description, "Eyes back");
   }
+
+  {
+    /* Keyboard layout: same key rules and de-duplication as Eyes back. */
+    hotkey* ke = &loaded.hotkey_key_editor;
+    bool ok = (ke->key >= 48 && ke->key < 58) || (ke->key >= 65 && ke->key < 91);
+    if (!ok || ke->key == GLFW_KEY_M || ke->key == GLFW_KEY_N)
+      ke->key = GLFW_KEY_L;
+    for (int tries = 0; tries < 36; ++tries) {
+      bool taken = false;
+      for (int d = 0; d < HOTKEY_KEY_EDITOR; ++d)
+        if (usr_hotkey(&loaded, d)->key == ke->key) taken = true;
+      if (!taken && ke->key != GLFW_KEY_M && ke->key != GLFW_KEY_N) break;
+      ke->key = (ke->key >= 65 && ke->key < 90) ? ke->key + 1 : 65;
+    }
+    if (ke->mode < 0 || ke->mode > 1) ke->mode = 0;
+    ke->active = false;
+    strcpy(ke->description, "Keyboard layout");
+  }
+
+  if (!(loaded.lobby_bg_index == -1 ||
+        (loaded.lobby_bg_index >= 0 &&
+         loaded.lobby_bg_index < LOBBY_BG_PRESET_COUNT) ||
+        loaded.lobby_bg_index == LOBBY_BG_CUSTOM))
+    loaded.lobby_bg_index = -1;
+  if (!(loaded.lobby_bg_dim >= 0.0f && loaded.lobby_bg_dim <= 0.85f))
+    loaded.lobby_bg_dim = 0.25f;
+
+  for (int m = 0; m < 2; ++m) {
+    if (!isfinite(loaded.center_line_width[m]))
+      loaded.center_line_width[m] = CENTER_LINE_WIDTH_DEFAULT;
+    else if (loaded.center_line_width[m] < CENTER_LINE_WIDTH_MIN)
+      loaded.center_line_width[m] = CENTER_LINE_WIDTH_MIN;
+    else if (loaded.center_line_width[m] > CENTER_LINE_WIDTH_MAX)
+      loaded.center_line_width[m] = CENTER_LINE_WIDTH_MAX;
+  }
+  {
+    float* lb_cols[3] = {loaded.lb_title_color, loaded.lb_names_color,
+                         loaded.lb_own_color};
+    for (int k = 0; k < 3; ++k)
+      for (int c = 0; c < 4; ++c)
+        if (!isfinite(lb_cols[k][c]) || lb_cols[k][c] < 0.0f ||
+            lb_cols[k][c] > 1.0f)
+          lb_cols[k][c] = 1.0f;
+  }
+  loaded.lb_names_color_enabled = loaded.lb_names_color_enabled ? true : false;
+  loaded.lb_own_color_enabled = loaded.lb_own_color_enabled ? true : false;
+  loaded.lb_title[sizeof loaded.lb_title - 1] = 0;
 
   *usr_settings = loaded;
 }

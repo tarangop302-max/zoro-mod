@@ -97,6 +97,7 @@ static void reset_joystick(user_settings* usrs) {
   usrs->joy_rel_x = usrs->ctrl_swap_sides ? 0.875f : 0.125f;
   usrs->joy_rel_y = 0.825f;
   usrs->joy_rel_size = 0.175f;
+  user_settings_set_joy_laser_pct(usrs, 100);
 }
 
 static void reset_tab(user_settings* usrs, int tab) {
@@ -197,6 +198,13 @@ static void tab_layout(tenv* env, user_settings* usrs, ImGuiStyle* style,
     form_slider("Size", "##joy size", &usrs->joy_rel_size, 0.08f, 0.28f, "%.3f");
     igEndDisabled();
     form_slider("Opacity", "##joy opacity", &usrs->joy_opacity, 0.0f, 1.0f, "%.2f");
+    {
+      /* Assist laser length: 10% = short stub, 100% = to the screen edge. */
+      float laser_pct = (float)user_settings_joy_laser_pct(usrs);
+      if (form_slider("Laser length", "##joy laser length", &laser_pct, 10.0f,
+                      100.0f, "%.0f%%"))
+        user_settings_set_joy_laser_pct(usrs, (int)(laser_pct + 0.5f));
+    }
     igEndTable();
   }
   if (igButton("Reset joystick position", (ImVec2){-1, 0.0f})) reset_joystick(usrs);
@@ -310,6 +318,13 @@ void ui_controls(tenv* env) {
   ImGuiStyle* style = igGetStyle();
   game_data* gdata = &usr->gdata;
 
+  /* Panel opacity is remembered between launches. */
+  static bool s_alpha_loaded = false;
+  if (!s_alpha_loaded) {
+    s_alpha = user_settings_get_panel_alpha(usrs, 1, 0.72f, 0.30f);
+    s_alpha_loaded = true;
+  }
+
   /* Same small font + scale as the Settings popup. */
   igPushFont(usr->imgui_data.regular_font[FONT_SIZE_SMALL],
              usr->imgui_data.regular_font[FONT_SIZE_SMALL]->LegacySize);
@@ -368,8 +383,10 @@ void ui_controls(tenv* env) {
       float sw = hv.x * 0.42f;
       igSameLine(style->WindowPadding.x + hv.x - sw, 0);
       igSetNextItemWidth(sw);
-      igSliderFloat("##controls_alpha", &s_alpha, 0.30f, 1.0f, "Opacity %.2f",
-                    ImGuiSliderFlags_AlwaysClamp);
+      if (igSliderFloat("##controls_alpha", &s_alpha, 0.30f, 1.0f,
+                        "Opacity %.2f", ImGuiSliderFlags_AlwaysClamp))
+        user_settings_set_panel_alpha(usrs, 1, s_alpha);
+      if (igIsItemDeactivatedAfterEdit()) save_user_settings(usrs);
     }
 
     /* Tab row. */

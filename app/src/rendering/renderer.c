@@ -14,6 +14,7 @@
 #include "../cimgui/cimgui_impl.h"
 #include <stdint.h>
 #include "../game/ntl_emoji.h"
+#include "../game/ntl_tags.h"
 
 void _create_image_data(renderer* r, tcontext* ctx, ivec2 size) {
   glm_ivec2_copy(size, r->size);
@@ -192,6 +193,18 @@ renderer* renderer_create(tenv* env) {
     ntl_emoji_set_texture((unsigned long long)(uintptr_t)r->emoji_atlas_ds);
   }
   DLOG("renderer: emoji_atlas_tex=%p", (void*)r->emoji_atlas_tex);
+
+  /* NTL tag atlas for the antenna tags (non-fatal). */
+  r->ntl_tags_tex = create_mipmap_texture(
+      ctx, "app/res/textures/ntl_tags.png");
+  r->ntl_tags_ds = VK_NULL_HANDLE;
+  if (r->ntl_tags_tex) {
+    r->ntl_tags_ds = igImplVulkan_AddTexture(
+        r->linear_sampler, r->ntl_tags_tex->view,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    ntl_tags_set_texture((unsigned long long)(uintptr_t)r->ntl_tags_ds);
+  }
+  DLOG("renderer: ntl_tags_tex=%p", (void*)r->ntl_tags_tex);
 
   vkCreateRenderPass(
       ctx->device,
@@ -487,6 +500,9 @@ void renderer_destroy(renderer* r, tcontext* ctx) {
   free(r->images);
   if (r->boost_button_ds) igImplVulkan_RemoveTexture(r->boost_button_ds);
   destroy_texture(ctx, r->boost_button_tex);
+  ntl_tags_set_texture(0);
+  if (r->ntl_tags_ds) igImplVulkan_RemoveTexture(r->ntl_tags_ds);
+  if (r->ntl_tags_tex) destroy_texture(ctx, r->ntl_tags_tex);
   ntl_emoji_set_texture(0);
   if (r->emoji_atlas_ds) igImplVulkan_RemoveTexture(r->emoji_atlas_ds);
   if (r->emoji_atlas_tex) destroy_texture(ctx, r->emoji_atlas_tex);

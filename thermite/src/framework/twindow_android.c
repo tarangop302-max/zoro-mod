@@ -310,6 +310,9 @@ static ImGuiKey android_key_to_imgui(int32_t keycode) {
 #define AKEYCODE_PASTE 279
 #endif
 
+/* Defined in app/src/imgui_setup_android.c (duplicate-character guard). */
+extern void android_imgui_add_char(unsigned int cp);
+
 static int32_t handle_input(struct android_app* app, AInputEvent* event) {
     twindow* wnd = (twindow*)app->userData;
     if (!wnd) return 0;
@@ -388,7 +391,10 @@ static int32_t handle_input(struct android_app* app, AInputEvent* event) {
                             int unicode = (*jenv)->CallIntMethod(
                                 jenv, ke, get_unicode, meta);
                             if (unicode > 0)
-                                ImGuiIO_AddInputCharacter(io, (unsigned int)unicode);
+                                /* Goes through the duplicate guard in
+                                   imgui_setup_android.c: the IME bridge may
+                                   deliver this same keypress as text too. */
+                                android_imgui_add_char((unsigned int)unicode);
                             (*jenv)->DeleteLocalRef(jenv, ke);
                         }
                     }

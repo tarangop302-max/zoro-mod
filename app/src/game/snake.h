@@ -61,6 +61,10 @@ typedef struct snake {
   float fls[GD_EEZ];
 
   uint8_t accessory;
+  /* NTL tags: NTL id of this snake (matches the tag feed) and its tag id + 1
+   * (0 = no tag, so a zero-initialised snake has none). */
+  int ntlid;
+  int16_t ntl_tag1;
   uint8_t cusk_data[MAX_SKIN_CODE_LEN];
   char nk[MAX_NICKNAME_LEN + 1];
 

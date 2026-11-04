@@ -989,6 +989,54 @@ static void sr_touch_scroll(tenv *env, int idx) {
  * Shared settings panel (title-screen popup + in-game window)
  * ========================================================================== */
 
+/* ---- Design A helpers: status pill + pill-style on/off switch ---- */
+static void sr_status_pill(const char *txt, ImVec4 col, float w) {
+  ImVec2 p;
+  igGetCursorScreenPos(&p);
+  float h = igGetFrameHeight();
+  char buf[160];
+  snprintf(buf, sizeof buf, "%s", txt);
+  float dot_r = h * 0.17f;
+  float padx = h * 0.45f;
+  sr_fit_text(buf, w - padx * 2.0f - dot_r * 2.0f - 8.0f);
+  ImDrawList *dl = igGetWindowDrawList();
+  ImVec2 b = {p.x + w, p.y + h};
+  ImDrawList_AddRectFilled(dl, p, b,
+                           sr_u32((ImVec4){0.14f, 0.10f, 0.21f, 0.90f}),
+                           h * 0.5f, ImDrawFlags_None);
+  ImDrawList_AddRect(dl, p, b, sr_u32(sr_alpha(col, 0.55f)), h * 0.5f,
+                     ImDrawFlags_None, 1.2f);
+  ImDrawList_AddCircleFilled(dl, (ImVec2){p.x + padx, p.y + h * 0.5f}, dot_r,
+                             sr_u32(col), 16);
+  ImVec2 ts;
+  igCalcTextSize(&ts, buf, NULL, false, -1.0f);
+  ImDrawList_AddText_Vec2(
+      dl, (ImVec2){p.x + padx + dot_r + 8.0f, p.y + (h - ts.y) * 0.5f},
+      sr_u32(SR_TEXT), buf, NULL);
+  igDummy((ImVec2){w, h});
+}
+
+static bool sr_switch(const char *id, bool *v) {
+  float h = igGetFrameHeight();
+  float w = h * 1.9f;
+  ImVec2 p;
+  igGetCursorScreenPos(&p);
+  bool pressed = igInvisibleButton(id, (ImVec2){w, h}, 0);
+  if (pressed) *v = !*v;
+  ImVec4 bg = *v ? (ImVec4){0.91f, 0.47f, 0.23f, 1.0f}
+                 : (ImVec4){0.20f, 0.16f, 0.29f, 1.0f};
+  ImDrawList *dl = igGetWindowDrawList();
+  ImDrawList_AddRectFilled(dl, p, (ImVec2){p.x + w, p.y + h}, sr_u32(bg),
+                           h * 0.5f, ImDrawFlags_None);
+  float kr = h * 0.5f - 3.0f;
+  float kx = *v ? p.x + w - h * 0.5f : p.x + h * 0.5f;
+  ImDrawList_AddCircleFilled(dl, (ImVec2){kx, p.y + h * 0.5f}, kr,
+                             sr_u32(*v ? (ImVec4){1, 1, 1, 1}
+                                       : (ImVec4){0.74f, 0.70f, 0.85f, 1}),
+                             20);
+  return pressed;
+}
+
 static void sr_settings_contents(tenv *env, int scroll_idx) {
   tuser_data *usr = env->usr;
   user_settings *usrs = &usr->usrs;
@@ -997,14 +1045,14 @@ static void sr_settings_contents(tenv *env, int scroll_idx) {
 
   sr_touch_scroll(env, scroll_idx);
 
-  /* ---- live status ---- */
+  /* ---- header: status pill (left) + on/off switch (right) ---- */
   {
     int kind = sr_kind();
     ImVec4 col = sr_kind_color(kind, now);
     char txt[160];
     if (!usrs->snakey_rain_enabled) {
       col = SR_DIM;
-      snprintf(txt, sizeof txt, "Off - enable it below to use bots");
+      snprintf(txt, sizeof txt, "Off");
     } else if (kind == SRK_OFF) {
       snprintf(txt, sizeof txt, "Starting up...");
     } else if (kind == SRK_RUNNING) {
@@ -1017,78 +1065,32 @@ static void sr_settings_contents(tenv *env, int scroll_idx) {
         else
           col = (ImVec4){1.0f, 0.40f, 0.42f, 1.0f};
       } else {
-        snprintf(txt, sizeof txt,
-                 "Ready - bots connect when you start playing");
+        snprintf(txt, sizeof txt, "Ready - bots join when you play");
       }
     } else {
       snprintf(txt, sizeof txt, "%s", S.status);
     }
     if (S.test_login) col = sr_kind_color(SRK_CONNECTING, now);
 
-    ImVec2 p;
-    igGetCursorScreenPos(&p);
-    float lh = igGetTextLineHeight();
-    float r = lh * 0.28f;
-    ImDrawList *dl = igGetWindowDrawList();
-    ImDrawList_AddCircleFilled(
-        dl, (ImVec2){p.x + r + 2.0f, p.y + lh * 0.5f + 1.0f}, r, sr_u32(col),
-        16);
-    igSetCursorScreenPos((ImVec2){p.x + r * 2.0f + 10.0f, p.y});
-    igPushStyleColor_Vec4(ImGuiCol_Text, col);
-    igTextWrapped("%s", txt);
-    igPopStyleColor(1);
+    float fh = igGetFrameHeight();
+    float sw_w = fh * 1.9f;
+    ImVec2 av;
+    igGetContentRegionAvail(&av);
+    sr_status_pill(txt, col, av.x - sw_w - style->ItemSpacing.x);
+    igSameLine(0.0f, style->ItemSpacing.x);
+    bool enabled = usrs->snakey_rain_enabled;
+    if (sr_switch("##sr_enable_switch", &enabled)) {
+      usrs->snakey_rain_enabled = enabled;
+      sr_commit(env);
+    }
     if (usrs->snakey_rain_enabled && S.account_max_bots > 0)
       igTextDisabled("Account limit: %d bots", S.account_max_bots);
   }
   igSpacing();
 
-  bool enabled = usrs->snakey_rain_enabled;
-  if (igCheckbox("Enable Snakey Rain", &enabled)) {
-    usrs->snakey_rain_enabled = enabled;
-    sr_commit(env);
-  }
-  igSpacing();
-
   igBeginDisabled(!usrs->snakey_rain_enabled);
 
-  igSeparatorText("Account");
-  igSetNextItemWidth(-1.0f);
-  igInputTextWithHint("##snakey_username", "Snakey Rain username",
-                      usrs->snakey_rain_username,
-                      sizeof usrs->snakey_rain_username,
-                      ImGuiInputTextFlags_None, NULL, NULL);
-  if (igIsItemDeactivatedAfterEdit()) sr_commit(env);
-
-  {
-    float cbw = igGetFrameHeight() + style->ItemInnerSpacing.x +
-                sr_text_w("Show");
-    ImVec2 av;
-    igGetContentRegionAvail(&av);
-    igSetNextItemWidth(av.x - cbw - style->ItemSpacing.x);
-    igInputTextWithHint("##snakey_password", "Snakey Rain password",
-                        usrs->snakey_rain_password,
-                        sizeof usrs->snakey_rain_password,
-                        S.show_password ? ImGuiInputTextFlags_None
-                                        : ImGuiInputTextFlags_Password,
-                        NULL, NULL);
-    if (igIsItemDeactivatedAfterEdit()) sr_commit(env);
-    igSameLine(0.0f, style->ItemSpacing.x);
-    igCheckbox("Show", &S.show_password);
-  }
-
-  {
-    bool busy = !S.enabled_at_start || S.connection != NULL ||
-                S.start_requested || S.bots_running || S.test_login;
-    ImVec2 av;
-    igGetContentRegionAvail(&av);
-    igBeginDisabled(busy);
-    if (igButton(S.test_login ? "Testing..." : "Test login",
-                 (ImVec2){av.x, 0.0f}))
-      sr_test_login(env);
-    igEndDisabled();
-  }
-
-  igSeparatorText("Bots");
+  /* ---- bots: big count + slider + presets ---- */
   {
     int limit = S.account_max_bots > 0 ? S.account_max_bots : 1000;
     if (limit > 1000) limit = 1000;
@@ -1096,7 +1098,11 @@ static void sr_settings_contents(tenv *env, int scroll_idx) {
     if (shown > limit) shown = limit;
     if (shown < 1) shown = 1;
 
-    igText("Maximum bots: %d", shown);
+    igPushFont(igGetFont(), igGetFontSize() * 2.0f);
+    igText("%d", shown);
+    igPopFont();
+    igSameLine(0.0f, 8.0f);
+    igTextDisabled("bots max");
 
     float fh = igGetFrameHeight();
     float step_w = fh * 1.6f;
@@ -1112,7 +1118,7 @@ static void sr_settings_contents(tenv *env, int scroll_idx) {
     }
     igSameLine(0.0f, sp);
     igSetNextItemWidth(av.x - step_w * 2.0f - sp * 2.0f);
-    if (igSliderInt("##snakey_max_bots", &shown, 1, limit, "%d",
+    if (igSliderInt("##snakey_max_bots", &shown, 1, limit, "",
                     ImGuiSliderFlags_AlwaysClamp))
       usrs->snakey_rain_max_bots = shown;
     if (igIsItemDeactivatedAfterEdit()) commit = true;
@@ -1123,17 +1129,19 @@ static void sr_settings_contents(tenv *env, int scroll_idx) {
       commit = true;
     }
 
-    /* Quick presets */
     static const int presets[] = {50, 100, 250, 500, 1000};
     const int np = (int)(sizeof presets / sizeof presets[0]);
     float chip_w = (av.x - sp * (float)(np - 1)) / (float)np;
     for (int i = 0; i < np; ++i) {
       char lbl[24];
-      snprintf(lbl, sizeof lbl, "%d##sr_chip%d", presets[i], i);
+      if (presets[i] >= 1000)
+        snprintf(lbl, sizeof lbl, "1K##sr_chip%d", i);
+      else
+        snprintf(lbl, sizeof lbl, "%d##sr_chip%d", presets[i], i);
       bool cur = (shown == presets[i]);
       if (cur)
         igPushStyleColor_Vec4(ImGuiCol_Button,
-                              (ImVec4){0.50f, 0.38f, 0.82f, 0.70f});
+                              (ImVec4){0.50f, 0.38f, 0.82f, 0.85f});
       igBeginDisabled(presets[i] > limit);
       if (igButton(lbl, (ImVec2){chip_w, 0.0f})) {
         usrs->snakey_rain_max_bots = presets[i];
@@ -1145,51 +1153,99 @@ static void sr_settings_contents(tenv *env, int scroll_idx) {
     }
     if (commit) sr_commit(env);
   }
+  igSpacing();
 
-  igSeparatorText("Bot look");
-  igText("Bot in-game name (max 24)");
-  igSetNextItemWidth(-1.0f);
-  igInputTextWithHint("##snakey_bot_name", "Name shown on bots",
-                      usrs->snakey_rain_bot_name,
-                      sizeof usrs->snakey_rain_bot_name,
-                      ImGuiInputTextFlags_None, NULL, NULL);
-  if (igIsItemDeactivatedAfterEdit()) sr_commit(env);
-
-  igText("Bot skin code");
-  igSetNextItemWidth(-1.0f);
-  igInputTextWithHint("##snakey_bot_skin", "Skin string (same as extension)",
-                      usrs->snakey_rain_bot_skin,
-                      sizeof usrs->snakey_rain_bot_skin,
-                      ImGuiInputTextFlags_None, NULL, NULL);
-  if (igIsItemDeactivatedAfterEdit()) sr_commit(env);
+  /* ---- Account (collapsible, summary in the header) ---- */
   {
-    ImVec2 av;
-    igGetContentRegionAvail(&av);
-    float half = (av.x - style->ItemSpacing.x) * 0.5f;
-    if (igButton("Paste skin", (ImVec2){half, 0.0f})) {
-      const char *clip = igGetClipboardText();
-      if (clip) {
-        while (*clip == ' ' || *clip == '\t' || *clip == '\r' ||
-               *clip == '\n')
-          ++clip;
-        char tmp[sizeof usrs->snakey_rain_bot_skin];
-        snprintf(tmp, sizeof tmp, "%s", clip);
-        size_t n = strlen(tmp);
-        while (n > 0 && (tmp[n - 1] == ' ' || tmp[n - 1] == '\t' ||
-                         tmp[n - 1] == '\r' || tmp[n - 1] == '\n'))
-          tmp[--n] = 0;
-        if (tmp[0]) {
-          snprintf(usrs->snakey_rain_bot_skin,
-                   sizeof usrs->snakey_rain_bot_skin, "%s", tmp);
-          sr_commit(env);
+    char hdr[96];
+    snprintf(hdr, sizeof hdr, "Account  -  %s##sr_hdr_account",
+             usrs->snakey_rain_username[0] ? usrs->snakey_rain_username
+                                           : "not set");
+    if (igCollapsingHeader_TreeNodeFlags(hdr, ImGuiTreeNodeFlags_None)) {
+      igSetNextItemWidth(-1.0f);
+      igInputTextWithHint("##snakey_username", "Snakey Rain username",
+                          usrs->snakey_rain_username,
+                          sizeof usrs->snakey_rain_username,
+                          ImGuiInputTextFlags_None, NULL, NULL);
+      if (igIsItemDeactivatedAfterEdit()) sr_commit(env);
+
+      float cbw = igGetFrameHeight() + style->ItemInnerSpacing.x +
+                  sr_text_w("Show");
+      ImVec2 av;
+      igGetContentRegionAvail(&av);
+      igSetNextItemWidth(av.x - cbw - style->ItemSpacing.x);
+      igInputTextWithHint("##snakey_password", "Snakey Rain password",
+                          usrs->snakey_rain_password,
+                          sizeof usrs->snakey_rain_password,
+                          S.show_password ? ImGuiInputTextFlags_None
+                                          : ImGuiInputTextFlags_Password,
+                          NULL, NULL);
+      if (igIsItemDeactivatedAfterEdit()) sr_commit(env);
+      igSameLine(0.0f, style->ItemSpacing.x);
+      igCheckbox("Show", &S.show_password);
+
+      bool busy = !S.enabled_at_start || S.connection != NULL ||
+                  S.start_requested || S.bots_running || S.test_login;
+      igGetContentRegionAvail(&av);
+      igBeginDisabled(busy);
+      if (igButton(S.test_login ? "Testing..." : "Test login",
+                   (ImVec2){av.x, 0.0f}))
+        sr_test_login(env);
+      igEndDisabled();
+    }
+  }
+
+  /* ---- Bot look (collapsible) ---- */
+  {
+    char hdr[96];
+    snprintf(hdr, sizeof hdr, "Bot look  -  %s##sr_hdr_look",
+             usrs->snakey_rain_bot_name[0] ? usrs->snakey_rain_bot_name
+                                           : "default");
+    if (igCollapsingHeader_TreeNodeFlags(hdr, ImGuiTreeNodeFlags_None)) {
+      igText("Bot in-game name (max 24)");
+      igSetNextItemWidth(-1.0f);
+      igInputTextWithHint("##snakey_bot_name", "Name shown on bots",
+                          usrs->snakey_rain_bot_name,
+                          sizeof usrs->snakey_rain_bot_name,
+                          ImGuiInputTextFlags_None, NULL, NULL);
+      if (igIsItemDeactivatedAfterEdit()) sr_commit(env);
+
+      igText("Bot skin code");
+      igSetNextItemWidth(-1.0f);
+      igInputTextWithHint("##snakey_bot_skin", "Skin string (same as extension)",
+                          usrs->snakey_rain_bot_skin,
+                          sizeof usrs->snakey_rain_bot_skin,
+                          ImGuiInputTextFlags_None, NULL, NULL);
+      if (igIsItemDeactivatedAfterEdit()) sr_commit(env);
+
+      ImVec2 av;
+      igGetContentRegionAvail(&av);
+      float half = (av.x - style->ItemSpacing.x) * 0.5f;
+      if (igButton("Paste skin", (ImVec2){half, 0.0f})) {
+        const char *clip = igGetClipboardText();
+        if (clip) {
+          while (*clip == ' ' || *clip == '\t' || *clip == '\r' ||
+                 *clip == '\n')
+            ++clip;
+          char tmp[sizeof usrs->snakey_rain_bot_skin];
+          snprintf(tmp, sizeof tmp, "%s", clip);
+          size_t n = strlen(tmp);
+          while (n > 0 && (tmp[n - 1] == ' ' || tmp[n - 1] == '\t' ||
+                           tmp[n - 1] == '\r' || tmp[n - 1] == '\n'))
+            tmp[--n] = 0;
+          if (tmp[0]) {
+            snprintf(usrs->snakey_rain_bot_skin,
+                     sizeof usrs->snakey_rain_bot_skin, "%s", tmp);
+            sr_commit(env);
+          }
         }
       }
-    }
-    igSameLine(0.0f, style->ItemSpacing.x);
-    if (igButton("Reset skin", (ImVec2){half, 0.0f})) {
-      snprintf(usrs->snakey_rain_bot_skin, sizeof usrs->snakey_rain_bot_skin,
-               "%s", SR_DEFAULT_SKIN);
-      sr_commit(env);
+      igSameLine(0.0f, style->ItemSpacing.x);
+      if (igButton("Reset skin", (ImVec2){half, 0.0f})) {
+        snprintf(usrs->snakey_rain_bot_skin,
+                 sizeof usrs->snakey_rain_bot_skin, "%s", SR_DEFAULT_SKIN);
+        sr_commit(env);
+      }
     }
   }
 

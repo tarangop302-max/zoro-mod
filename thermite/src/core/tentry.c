@@ -133,6 +133,10 @@ int  tmouse_button_pressed(tmouse* ms, int button)  { (void)button; return ms->w
 int  tmouse_button_released(tmouse* ms, int button) { (void)ms; (void)button; return 0; }
 void tmouse_destroy(tmouse* ms) { free(ms); }
 
+/* Background play (app/src/main.c): keeps a live run ticking without a
+ * surface. Returns true if it ran a tick. */
+extern bool bgplay_tick(tenv* env);
+
 void android_main(struct android_app* app) {
     g_android_app = app;
 
@@ -196,6 +200,7 @@ void android_main(struct android_app* app) {
 
             twindow_poll_input(env.wnd);
             if (g_android_app->destroyRequested) break;
+            if (bgplay_tick(&env)) continue;
             /* Re-check swapchain_ok: if we just resumed from background,
              * handle_app_cmd() already rebuilt the surface + swapchain
              * from inside twindow_poll_input() above (APP_CMD_INIT_WINDOW).

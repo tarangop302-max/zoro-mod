@@ -4,12 +4,13 @@
 
 #include "../user.h"
 #include "crystal_theme.h"
+#include "settings.h"
 #include "../rendering/texture.h"
 #include "../game/screenshot.h"
 
 #ifndef IM_COL32
 #define IM_COL32(R, G, B, A) \
-  (((ImU32)(A) << 24) | ((ImU32)(B) << 16) | ((ImU32)(G) << 8) | ((ImU32)(R)))
+  crystal_tint_u32((((ImU32)(A) << 24) | ((ImU32)(B) << 16) | ((ImU32)(G) << 8) | ((ImU32)(R))))
 #endif
 
 /* Shown right after a match ends with at least one captured kill (see
@@ -22,6 +23,8 @@
 typedef struct {
   texture *tex;
   VkDescriptorSet ds;
+  int w, h;        /* source size, for undistorted display */
+  int kill_number; /* label on the card */
 } preview_item;
 
 static preview_item s_previews[SCREENSHOT_MAX_RUN_CAPTURES];
@@ -33,6 +36,8 @@ void ui_kill_review_init(tenv *env) {
   for (int i = 0; i < SCREENSHOT_MAX_RUN_CAPTURES; i++) {
     s_previews[i].tex = NULL;
     s_previews[i].ds = VK_NULL_HANDLE;
+    s_previews[i].w = s_previews[i].h = 0;
+    s_previews[i].kill_number = i + 1;
     s_selected[i] = true; /* default: keep everything, let the player
                              deselect the ones they don't want */
   }
@@ -71,6 +76,9 @@ static void build_previews(tenv *env) {
     texture *tex = create_mipmap_texture_from_pixels(env->ctx, rgba, w, h);
     if (!tex) continue;
     s_previews[i].tex = tex;
+    s_previews[i].w = w;
+    s_previews[i].h = h;
+    s_previews[i].kill_number = kill_number;
     s_previews[i].ds = igImplVulkan_AddTexture(
         env->usr->r->linear_sampler, tex->view,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -92,10 +100,21 @@ static void finish(tenv *env, bool save) {
   env->usr->gdata.curr_screen = TITLE_SCREEN;
 }
 
+/* Leaving is deferred to the start of the NEXT frame: finish() destroys the
+   preview textures, and this frame's draw list still references them. */
+static int s_pending = 0; /* 0 none, 1 save, 2 discard */
+
 void ui_kill_review(tenv *env) {
   tuser_data *usr = env->usr;
   game_data *gdata = &usr->gdata;
-  tcontext *ctx = env->ctx;
+  (void)gdata;
+
+  if (s_pending) {
+    bool save = s_pending == 1;
+    s_pending = 0;
+    finish(env, save);
+    return;
+  }
 
   usr->r->global.bg_opacity = 0;
   usr->r->global.bd_opacity = 0;
@@ -108,121 +127,181 @@ void ui_kill_review(tenv *env) {
   crystal_draw_background(env);
   crystal_push_theme();
 
-  float sw = ctx->size[0];
-  float sh = ctx->size[1];
   ImGuiStyle *style = igGetStyle();
-  ImDrawList *bg = igGetWindowDrawList();
-
   int total = screenshot_run_count();
+  if (total > SCREENSHOT_MAX_RUN_CAPTURES) total = SCREENSHOT_MAX_RUN_CAPTURES;
   if (!s_built) build_previews(env);
 
-  const char *title = "Nice kills! Pick which to save";
-  ImVec2 title_size;
-  igCalcTextSize(&title_size, title, NULL, false, -1.0f);
-  ImDrawList_AddText_Vec2(bg, (ImVec2){sw * 0.5f - title_size.x * 0.5f, 18.0f},
-                          IM_COL32(255, 255, 255, 235), title, NULL);
-  const char *hint = "Tap a kill to toggle it. Everything starts selected.";
-  ImVec2 hint_size;
-  igCalcTextSize(&hint_size, hint, NULL, false, -1.0f);
-  ImDrawList_AddText_Vec2(
-      bg, (ImVec2){sw * 0.5f - hint_size.x * 0.5f, 46.0f},
-      IM_COL32(170, 170, 175, 220), hint, NULL);
-
-  int cols = total < 4 ? (total < 1 ? 1 : total) : 4;
-  float pad = 14.0f;
-  float cell = (sw - style->WindowPadding.x * 2.0f - pad * (cols - 1)) / cols;
-  if (cell > 260.0f) cell = 260.0f;
-  float grid_w = cell * cols + pad * (cols - 1);
-  float start_x = sw * 0.5f - grid_w * 0.5f;
-  float start_y = 84.0f;
-
-  igSetCursorPos((ImVec2){start_x, start_y});
-  igBeginChild_Str("##kill_review_grid",
-                   (ImVec2){grid_w, sh - start_y - 120.0f},
-                   ImGuiChildFlags_None, ImGuiWindowFlags_None);
-
   int selected_count = 0;
-  for (int i = 0; i < total && i < SCREENSHOT_MAX_RUN_CAPTURES; i++) {
+  for (int i = 0; i < total; i++)
     if (s_selected[i]) selected_count++;
 
-    int col = i % cols;
-    if (col != 0) igSameLine(0, pad);
+  /* Fixed-size centred popup. It cannot be dismissed by the X / an outside
+     tap (that would silently throw the captures away) -- only by the two
+     buttons at the bottom. */
+  static bool popup_open = false;
+  if (!popup_open) igOpenPopup_Str("Kill Review", 0);
+  float footer_h = igGetFrameHeight() * 1.6f + style->ItemSpacing.y * 2.0f;
+  crystal_panel_set_layout(0.74f, 0.88f, footer_h);
+  crystal_panel_set_closable(false);
 
-    char btn_id[32];
-    snprintf(btn_id, sizeof(btn_id), "##kill_review_%d", i);
+  if (crystal_panel_begin(env, "Kill Review", "NICE KILLS",
+                          "Tap a kill to toggle it. Everything starts selected.",
+                          760.0f)) {
+    popup_open = true;
+    ui_touch_scroll(env, 23);
 
-    ImVec2 cell_pos;
-    igGetCursorScreenPos(&cell_pos);
+    /* ---- grid: 4 across, as many rows as needed, scrolls vertically ---- */
+    ImVec2 av;
+    igGetContentRegionAvail(&av);
+    const float gap = 14.0f;
+    const float margin = 10.0f; /* room for the selection glow */
+    int cols = 4;
+    while (cols > 1 &&
+           (av.x - margin * 2.0f - gap * (cols - 1)) / cols < 110.0f)
+      cols--;
+    float cw = (av.x - margin * 2.0f - gap * (cols - 1)) / cols;
+    if (cw < 60.0f) cw = 60.0f;
 
-    bool sel = s_selected[i];
-    if (sel) {
-      ImDrawList *cdl = igGetWindowDrawList();
-      ImDrawList_AddRectFilled(
-          cdl, (ImVec2){cell_pos.x - 4, cell_pos.y - 4},
-          (ImVec2){cell_pos.x + cell + 4, cell_pos.y + cell + 4},
-          IM_COL32(140, 100, 245, 200), 10.0f, ImDrawFlags_None);
-    }
-
-    if (s_previews[i].tex) {
-      ImTextureRef tref = {NULL, (ImTextureID)s_previews[i].ds};
-      if (igImageButton(btn_id, tref, (ImVec2){cell, cell}, (ImVec2){0, 0},
-                        (ImVec2){1, 1}, (ImVec4){0, 0, 0, 0},
-                        (ImVec4){1, 1, 1, 1})) {
-        s_selected[i] = !s_selected[i];
+    /* Keep the screenshots' real aspect ratio (they were being squashed
+       into squares before). */
+    float asp = 0.5625f;
+    for (int i = 0; i < total; i++)
+      if (s_previews[i].w > 0 && s_previews[i].h > 0) {
+        asp = (float)s_previews[i].h / (float)s_previews[i].w;
+        break;
       }
-    } else {
+    if (asp < 0.40f) asp = 0.40f;
+    if (asp > 1.30f) asp = 1.30f;
+    float ch = cw * asp;
+    float row_h = ch + gap;
+    int rows = (total + cols - 1) / cols;
+    if (rows < 1) rows = 1;
+
+    ImVec2 org;
+    igGetCursorScreenPos(&org);
+    org.y += margin * 0.6f;
+    ImDrawList *dl = igGetWindowDrawList();
+    int hover = -1;
+
+    for (int i = 0; i < total; i++) {
+      int r = i / cols, c = i % cols;
+      ImVec2 p0 = {org.x + margin + c * (cw + gap), org.y + r * row_h};
+      ImVec2 p1 = {p0.x + cw, p0.y + ch};
+      bool sel = s_selected[i];
+      if (igIsMouseHoveringRect(p0, p1, true)) hover = i;
+
+      if (sel) crystal_glow_rect(p0, (ImVec2){cw, ch}, 0.690f, 0.580f, 0.960f);
+
+      if (s_previews[i].tex) {
+        ImTextureRef tref = {NULL, (ImTextureID)s_previews[i].ds};
+        ImDrawList_AddImageRounded(dl, tref, p0, p1, (ImVec2){0, 0},
+                                   (ImVec2){1, 1}, IM_COL32(255, 255, 255, 255),
+                                   10.0f, 0);
+      } else {
+        ImDrawList_AddRectFilled(dl, p0, p1, IM_COL32(56, 40, 90, 140), 10.0f,
+                                 0);
+      }
+      if (!sel) /* dim the ones that won't be saved */
+        ImDrawList_AddRectFilled(dl, p0, p1, igColorConvertFloat4ToU32((ImVec4){0, 0, 0, 0.55f}),
+                                 10.0f, 0);
+      ImDrawList_AddRect(
+          dl, p0, p1,
+          sel ? IM_COL32(220, 196, 255, 255) : IM_COL32(176, 148, 245, 90),
+          10.0f, 0, sel ? 3.0f : 1.2f);
+
+      /* "Kill N" chip, bottom-left */
+      char lab[24];
+      snprintf(lab, sizeof lab, "Kill %d", s_previews[i].kill_number);
+      ImVec2 ts;
+      igCalcTextSize(&ts, lab, NULL, false, -1.0f);
+      ImVec2 c0 = {p0.x + 8.0f, p1.y - ts.y - 14.0f};
+      ImVec2 c1 = {c0.x + ts.x + 14.0f, c0.y + ts.y + 8.0f};
+      ImDrawList_AddRectFilled(dl, c0, c1,
+                               igColorConvertFloat4ToU32((ImVec4){0, 0, 0, 0.62f}),
+                               c1.y - c0.y, 0);
+      ImDrawList_AddText_Vec2(dl, (ImVec2){c0.x + 7.0f, c0.y + 4.0f},
+                              IM_COL32(255, 255, 255, 235), lab, NULL);
+
+      /* check badge, top-right: filled + tick when selected, empty ring
+         when not, so it is obvious the card is tappable */
+      ImVec2 bc = {p1.x - 20.0f, p0.y + 20.0f};
+      if (sel) {
+        ImDrawList_AddCircleFilled(dl, bc, 13.0f, IM_COL32(150, 100, 245, 255),
+                                   20);
+        ImDrawList_AddCircle(dl, bc, 13.0f, IM_COL32(255, 255, 255, 235), 20,
+                             2.0f);
+        ImDrawList_AddLine(dl, (ImVec2){bc.x - 6.0f, bc.y + 0.5f},
+                           (ImVec2){bc.x - 1.5f, bc.y + 5.0f},
+                           IM_COL32(255, 255, 255, 255), 2.6f);
+        ImDrawList_AddLine(dl, (ImVec2){bc.x - 1.5f, bc.y + 5.0f},
+                           (ImVec2){bc.x + 6.5f, bc.y - 5.0f},
+                           IM_COL32(255, 255, 255, 255), 2.6f);
+      } else {
+        ImDrawList_AddCircleFilled(dl, bc, 13.0f,
+                                   igColorConvertFloat4ToU32((ImVec4){0, 0, 0, 0.45f}),
+                                   20);
+        ImDrawList_AddCircle(dl, bc, 13.0f, IM_COL32(255, 255, 255, 190), 20,
+                             2.0f);
+      }
+    }
+
+    /* Reserve the grid's height so the child scrolls over all of it. */
+    igDummy((ImVec2){1.0f, margin + rows * row_h});
+
+    /* Tap = press and release without dragging. Done by hand (instead of one
+       button per picture) so that dragging on a picture scrolls the list
+       rather than being swallowed by a button, and a scroll-drag never
+       toggles a picture by accident. */
+    static int press_idx = -1;
+    static bool press_dragged = false;
+    if (igIsWindowHovered(0) && igIsMouseClicked_Bool(0, false)) {
+      press_idx = hover;
+      press_dragged = false;
+    }
+    if (press_idx >= 0 && igIsMouseDragging(0, 12.0f)) press_dragged = true;
+    if (igIsMouseReleased_Nil(0)) {
+      if (press_idx >= 0 && !press_dragged)
+        s_selected[press_idx] = !s_selected[press_idx];
+      press_idx = -1;
+    }
+
+    crystal_panel_end_body();
+
+    /* ---- pinned footer ---- */
+    {
+      float fb_h = igGetFrameHeight() * 1.6f;
+      ImVec2 fav;
+      igGetContentRegionAvail(&fav);
+      float btn_w = (fav.x - style->ItemSpacing.x) * 0.5f;
+
+      igBeginDisabled(selected_count == 0);
       igPushStyleColor_Vec4(ImGuiCol_Button,
-                            (ImVec4){0.220f, 0.157f, 0.353f, 0.55f});
-      if (igButton(btn_id, (ImVec2){cell, cell})) s_selected[i] = !s_selected[i];
-      igPopStyleColor(1);
+                            (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+      igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
+                            (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+      igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
+                            (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
+      char save_label[40];
+      snprintf(save_label, sizeof(save_label), "Save Selected (%d)",
+               selected_count);
+      if (igButton(save_label, (ImVec2){btn_w, fb_h})) s_pending = 1;
+      igPopStyleColor(3);
+      igEndDisabled();
+      crystal_sheen();
+
+      igSameLine(0, style->ItemSpacing.x);
+      if (igButton("Discard All", (ImVec2){btn_w, fb_h})) s_pending = 2;
+      crystal_sheen();
     }
 
-    if (sel) {
-      ImVec2 chk_pos = {cell_pos.x + cell - 26.0f, cell_pos.y + 6.0f};
-      ImDrawList *cdl2 = igGetWindowDrawList();
-      ImDrawList_AddCircleFilled(cdl2,
-                                 (ImVec2){chk_pos.x + 10.0f, chk_pos.y + 10.0f},
-                                 12.0f, IM_COL32(120, 80, 230, 255), 20);
-      ImDrawList_AddCircle(cdl2,
-                           (ImVec2){chk_pos.x + 10.0f, chk_pos.y + 10.0f},
-                           12.0f, IM_COL32(255, 255, 255, 230), 20, 2.0f);
-    }
+    crystal_panel_end();
+  } else {
+    popup_open = false; /* re-open next frame: this screen has no "close" */
   }
-
-  igEndChild();
-
-  float btn_w = 220.0f;
-  float btn_h = igGetFrameHeight() * 1.5f;
-  float row_w = btn_w * 2.0f + 24.0f;
-  igSetCursorPos(
-      (ImVec2){sw * 0.5f - row_w * 0.5f, sh - style->WindowPadding.y - btn_h});
-
-  igBeginDisabled(selected_count == 0);
-  igPushStyleColor_Vec4(ImGuiCol_Button,
-                        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
-                        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
-                        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
-  char save_label[40];
-  snprintf(save_label, sizeof(save_label), "Save Selected (%d)",
-          selected_count);
-  if (igButton(save_label, (ImVec2){btn_w, btn_h})) {
-    finish(env, true);
-  }
-  igPopStyleColor(3);
-  igEndDisabled();
-  crystal_sheen();
-
-  igSameLine(0, 24.0f);
-  if (igButton("Discard All", (ImVec2){btn_w, btn_h})) {
-    finish(env, false);
-  }
-  crystal_sheen();
 
   crystal_pop_theme();
   igPopFont();
-  (void)gdata;
 }
 
 void ui_kill_review_destroy(tenv *env) {

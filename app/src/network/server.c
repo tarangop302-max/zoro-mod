@@ -6,6 +6,76 @@
 #include <string.h>
 #include <stdint.h>
 #include <pthread.h>
+#ifdef ANDROID
+#include "../android_path.h"
+#endif
+
+/* ------------------------------------------------------------------ *
+ * Favorite servers (shown first / starred in the server picker).
+ * Kept in their own tiny text file (one "ip:port" per line) so the
+ * versioned binary settings file does not have to change.
+ * ------------------------------------------------------------------ */
+#define SERVER_FAV_FILE "server_favs.txt"
+#define SERVER_FAV_MAX  32
+
+static char s_favs[SERVER_FAV_MAX][MAX_SERVER_IP_LEN + 1];
+static int  s_fav_count  = 0;
+static bool s_fav_loaded = false;
+
+static FILE* fav_open(const char* mode) {
+#ifdef ANDROID
+  char path[512];
+  android_build_path(path, sizeof(path), SERVER_FAV_FILE);
+  return fopen(path, mode);
+#else
+  return fopen(SERVER_FAV_FILE, mode);
+#endif
+}
+
+static void fav_save(void) {
+  FILE* f = fav_open("w");
+  if (!f) return;
+  for (int i = 0; i < s_fav_count; i++) fprintf(f, "%s\n", s_favs[i]);
+  fclose(f);
+}
+
+static void fav_load(void) {
+  if (s_fav_loaded) return;
+  s_fav_loaded = true;
+  s_fav_count  = 0;
+  FILE* f = fav_open("r");
+  if (!f) return;
+  char line[64];
+  while (s_fav_count < SERVER_FAV_MAX && fgets(line, sizeof(line), f)) {
+    line[strcspn(line, "\r\n")] = '\0';
+    if (!line[0] || strlen(line) > MAX_SERVER_IP_LEN) continue;
+    strcpy(s_favs[s_fav_count++], line);
+  }
+  fclose(f);
+}
+
+bool server_fav_is(const char* ip) {
+  fav_load();
+  for (int i = 0; i < s_fav_count; i++)
+    if (strcmp(s_favs[i], ip) == 0) return true;
+  return false;
+}
+
+void server_fav_toggle(const char* ip) {
+  fav_load();
+  for (int i = 0; i < s_fav_count; i++) {
+    if (strcmp(s_favs[i], ip) == 0) {
+      for (int j = i + 1; j < s_fav_count; j++)
+        strcpy(s_favs[j - 1], s_favs[j]);
+      s_fav_count--;
+      fav_save();
+      return;
+    }
+  }
+  if (s_fav_count >= SERVER_FAV_MAX || strlen(ip) > MAX_SERVER_IP_LEN) return;
+  strcpy(s_favs[s_fav_count++], ip);
+  fav_save();
+}
 
 void server_init(tenv* env) {
   tuser_data* usr = env->usr;
@@ -81,6 +151,10 @@ const char* CUSTOM_SERVER_NAMES[CUSTOM_SERVER_COUNT] = {
 
 static void server_list_seed_custom(game_data* gdata) {
   gdata->server_list.count = 0;
+  for (int i = 0; i < MAX_SERVER_LIST; i++) {
+    gdata->server_list.slots[i] = -1;
+    gdata->server_list.sids[i]  = -1;
+  }
   for (int i = 0; i < CUSTOM_SERVER_COUNT; i++) {
     strncpy(gdata->server_list.ips[i], CUSTOM_SERVER_IPS[i], MAX_SERVER_IP_LEN);
     gdata->server_list.ips[i][MAX_SERVER_IP_LEN] = '\0';
@@ -90,7 +164,8 @@ static void server_list_seed_custom(game_data* gdata) {
 }
 
 static void server_list_parse(const char* data, int len,
-                               char ips[][MAX_SERVER_IP_LEN + 1], int* count) {
+                               char ips[][MAX_SERVER_IP_LEN + 1],
+                               int* slots, int* sids, int* count) {
 
   enum { MAX_HB = MAX_SERVER_LIST * 28 + 28 };
   static int hb[MAX_SERVER_LIST * 28 + 28];
@@ -122,6 +197,9 @@ static void server_list_parse(const char* data, int len,
         snprintf(ips[*count], MAX_SERVER_IP_LEN + 1,
                  "%d.%d.%d.%d:%d",
                  hb[i+1], hb[i+2], hb[i+3], hb[i+4], port);
+        /* Same layout NTL decodes: [23..24] = players, [26..27] = server id. */
+        slots[*count] = (hb[i + 23] << 8) | hb[i + 24];
+        sids[*count]  = (hb[i + 26] << 8) | hb[i + 27];
         (*count)++;
       }
     }
@@ -132,6 +210,8 @@ static void server_list_parse(const char* data, int len,
       snprintf(ips[*count], MAX_SERVER_IP_LEN + 1,
                "%d.%d.%d.%d:%d",
                hb[i+0], hb[i+1], hb[i+2], hb[i+3], port);
+      slots[*count] = (hb[i + 7] << 16) | (hb[i + 8] << 8) | hb[i + 9];
+      sids[*count]  = hb[i + 10];
       (*count)++;
     }
   }
@@ -157,7 +237,8 @@ static void sl_http_cb(struct mg_connection* c, int ev, void* ev_data) {
     int status = mg_http_status(hm);
     if (status == 200 && hm->body.len > 0) {
       server_list_parse(hm->body.buf, (int)hm->body.len,
-                        gdata->server_list.ips, &gdata->server_list.count);
+                        gdata->server_list.ips, gdata->server_list.slots,
+                        gdata->server_list.sids, &gdata->server_list.count);
       gdata->server_list.fetching   = false;
       gdata->server_list.fetched    = true;
       gdata->server_list.fetch_error = false;

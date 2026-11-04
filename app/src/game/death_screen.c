@@ -4,6 +4,7 @@
 
 #include "../user.h"
 #include "screenshot.h"
+#include "../ui/crystal_theme.h"
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
 #endif

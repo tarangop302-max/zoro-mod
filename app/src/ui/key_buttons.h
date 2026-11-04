@@ -7,6 +7,9 @@ void ui_key_buttons_init(tenv* env);
 void ui_key_buttons(tenv* env);
 void ui_key_buttons_destroy(tenv* env);
 void ui_key_buttons_open_editor(tenv* env);
+/* Call once per frame BEFORE the frame is drawn while the editor is open, so
+   dragged items follow the finger without a frame of lag. */
+void ui_key_buttons_update(tenv* env);
 
 #ifdef ANDROID
 /* Native Android touch path for custom buttons. This bypasses ImGui/HUD

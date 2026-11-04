@@ -3,13 +3,14 @@
 
 #ifndef IM_COL32
 #define IM_COL32(R,G,B,A) \
-  (((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)<<0))
+  crystal_tint_u32((((ImU32)(A)<<24)|((ImU32)(B)<<16)|((ImU32)(G)<<8)|((ImU32)(R)<<0)))
 #endif
 #endif
 #include "ui_overlay.h"
 
 #include <math.h>
 #include "../user.h"
+#include "../ui/crystal_theme.h"
 #include "../arrow_styles.h"
 #include "net_graph.h"
 #include "user_settings.h"
@@ -414,12 +415,10 @@ void ui_overlay(tenv* env) {
           float sy = mhh2 + (hy - gdata->data.view_yy) * gdata->data.gsc;
           float sw_ = (float)ctx->size[0], sh_ = (float)ctx->size[1];
           float ddx = cosf(ang), ddy = sinf(ang);
-          float tx_ = ddx > 1e-4f ? (sw_ - sx) / ddx
-                                  : (ddx < -1e-4f ? (0.0f - sx) / ddx : 1e9f);
-          float ty_ = ddy > 1e-4f ? (sh_ - sy) / ddy
-                                  : (ddy < -1e-4f ? (0.0f - sy) / ddy : 1e9f);
-          float len = fminf(fminf(tx_, ty_), 0.95f * fminf(sw_, sh_));
-          if (len < 0.0f) len = 0.0f;
+          /* Same length in every direction: 100% = half the screen width
+             (head to the horizontal screen edge). Longer than the screen
+             height just runs off-screen vertically. */
+          float len = sw_ * 0.5f * (float)user_settings_joy_laser_pct(usrs) / 100.0f;
           laser_tx = sx + ddx * len;
           laser_ty = sy + ddy * len;
         }
@@ -665,20 +664,44 @@ void ui_overlay(tenv* env) {
       float tb_width =
           psize.x + nksize.x + scsize.x + (style->CellPadding.x * 2 * 3);
 
+      /* NTL-style title above the table (Settings > Leaderboard title). */
+      const char* lb_title_txt =
+          usrs->lb_title[0] ? usrs->lb_title : LB_TITLE_DEFAULT;
+      /* Title is drawn a little larger than the rows so it stands out. */
+      const float lb_title_font_size = lb_size_bold * 1.3f;
+      igPushFont(usr->imgui_data.mono_font_bold[usrs->lb_font_size],
+                 lb_title_font_size);
+      ImVec2 lb_title_size;
+      igCalcTextSize(&lb_title_size, lb_title_txt, NULL, false, -1);
+      igPopFont();
+      /* Box that holds the title and the table; the table is centred in it
+       * when a long title makes it wider than the table. */
+      const float lb_box_w = fmaxf(tb_width, lb_title_size.x);
+      const float lb_table_dx = (lb_box_w - tb_width) * 0.5f;
+
       float lb_x, lb_y;
       if (usrs->leaderboard_pos_custom) {
         lb_x = usrs->leaderboard_rel_x * ctx->size[0];
         lb_y = usrs->leaderboard_rel_y * ctx->size[1];
       } else {
-        lb_x = ctx->size[0] - tb_width - style->WindowPadding.x;
+        lb_x = ctx->size[0] - lb_box_w - style->WindowPadding.x;
         lb_y = style->WindowPadding.y;
       }
       lb_x = fmaxf(style->WindowPadding.x,
-                   fminf(lb_x, ctx->size[0] - tb_width - style->WindowPadding.x));
+                   fminf(lb_x, ctx->size[0] - lb_box_w - style->WindowPadding.x));
       lb_y = fmaxf(style->WindowPadding.y, lb_y);
 
       igSetCursorPosX(lb_x);
       igSetCursorPosY(lb_y);
+
+      igPushFont(usr->imgui_data.mono_font_bold[usrs->lb_font_size],
+                 lb_title_font_size);
+      igSetCursorPosX(lb_x + (lb_box_w - lb_title_size.x) * 0.5f);
+      igTextColored((ImVec4){usrs->lb_title_color[0], usrs->lb_title_color[1],
+                             usrs->lb_title_color[2], usrs->lb_title_color[3]},
+                    "%s", lb_title_txt);
+      igPopFont();
+      igSetCursorPosX(lb_x + lb_table_dx);
 
       if (igBeginTable("leaderboard_table", 3, ImGuiTableFlags_NoHostExtendX,
                        (ImVec2){}, 0)) {
@@ -695,6 +718,15 @@ void ui_overlay(tenv* env) {
           vec3 tcolor;
           glm_vec3_lerp((float*)scolor, (vec3){1, 1, 1}, 0.4f, tcolor);
           ImVec4 itcolor = {tcolor[0], tcolor[1], tcolor[2], 1};
+          /* Optional NTL-style colour overrides (Settings > Leaderboard). */
+          const bool lb_custom_col =
+              is_my_snake ? usrs->lb_own_color_enabled
+                          : usrs->lb_names_color_enabled;
+          if (lb_custom_col) {
+            const float* oc =
+                is_my_snake ? usrs->lb_own_color : usrs->lb_names_color;
+            itcolor = (ImVec4){oc[0], oc[1], oc[2], oc[3]};
+          }
           if (is_my_snake) {
             igPushFont(
                 usr->imgui_data.mono_font_bold[usrs->lb_font_size],
@@ -703,7 +735,7 @@ void ui_overlay(tenv* env) {
             igPushFont(
                 usr->imgui_data.mono_font[usrs->lb_font_size],
                 lb_size);
-            itcolor.w = 0.6f;
+            if (!lb_custom_col) itcolor.w = 0.6f;
           }
 
           igTableNextRow(ImGuiTableRowFlags_None, 0);
@@ -730,13 +762,13 @@ void ui_overlay(tenv* env) {
       /* Resize handle checked first so a touch right on the corner
        * (where its hit-region overlaps the move rect below) claims
        * the drag as a resize, not a move. */
-      hud_layout_resize_handle(env, usrs, lb_x, lb_y, tb_width,
+      hud_layout_resize_handle(env, usrs, lb_x, lb_y, lb_box_w,
                                lb_bottom_y - lb_y, &usrs->leaderboard_scale,
                                0.40f, 1.50f, &s_lb_edit_action,
                                &s_lb_resize_base_x, &s_lb_resize_base_y,
                                &s_lb_resize_base_w, &s_lb_resize_base_scale,
                                &s_lb_was_editing);
-      hud_layout_drag_rect(env, usrs, ctx, style, lb_x, lb_y, tb_width,
+      hud_layout_drag_rect(env, usrs, ctx, style, lb_x, lb_y, lb_box_w,
                            lb_bottom_y - lb_y, &usrs->leaderboard_pos_custom,
                            &usrs->leaderboard_rel_x, &usrs->leaderboard_rel_y,
                            &s_lb_edit_action, &s_lb_drag_dx, &s_lb_drag_dy,

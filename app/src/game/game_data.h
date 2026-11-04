@@ -107,6 +107,10 @@ typedef struct game_data {
     int pings[MAX_SERVER_LIST];
     int sorted_order[MAX_SERVER_LIST];
     char ips[MAX_SERVER_LIST][MAX_SERVER_IP_LEN + 1];
+    /* Per-server info decoded from the official list (same fields NTL's
+       picker shows). -1 = unknown / not applicable (custom servers). */
+    int slots[MAX_SERVER_LIST]; /* current players ("ac" in the list) */
+    int sids[MAX_SERVER_LIST];  /* server id ("sid" in the list) */
     int count;
     int custom_count;
     struct mg_mgr mgr;

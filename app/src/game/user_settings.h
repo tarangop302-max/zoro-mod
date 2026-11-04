@@ -453,11 +453,59 @@ typedef struct user_settings {
   uint8_t key_geom_reserved[16];
   float   key_btn_wmul[MAX_KEY_BTNS];
   float   zslider_thick;
+
+  /* v2.26 extension: "Keyboard layout" hotkey. Opens the Adjust keyboard
+     buttons editor in the middle of a match (like the Open settings hotkey
+     opens Settings). Appended after zslider_thick so every earlier file stays
+     a compatible prefix (see v226_prefix in read_user_settings). Access through
+     usr_hotkey(usrs, HOTKEY_KEY_EDITOR). */
+  uint8_t key_editor_reserved[8];
+  hotkey  hotkey_key_editor;
+
+  /* v2.27 extension: lobby (title screen) background. lobby_bg_index: -1 =
+     original gradient, 0..LOBBY_BG_PRESET_COUNT-1 = built-in, LOBBY_BG_CUSTOM
+     = uploaded picture. lobby_bg_dim darkens an uploaded picture (0..0.85).
+     Appended after hotkey_key_editor so every earlier file stays a compatible
+     prefix (see v227_prefix in read_user_settings). */
+  uint8_t lobby_bg_reserved[8];
+  int     lobby_bg_index;
+  float   lobby_bg_dim;
+
+  /* v2.28 extension: centre line width and NTL-style leaderboard options.
+
+     center_line_width: per-mode ([0]=Normal, [1]=Assist) thickness in screen
+     pixels of the Center line drawn on your own snake (default 2).
+
+     lb_title: the text shown above the leaderboard (like NTL's "Top 10
+     Title"). Empty = the default "Leaderboard". lb_title_color: its colour
+     (with alpha). lb_names_color(+_enabled): optional colour that replaces
+     the skin-based names/scores colour. lb_own_color(+_enabled): optional
+     colour for your own line.
+
+     Appended after lobby_bg_dim so every earlier file stays a compatible
+     prefix (see v228_prefix in read_user_settings). The 16-byte reserved
+     block keeps sizeof(user_settings) strictly larger than the previous
+     release. */
+  uint8_t lb_style_reserved[16];
+  float   center_line_width[2];
+  vec4    lb_title_color;
+  vec4    lb_names_color;
+  vec4    lb_own_color;
+  bool    lb_names_color_enabled;
+  bool    lb_own_color_enabled;
+  char    lb_title[33];
 } user_settings;
+
+#define CENTER_LINE_WIDTH_MIN 1.0f
+#define CENTER_LINE_WIDTH_MAX 12.0f
+#define CENTER_LINE_WIDTH_DEFAULT 2.0f
+#define LB_TITLE_MAX 32
+#define LB_TITLE_DEFAULT "Leaderboard"
 
 static inline hotkey* usr_hotkey(user_settings* u, int i) {
   if (i < NUM_STORED_HOTKEYS) return &u->hotkeys[i];
   if (i == HOTKEY_OPEN_SETTINGS) return &u->hotkey_open_settings;
+  if (i == HOTKEY_KEY_EDITOR) return &u->hotkey_key_editor;
   return &u->hotkey_eyes_back;
 }
 
@@ -498,6 +546,42 @@ static inline bool user_settings_dynamic_minimap(const user_settings* s) {
 }
 static inline void user_settings_set_dynamic_minimap(user_settings* s, bool on) {
   s->net_graph_reserved[2] = on ? 0 : 1;
+}
+
+/* Joystick laser length, as a percentage (10-100) of the full laser (screen
+   edge). Stored in the fourth spare byte of net_graph_reserved so the file
+   layout is unchanged; 0 (every older file) means 100%, i.e. the old
+   behaviour. Only used in joystick mode. */
+static inline int user_settings_joy_laser_pct(const user_settings* s) {
+  int v = s->net_graph_reserved[3];
+  if (v < 10 || v > 100) return 100;
+  return v;
+}
+static inline void user_settings_set_joy_laser_pct(user_settings* s, int pct) {
+  if (pct < 10) pct = 10;
+  s->net_graph_reserved[3] = pct >= 100 ? 0 : (uint8_t)pct;
+}
+
+/* Remembered panel opacity of the Settings popup (slot 0), the Controls
+   window (slot 1) and the Team Chat window (slot 2). Stored as percent in the
+   spare bytes net_graph_reserved[4..6] so the file layout is unchanged; 0 (never
+   set / older files) means "use the built-in default". */
+static inline float user_settings_get_panel_alpha(const user_settings* s,
+                                                  int slot, float def,
+                                                  float lo) {
+  int v = s->net_graph_reserved[4 + slot];
+  if (v == 0) return def;
+  float a = (float)v / 100.0f;
+  if (a < lo) a = lo;
+  if (a > 1.0f) a = 1.0f;
+  return a;
+}
+static inline void user_settings_set_panel_alpha(user_settings* s, int slot,
+                                                 float a) {
+  int v = (int)(a * 100.0f + 0.5f);
+  if (v < 1) v = 1;
+  if (v > 100) v = 100;
+  s->net_graph_reserved[4 + slot] = (uint8_t)v;
 }
 
 void save_user_settings(user_settings* usr_settings);

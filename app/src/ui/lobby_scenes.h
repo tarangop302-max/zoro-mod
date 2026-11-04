@@ -24,7 +24,8 @@ typedef enum lobby_style {
   LOBBY_STYLE_PETALS,   /* falling, swaying petals                          */
   LOBBY_STYLE_CODE,     /* falling code columns                             */
   LOBBY_STYLE_WAVES,    /* layered moving waves                             */
-  LOBBY_STYLE_BLADE     /* three diagonal sword slashes                     */
+  LOBBY_STYLE_BLADE,    /* three diagonal sword slashes                     */
+  LOBBY_STYLE_RAIN      /* slanted rain, ripples and lightning flashes      */
 } lobby_style;
 
 /* p0/p1: rectangle to fill. t: time in seconds (pass a constant to freeze).

@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <string.h>
 
 #include "hud_layout_editor.h"
@@ -19,16 +20,54 @@ static float s_popup_alpha = 0.82f;
 
 /* Touch drag-to-scroll for the popup's child panels (ImGui has no native
    touch scrolling). Call right after igBeginChild_Str(), once per panel,
-   with a unique idx. Dragging on a label / empty space scrolls the panel 1:1
-   and keeps a little momentum after release; dragging a slider or button
-   still operates that widget instead. The thick scrollbar also works. */
+   with a unique idx. Dragging on a label / empty space scrolls the panel 1:1;
+   dragging a slider or button still operates that widget instead. The thick
+   scrollbar also works.
+
+   Fling: when the finger lifts while still moving, the panel keeps gliding
+   with the speed the finger actually had (measured over the last ~0.1 s, in
+   px/second, so it does not depend on the frame rate) and slows down smoothly.
+   A slow drag that stops before lifting does not fling at all; a quick flick
+   travels far. Touching the panel again stops the glide at once.
+
+   Robustness: the drag owner is released on ANY finger-up (not only by the
+   panel that owned it) and also if the owning panel stops being drawn
+   mid-drag (closed popup) -- previously that left every other panel unable
+   to scroll until restart. Items that are real widgets (slider, button...)
+   still take the touch; plain tiles drawn with the draw list do not. */
+#define TOUCH_SCROLL_SLOP 10.0f     /* px before a press becomes a scroll    */
+#define TOUCH_FLING_MAX 3500.0f     /* px/s cap, keeps one flick sane        */
+#define TOUCH_FLING_MIN 120.0f      /* px/s below this: no glide             */
+#define TOUCH_FRICTION 3.6f         /* 1/s: glide distance = speed / this    */
+
+static float ts_clampf(float v, float lo, float hi) {
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+
 static void popup_touch_scroll(tenv* env, int idx) {
   static int owner = -1;       /* panel that owns the current drag */
   static bool dragging = false;
   static bool blocked = false; /* a widget took the touch: don't scroll */
-  static float last_y = 0.0f, start_y = 0.0f, vel = 0.0f;
-  static int vel_owner = -1;
+  static float last_y = 0.0f, start_y = 0.0f;
+  static int owner_frame = 0;
+  static int glide_owner = -1;
+  static float glide_vel = 0.0f; /* px/s, + = finger moved down */
+  /* last few finger samples, for the fling speed */
+  static float hist_y[8];
+  static double hist_t[8];
+  static int hist_i = 0, hist_n = 0;
+
   touch_state* t = &env->wnd->ui_touch;
+  const int frame = igGetFrameCount();
+  const double now = igGetTime();
+  float dt = igGetIO_Nil()->DeltaTime;
+  dt = ts_clampf(dt, 0.001f, 0.05f);
+
+  /* The owning panel vanished mid-drag (popup closed): free the lock. */
+  if (owner != -1 && frame - owner_frame > 3) {
+    owner = -1;
+    dragging = false;
+  }
 
   /* ImGui marks a press on EMPTY space inside a window as "active" too (it is
      the window's internal move id, even for NoMove windows). That is not a
@@ -40,18 +79,43 @@ static void popup_touch_scroll(tenv* env, int idx) {
 
   if (!t->down) {
     blocked = false;
-    if (owner == idx) {
-      if (dragging) vel_owner = idx;
+    if (owner != -1) { /* finger just lifted: whoever owned it, release it */
+      float v = 0.0f;
+      if (dragging && hist_n >= 2) {
+        int newest = (hist_i + 7) & 7;
+        if (now - hist_t[newest] <= 0.08) { /* still moving when it lifted */
+          int oldest = newest;
+          int use = hist_n < 8 ? hist_n : 8;
+          for (int k = 1; k < use; ++k) {
+            int ix = (newest - k) & 7;
+            if (hist_t[newest] - hist_t[ix] > 0.12) break;
+            oldest = ix;
+          }
+          double span = hist_t[newest] - hist_t[oldest];
+          if (span >= 0.016)
+            v = (float)((hist_y[newest] - hist_y[oldest]) / span);
+        }
+      }
+      v = ts_clampf(v, -TOUCH_FLING_MAX, TOUCH_FLING_MAX);
+      if (fabsf(v) >= TOUCH_FLING_MIN) {
+        glide_owner = owner;
+        glide_vel = v;
+      } else {
+        glide_owner = -1;
+        glide_vel = 0.0f;
+      }
       owner = -1;
       dragging = false;
     }
-    if (vel_owner == idx) {
-      if (vel > 0.5f || vel < -0.5f) {
-        igSetScrollY_Float(igGetScrollY() - vel);
-        vel *= 0.90f;
+    if (glide_owner == idx) {
+      float cur = igGetScrollY();
+      float target = ts_clampf(cur - glide_vel * dt, 0.0f, igGetScrollMaxY());
+      if (fabsf(glide_vel) < 25.0f || fabsf(target - cur) < 0.01f) {
+        glide_vel = 0.0f; /* slowed to a stop, or hit the top / bottom */
+        glide_owner = -1;
       } else {
-        vel = 0.0f;
-        vel_owner = -1;
+        igSetScrollY_Float(target);
+        glide_vel *= expf(-TOUCH_FRICTION * dt);
       }
     }
     return;
@@ -60,14 +124,18 @@ static void popup_touch_scroll(tenv* env, int idx) {
   if (owner == -1 && !blocked) {
     if (igIsWindowHovered(ImGuiHoveredFlags_None) && !item_active) {
       owner = idx;
+      owner_frame = frame;
       dragging = false;
       last_y = start_y = t->y;
-      vel = 0.0f;
-      vel_owner = -1;
+      glide_owner = -1; /* a new touch stops any glide */
+      glide_vel = 0.0f;
+      hist_n = 0;
+      hist_i = 0;
     }
     return;
   }
   if (owner != idx) return;
+  owner_frame = frame;
 
   if (item_active) {
     /* A slider/button/combo/scrollbar grabbed this touch. */
@@ -75,12 +143,19 @@ static void popup_touch_scroll(tenv* env, int idx) {
     blocked = true;
     return;
   }
-  float dy = t->y - last_y;
-  if (!dragging && (t->y - start_y > 10.0f || start_y - t->y > 10.0f))
+  if (!dragging && fabsf(t->y - start_y) > TOUCH_SCROLL_SLOP) {
     dragging = true;
+    hist_n = 0;
+    hist_i = 0;
+  }
   if (dragging) {
-    igSetScrollY_Float(igGetScrollY() - dy);
-    vel = dy;
+    float dy = t->y - last_y;
+    igSetScrollY_Float(
+        ts_clampf(igGetScrollY() - dy, 0.0f, igGetScrollMaxY()));
+    hist_y[hist_i] = t->y;
+    hist_t[hist_i] = now;
+    hist_i = (hist_i + 1) & 7;
+    if (hist_n < 8) hist_n++;
   }
   last_y = t->y;
 }

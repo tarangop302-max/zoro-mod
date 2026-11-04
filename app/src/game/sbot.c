@@ -19,121 +19,25 @@ sbot_dbg g_bot_dbg;
 #define COLLISION_DELAY 10
 #define ACTION_FRAMES 2
 
-/*
- * Stage-2 (circling) threat awareness. Margins are in "body-widths of
- * travel at base speed" so everything scales with snake size. These only
- * change how early / how hard the EXISTING circle tightens; none of them
- * replaces the circle logic, and the final floor clamp in
- * follow_circle_self() still applies after them.
- */
-#define BOOST_SP (SPEED_BASE * 2.4f)  /* worst-case enemy boost speed      */
-#define PATH_N 10                     /* samples on my predicted arc       */
-#define BODY_MARGIN_W 0.0f            /* gap to enemy body beyond touching edges (w): edges may touch */
-#define BODY_HEADSIDE_EXTRA_W 0.15f   /* extra gap near an enemy's head    */
-#define BODY_HEADSIDE_PTS 12          /* how many body pts count as "head side" */
-#define BODY_SLOPE 0.6f               /* course limit per width of clearance */
-#define LIM_FREE 1.5f                 /* "no limit" value                  */
-#define HEAD_HOLD_M 2.0f              /* arrival margin where course holds */
-#define HEAD_FREE_M 14.0f             /* head imposes nothing beyond this margin: enemies INSIDE the sector below */
-#define HEAD_FREE_OUT_M 8.0f          /* same, for enemies OUTSIDE the sector (react later) */
-#define HEAD_SECTOR_DEG 50.0f         /* sector from my heading toward the outward side */
-#define HEAD_NEG_SLOPE 0.2f           /* tighten strength below HOLD       */
-#define HEAD_BOOST_RISK 0.2f          /* how much a non-boosting enemy is assumed to boost */
-#define HEAD_TURN_W 4.0f              /* enemy turn radius (in its widths) */
-#define HEADON_HOLD_M 6.0f
-#define HEADON_FREE_M 18.0f
-#define HEADON_NEG_SLOPE 0.3f
-#define HEADON_BUF_W 1.5f             /* lateral tolerance of the head-on ray */
-#define SMALL_ENEMY_FRAC 0.2f         /* heads smaller than this x my score are ignored */
-#define HEAD_LEGACY_REACH_W 5.0f      /* old head distance rule: max reach (emergency only) */
-#define BODY_LEGACY_REACH_W 1.0f      /* old body distance rule: max reach, so edges can touch */
-#define SAFE_RELAX 0.2f               /* how fast the limit relaxes (tightens instantly) */
-#define EXPAND_BONUS 0.08f            /* extra outward turn when all clear (0 = off) */
-#define BOOST_URGENT_M 0.0f           /* boost only if the enemy would arrive first */
-#define BOOST_OK_M 1.5f               /* boost must restore at least this margin */
-#define BOOST_HOLD_FRAMES 6
+/* Coil (stage-2) tuning -- NTL-style follow-circle */
+#define WALL_RANGE 3500.0f
+#define WALL_RING_SCALE 0.98f
+#define WALL_HALF_SPAN 1000
+#define WALL_STEP 8
+#define COIL_WALL_BIAS_RANGE 1650.0f
+#define ENEMY_BODY_MULT 0.38f
+#define ENEMY_BODY_OD0 0.15f
+#define WALL_OFF_MULT 0.22f
+#define WALL_OD0 0.25f
+#define COIL_MIN_COURSE (-0.8f)
+#define COIL_BODY_PENALTY 0.16f
+#define TO_CIRCLE_I8 25.0f
+#define SELF_CHECK_FRAC 0.85f
 
-/*
- * Three-tier coil zones (all in body-widths, so they scale with size/zoom).
- * Both zones are ovals oriented along the full-bulge direction: my loop
- * tangent rotated outward by ZONE_AXIS_COURSE.
- *   tier 1: nobody inside the big outer oval A  -> full outward push
- *   tier 2: someone in A but nobody in red zone Z -> steady moderate push
- *   tier 3: someone inside Z                      -> react (body/head logic)
- * Head-on snakes keep their own arrival-time check in every tier.
- */
-#define ZONE_AXIS_COURSE 0.5f   /* rad, outward from the loop tangent */
-#define ZONE_FWD_W 2.0f         /* red zone centre, ahead of the head */
-#define ZONE_OUT_SHIFT_W 0.5f   /* red zone centre, shifted to the outward side */
-#define ZONE_A_W 3.5f           /* red zone half-length               */
-#define ZONE_B_W 2.2f           /* red zone half-width                */
-#define OUTER_FWD_W 4.0f        /* outer oval centre, ahead of head   */
-#define OUTER_A_W 9.0f          /* outer oval half-length (~2x red)   */
-#define OUTER_B_W 6.0f          /* outer oval half-width  (~2x red)   */
-#define TIER2_COURSE 0.45f      /* outward course cap while in tier 2 */
-
-/* Enemy head direction. "Facing" = smallest angle between its heading and the
- * direction to any point of my predicted arc.
- *   <= FACE_REACT_DEG : may put me in tier 3 (react) from the red zone
- *   <= FACE_AWAY_DEG  : still gets the head arrival-time check in tier 3
- *   beyond            : red zone only counts as tier 2 (steady push); it has to
- *                       turn first, and sideways heads are still covered by the
- *                       head-on ray check. */
-#define FACE_REACT_DEG 60.0f
-#define FACE_AWAY_DEG 100.0f
-#define FACE_BOOST_DEG 90.0f          /* yellow oval: boosting head counts up to this angle */
-#define CLOSE_ARC_W 2.0f              /* a head this close to my arc counts whatever it faces */
-
-/* Reaction timing by enemy state (width-units of arrival margin).
- * not boosting + facing me -> react late;  boosting + facing me -> react early. */
-#define HEAD_HOLD_LATE_M 1.0f         /* never below ~1: my own turn-away time */
-#define HEAD_FREE_LATE_M 8.0f
-#define HEAD_FREE_OUT_LATE_M 5.0f
-#define HEAD_HOLD_EARLY_M 3.5f
-#define HEAD_FREE_EARLY_M 18.0f
-#define HEAD_FREE_OUT_EARLY_M 11.0f
-
-/* Return-path (straight-line) check */
-#define HEADON_HOLD_LATE_M 3.0f
-#define HEADON_FREE_LATE_M 9.0f
-#define HEADON_HOLD_EARLY_M 7.0f
-#define HEADON_FREE_EARLY_M 20.0f
-#define HEADON_MAX_BOOST_W 25.0f      /* ignore boosting heads farther than this (width) */
-#define HEADON_MAX_IDLE_W 14.0f       /* ignore non-boosting heads farther than this */
-#define HEADON_CLOSE_W 8.0f           /* nearer than this: assume it can boost any moment */
-
-/* Enemy BODIES never switch tiers or trigger the head logic. They only get a
- * short collision guard on the first stretch of my predicted arc. */
-#define BODY_NEAR_W 4.0f        /* how far ahead along my arc bodies matter */
-#define BODY_RAMP_W 1.0f        /* clearance (beyond touching) that is fully free */
-
-/*
- * Ring keeper (stage 2 only). In a crowded area the head-distance / head-on /
- * tier checks keep asking for a tighter course, and nothing remembered how big
- * the loop used to be, so the coil collapsed into a small ball. The ring keeper
- * remembers the lap length (arc length of one full lap = close_t) and, when the
- * lap has shrunk below that memory, (a) allows much less "cut into the loop"
- * unless a real collision is imminent, and (b) adds a gentle outward push when
- * the way is clear. Imminent danger always gets the original full reaction.
- * Set RING_KEEP_ON to 0 to get the old behaviour back exactly.
- */
-#define RING_KEEP_ON 1
-#define RING_REF_RISE 0.02f        /* how fast the remembered size follows a bigger lap */
-#define RING_REF_RISE_CAP 0.0015f  /* ...but never more than this fraction per frame (ignores glitches) */
-#define RING_REF_DECAY 0.0002f     /* slow forgetting per frame (half-life ~1 minute) */
-#define RING_KEEP_FRAC 0.85f       /* lap above this x memory = healthy, no change */
-#define RING_HARD_FRAC 0.55f       /* lap at/below this x memory = fully protected */
-#define RING_PROTECT 0.9f          /* how much of the allowed tuck is removed at full shrink */
-#define RING_REGROW_COURSE 0.35f   /* outward course asked for while re-growing (rad) */
-#define RING_REGROW_GAP_W 3.6f     /* only regrow while the coil gap is under this (w) */
-#define RING_URG_NEAR_M 0.0f       /* arrival margin at/below which danger is "imminent" */
-#define RING_URG_FAR_M 3.0f        /* arrival margin at/above which danger is ignored */
-#define RING_HEAD_CLOSE_W 2.0f     /* an enemy head this close to my ring point = imminent */
-#define RING_BODY_CLOSE_W 1.2f     /* an enemy body this close to my ring point = imminent */
 
 #define MAX_BODY_PTS 8192
 #define MAX_HULL_PTS 32
-#define MAX_INSIDE_PTS 512
+#define MAX_INSIDE_PTS 4096
 #define MAX_COLL_PTS 512
 
 typedef struct {
@@ -208,9 +112,10 @@ typedef struct {
   float radius_mult;
   float follow_circle_length;
 
-  float safe_lim;  /* smoothed stage-2 threat limit */
-  int boost_hold;  /* frames of boost still latched */
-  float ring_ref;  /* remembered healthy lap length (px), 0 = unknown */
+  float fx, fy;  /* head sub-position offset */
+  bool near_wall;
+  float wall_dist, wall_dist_grd, wall_ring_r, wall_view_ang;
+  float follow_tx, follow_ty;
 } bot_state;
 
 static bot_state B;
@@ -218,6 +123,13 @@ static bot_state B;
 static inline float dist2(float ax, float ay, float bx, float by) {
   float dx = ax - bx, dy = ay - by;
   return dx * dx + dy * dy;
+}
+
+static inline float safe_border_radius(const game_data* gdata) {
+  float smoothed = gdata->data.flux_grd;
+  float server = gdata->data.real_flux_grd;
+  if (server > 0.0f && (smoothed <= 0.0f || server < smoothed)) return server;
+  return smoothed;
 }
 
 static inline float ang_between(float a, float b) {
@@ -600,17 +512,19 @@ static void populate_pts(game_data* gdata) {
     }
   if (!me) return;
 
-  B.bpts[B.bpts_n++] = (body_pt){B.x, B.y, 0.0f};
-  float lx = B.x, ly = B.y, l = 0.0f;
+  float hx0 = B.x + B.fx, hy0 = B.y + B.fy;
+  B.bpts[B.bpts_n++] = (body_pt){hx0, hy0, 0.0f};
+  float lx = hx0, ly = hy0, l = 0.0f;
   int pn = tdarray_length(me->pts);
 
   for (int p = pn - 1; p >= 0 && B.bpts_n < MAX_BODY_PTS; p--) {
     body_part* po = me->pts + p;
     if (po->dying) continue;
-    l += sqrtf(dist2(lx, ly, po->xx, po->yy));
-    B.bpts[B.bpts_n++] = (body_pt){po->xx, po->yy, l};
-    lx = po->xx;
-    ly = po->yy;
+    float gx = po->xx + po->fx, gy = po->yy + po->fy;
+    l += sqrtf(dist2(lx, ly, gx, gy));
+    B.bpts[B.bpts_n++] = (body_pt){gx, gy, l};
+    lx = gx;
+    ly = gy;
   }
   B.bpts_len = l;
 }
@@ -636,13 +550,14 @@ static v2 smooth_point(float t) {
 
 static float closest_body_point(void) {
   if (B.bpts_n < 3) return B.bpts_len;
+  const float hx = B.bpts[0].x, hy = B.bpts[0].y;
   int start_n = 0;
   float start_d2 = 0.0f;
   for (;;) {
     float prev = start_d2;
     start_n++;
     if (start_n >= B.bpts_n) break;
-    start_d2 = dist2(B.x, B.y, B.bpts[start_n].x, B.bpts[start_n].y);
+    start_d2 = dist2(hx, hy, B.bpts[start_n].x, B.bpts[start_n].y);
     if (start_d2 < prev || start_n == B.bpts_n - 1) break;
   }
   if (start_n >= B.bpts_n || start_n <= 1) return B.bpts_len;
@@ -650,7 +565,7 @@ static float closest_body_point(void) {
   int min_n = start_n;
   float min_d2 = start_d2;
   for (int n = min_n + 1; n < B.bpts_n; n++) {
-    float d2 = dist2(B.x, B.y, B.bpts[n].x, B.bpts[n].y);
+    float d2 = dist2(hx, hy, B.bpts[n].x, B.bpts[n].y);
     if (d2 < min_d2) {
       min_n = n;
       min_d2 = d2;
@@ -661,10 +576,10 @@ static float closest_body_point(void) {
   float next_d2;
   if (min_n == B.bpts_n - 1) {
     next_n = min_n - 1;
-    next_d2 = dist2(B.x, B.y, B.bpts[next_n].x, B.bpts[next_n].y);
+    next_d2 = dist2(hx, hy, B.bpts[next_n].x, B.bpts[next_n].y);
   } else {
-    float dm = dist2(B.x, B.y, B.bpts[min_n - 1].x, B.bpts[min_n - 1].y);
-    float dp = dist2(B.x, B.y, B.bpts[min_n + 1].x, B.bpts[min_n + 1].y);
+    float dm = dist2(hx, hy, B.bpts[min_n - 1].x, B.bpts[min_n - 1].y);
+    float dp = dist2(hx, hy, B.bpts[min_n + 1].x, B.bpts[min_n + 1].y);
     if (dm < dp) {
       next_n = min_n - 1;
       next_d2 = dm;
@@ -691,30 +606,30 @@ static void determine_circle_dir(void) {
   }
   cx /= B.bpts_n;
   cy /= B.bpts_n;
-  float dx = B.x - cx, dy = B.y - cy;
+  float dx = B.x + B.fx - cx, dy = B.y + B.fy - cy;
   B.circle_dir = (-dy * B.ca + dx * B.sa > 0.0f) ? -1 : +1;
 }
 
-static void body_danger_zone(float offset, v2 target_pt,
-                             v2 target_norm,
-                             float close_dist,
-                             v2 past_target, v2 close_pt, poly_box* out) {
+static void body_danger_zone(float offset, v2 target_pt, v2 target_norm,
+                             float close_dist, v2 past_target, v2 close_pt,
+                             poly_box* out) {
   int o = B.circle_dir;
+  const float hx = B.x + B.fx, hy = B.y + B.fy;
   v2 raw[10];
-  raw[0] = (v2){B.x - o * offset * B.sa, B.y + o * offset * B.ca};
-  raw[1] = (v2){B.x + B.width * B.ca + offset * (B.ca - o * B.sa),
-                B.y + B.width * B.sa + offset * (B.sa + o * B.ca)};
-  raw[2] = (v2){B.x + 1.75f * B.width * B.ca + o * 0.3f * B.width * B.sa +
+  raw[0] = (v2){hx - o * offset * B.sa, hy + o * offset * B.ca};
+  raw[1] = (v2){hx + B.width * B.ca + offset * (B.ca - o * B.sa),
+                hy + B.width * B.sa + offset * (B.sa + o * B.ca)};
+  raw[2] = (v2){hx + 1.75f * B.width * B.ca + o * 0.3f * B.width * B.sa +
                     offset * (B.ca - o * B.sa),
-                B.y + 1.75f * B.width * B.sa - o * 0.3f * B.width * B.ca +
+                hy + 1.75f * B.width * B.sa - o * 0.3f * B.width * B.ca +
                     offset * (B.sa + o * B.ca)};
-  raw[3] = (v2){B.x + 2.5f * B.width * B.ca + o * 0.7f * B.width * B.sa +
+  raw[3] = (v2){hx + 2.5f * B.width * B.ca + o * 0.7f * B.width * B.sa +
                     offset * (B.ca - o * B.sa),
-                B.y + 2.5f * B.width * B.sa - o * 0.7f * B.width * B.ca +
+                hy + 2.5f * B.width * B.sa - o * 0.7f * B.width * B.ca +
                     offset * (B.sa + o * B.ca)};
   raw[4] = (v2){
-      B.x + 3.0f * B.width * B.ca + o * 1.2f * B.width * B.sa + offset * B.ca,
-      B.y + 3.0f * B.width * B.sa - o * 1.2f * B.width * B.ca + offset * B.sa};
+      hx + 3.0f * B.width * B.ca + o * 1.2f * B.width * B.sa + offset * B.ca,
+      hy + 3.0f * B.width * B.sa - o * 1.2f * B.width * B.ca + offset * B.sa};
   float cpd_half = 0.5f * fmaxf(close_dist, 0.0f);
   raw[5] = (v2){target_pt.x + target_norm.x * (offset + cpd_half),
                 target_pt.y + target_norm.y * (offset + cpd_half)};
@@ -745,381 +660,11 @@ static void construct_inside_polygon(float close_t, poly_box_large* out) {
 
 static int snake_score(game_data* gdata, snake* sk);
 
-static inline float clampf(float v, float lo, float hi) {
-  return v < lo ? lo : (v > hi ? hi : v);
-}
-
-static inline float angdiff_abs(float a, float b) {
-  float d = fmodf(a - b, PI2);
-  if (d < 0.0f) d += PI2;
-  return d > (float)M_PI ? PI2 - d : d;
-}
-
-/* arrival margin (width-units) -> course limit. Continuous, no zones. */
-static float margin_to_lim(float m, float hold, float free_m, float neg_slope) {
-  if (m >= free_m) return LIM_FREE;
-  if (m >= hold) return (m - hold) / (free_m - hold) * LIM_FREE;
-  return fmaxf(-2.0f, (m - hold) * neg_slope);
-}
-
-/* smallest angle between enemy heading and the direction to my predicted arc,
- * and the smallest distance from its head to the arc */
-static void head_arc_info(const snake* sk, const v2* q, int qn, float* face,
-                          float* dmin) {
-  float best = (float)M_PI, bd2 = 1e30f;
-  for (int k = 0; k < qn; k++) {
-    float a = angdiff_abs(atan2f(q[k].y - sk->yy, q[k].x - sk->xx), sk->ang);
-    if (a < best) best = a;
-    float d2 = dist2(q[k].x, q[k].y, sk->xx, sk->yy);
-    if (d2 < bd2) bd2 = d2;
-  }
-  *face = best;
-  *dmin = sqrtf(bd2);
-}
-
-/* Is there a body between the attacker's head and my arc point, on its line?
- * Other snakes' bodies (not the attacker's own) and my own body both block it:
- * the attacker would die on them first. Checked every frame, so a blocker that
- * moves away brings the threat back. */
-static bool ray_blocked(game_data* gdata, int skip_idx, v2 eh, v2 dir,
-                        float er, float u_end) {
-  int ns = tdarray_length(gdata->data.snakes);
-  for (int j = 0; j < ns; j++) {
-    if (j == skip_idx) continue;
-    snake* sj = gdata->data.snakes + j;
-    if (sj->id == B.id || sj->dead) continue;
-    float br = snake_width(sj->sc) * 0.5f;
-    int pn = tdarray_length(sj->pts);
-    for (int m = 0; m < pn; m++) {
-      body_part* po = sj->pts + m;
-      if (po->dying) continue;
-      float rx = po->xx - eh.x, ry = po->yy - eh.y;
-      float ub = rx * dir.x + ry * dir.y;
-      if (ub <= er || ub >= u_end) continue;
-      if (fabsf(rx * dir.y - ry * dir.x) <= er + br) return true;
-    }
-  }
-  float u_mine = u_end - 1.5f * B.width;
-  for (int m = 0; m < B.bpts_n; m += 4) {
-    if (B.bpts[m].len < 4.0f * B.width) continue;
-    float rx = B.bpts[m].x - eh.x, ry = B.bpts[m].y - eh.y;
-    float ub = rx * dir.x + ry * dir.y;
-    if (ub <= er || ub >= u_mine) continue;
-    if (fabsf(rx * dir.y - ry * dir.x) <= er + B.radius) return true;
-  }
-  return false;
-}
-
-static inline bool in_ellipse(float px, float py, float cx, float cy,
-                              float ux, float uy, float a, float b) {
-  float dx = px - cx, dy = py - cy;
-  float u = dx * ux + dy * uy, v = -dx * uy + dy * ux;
-  return (u * u) / (a * a) + (v * v) / (b * b) <= 1.0f;
-}
-
-typedef struct {
-  int tier;        /* 1 free, 2 steady push, 3 react                   */
-  float ax, ay;    /* zone axis (unit)                                 */
-  float zc_x, zc_y, za, zb;  /* red zone                               */
-  float oc_x, oc_y, oa, ob;  /* outer oval                             */
-  float lim;       /* combined course limit (lower = tighten harder)   */
-  float m_urgent;  /* worst head arrival margin                        */
-  float te_worst;  /* enemy arrival time at that worst sample          */
-  float s_worst;   /* my path length to that sample                    */
-  int kind;        /* 0 none, 1 body, 2 head arrival, 3 head-on        */
-  float tx, ty;    /* threat source (world)                            */
-  float qx, qy;    /* point on my path it threatens                    */
-  v2 q[PATH_N + 1];
-  float s[PATH_N + 1];
-} threat_res;
-
-/*
- * Adds three extra limits on top of the existing circle logic:
- *  1) body clearance of my PREDICTED arc vs enemy body points,
- *  2) enemy head time-to-reach vs my time-to-reach (worst case boost),
- *  3) head-on projection: an enemy heading line that crosses my return path.
- * Nothing here moves the goal; it only returns how far the circle may turn
- * outward this frame.
- */
-static void scan_threats(game_data* gdata, const poly_box_large* inside,
-                         v2 target_pt, v2 close_norm, v2 close_tang, int o,
-                         threat_res* R) {
-  R->lim = LIM_FREE;
-  R->m_urgent = 1e9f;
-  R->te_worst = 0.0f;
-  R->s_worst = 0.0f;
-  R->kind = 0;
-  R->tx = R->ty = R->qx = R->qy = 0.0f;
-
-  /* predicted arc: quadratic curve head -> target_pt, leaving along heading */
-  v2 p0 = {B.x, B.y};
-  float L = sqrtf(dist2(p0.x, p0.y, target_pt.x, target_pt.y));
-  if (L < 2.0f * B.width) L = 2.0f * B.width;
-  v2 p1 = {B.x + B.ca * L * 0.5f, B.y + B.sa * L * 0.5f};
-  R->s[0] = 0.0f;
-  for (int i = 0; i <= PATH_N; i++) {
-    float t = (float)i / (float)PATH_N, u = 1.0f - t;
-    R->q[i] = (v2){u * u * p0.x + 2.0f * u * t * p1.x + t * t * target_pt.x,
-                   u * u * p0.y + 2.0f * u * t * p1.y + t * t * target_pt.y};
-    if (i > 0)
-      R->s[i] = R->s[i - 1] + sqrtf(dist2(R->q[i - 1].x, R->q[i - 1].y,
-                                          R->q[i].x, R->q[i].y));
-  }
-  float v_me = fmaxf(B.speed_mult * SPEED_BASE, SPEED_BASE);
-
-  /* ---- zones and tier (enemy HEADS only) --------------------------- */
-  float zcs = cosf(ZONE_AXIS_COURSE), zsn = sinf(ZONE_AXIS_COURSE);
-  v2 zax = {close_tang.x * zcs - o * close_tang.y * zsn,
-            close_tang.y * zcs + o * close_tang.x * zsn};
-  R->ax = zax.x;
-  R->ay = zax.y;
-  R->zc_x = B.x + zax.x * ZONE_FWD_W * B.width +
-            close_norm.x * ZONE_OUT_SHIFT_W * B.width;
-  R->zc_y = B.y + zax.y * ZONE_FWD_W * B.width +
-            close_norm.y * ZONE_OUT_SHIFT_W * B.width;
-  R->za = ZONE_A_W * B.width;
-  R->zb = ZONE_B_W * B.width;
-  R->oc_x = B.x + zax.x * OUTER_FWD_W * B.width;
-  R->oc_y = B.y + zax.y * OUTER_FWD_W * B.width;
-  R->oa = OUTER_A_W * B.width;
-  R->ob = OUTER_B_W * B.width;
-  int ns = tdarray_length(gdata->data.snakes);
-  int tier = 1;
-  for (int i = 0; i < ns && tier < 3; i++) {
-    snake* sk = gdata->data.snakes + i;
-    if (sk->id == B.id || sk->dead) continue;
-    float er = snake_width(sk->sc) * 0.5f;
-    v2 eh = {sk->xx, sk->yy};
-    if (!point_in_poly_large(eh, inside)) {
-      float face_t, dmin_t;
-      head_arc_info(sk, R->q, PATH_N + 1, &face_t, &dmin_t);
-      bool facing_t = face_t <= FACE_REACT_DEG * (float)M_PI / 180.0f;
-      bool close_t = dmin_t <= CLOSE_ARC_W * B.width + er + B.radius;
-      bool boost_t = sk->sp > 10.0f;
-      if (in_ellipse(eh.x, eh.y, R->zc_x, R->zc_y, zax.x, zax.y, R->za + er,
-                     R->zb + er)) {
-        /* red zone: facing me (or very close) reacts; others = steady push */
-        if (facing_t || close_t)
-          tier = 3;
-        else if (tier < 2)
-          tier = 2;
-      } else if (tier < 2 &&
-                 in_ellipse(eh.x, eh.y, R->oc_x, R->oc_y, zax.x, zax.y,
-                            R->oa + er, R->ob + er) &&
-                 (facing_t || close_t ||
-                  (boost_t && face_t <= FACE_BOOST_DEG * (float)M_PI / 180.0f)))
-        tier = 2; /* yellow oval: only heads that can actually come at me */
-    }
-  }
-  R->tier = tier;
-  bool react = (tier == 3);
-
-  /* ---- 1) body clearance ------------------------------------------- */
-  float near_len = BODY_NEAR_W * B.width;
-  float reach = near_len + 3.0f * B.width;
-  float reach2 = reach * reach;
-  float bc_out = 1e9f, bc_in = 1e9f, bc_best = 1e9f;
-  v2 b_src = {0, 0}, b_q = {0, 0};
-
-  for (int i = 0; i < ns; i++) {
-    snake* sk = gdata->data.snakes + i;
-    if (sk->id == B.id || sk->dead) continue;
-    float er = snake_width(sk->sc) * 0.5f;
-    int pn = tdarray_length(sk->pts);
-    for (int j = 0; j < pn; j++) {
-      body_part* po = sk->pts + j;
-      if (po->dying) continue;
-      v2 pt = {po->xx, po->yy};
-      if (dist2(B.x, B.y, pt.x, pt.y) > reach2) continue;
-      if (point_in_poly_large(pt, inside)) continue;
-
-      float md2 = 1e30f;
-      int kmin = 0;
-      for (int k = 0; k <= PATH_N && (k == 0 || R->s[k] <= near_len); k++) {
-        float d2 = dist2(R->q[k].x, R->q[k].y, pt.x, pt.y);
-        if (d2 < md2) {
-          md2 = d2;
-          kmin = k;
-        }
-      }
-      float margin =
-          B.width * (BODY_MARGIN_W +
-                     (j >= pn - BODY_HEADSIDE_PTS ? BODY_HEADSIDE_EXTRA_W
-                                                  : 0.0f));
-      float c = sqrtf(md2) - er - B.radius - margin;
-      float side = (pt.x - R->q[kmin].x) * close_norm.x +
-                   (pt.y - R->q[kmin].y) * close_norm.y;
-      if (side < 0.0f) {
-        if (c < bc_in) bc_in = c;
-      } else {
-        if (c < bc_out) bc_out = c;
-      }
-      if (c < bc_best) {
-        bc_best = c;
-        b_src = pt;
-        b_q = R->q[kmin];
-      }
-    }
-  }
-  /* outside-of-arc points push me inward; points already on the inner side
-   * can only stop the expansion (never force a tighten into them). */
-  float lim_out = margin_to_lim(bc_out / B.width, 0.0f, BODY_RAMP_W, BODY_SLOPE);
-  float lim_in = margin_to_lim(bc_in / B.width, 0.0f, BODY_RAMP_W, BODY_SLOPE);
-  if (lim_in < 0.0f) lim_in = 0.0f;
-  float lim_body = fminf(lim_out, lim_in);
-
-  /* ---- 2) head arrival, 3) head-on ---------------------------------- */
-  float m_head = 1e9f, m_on = 1e9f, lim_head = LIM_FREE, lim_on = LIM_FREE;
-  float h_te = 0, h_s = 0, o_te = 0, o_s = 0;
-  v2 h_src = {0, 0}, h_q = {0, 0}, o_src = {0, 0}, o_q = {0, 0};
-
-  for (int i = 0; i < ns; i++) {
-    snake* sk = gdata->data.snakes + i;
-    if (sk->id == B.id || sk->dead) continue;
-    v2 eh = {sk->xx, sk->yy};
-    if (point_in_poly_large(eh, inside)) continue;
-    int es = snake_score(gdata, sk);
-    if (B.snake_len > 0 && es < (int)(SMALL_ENEMY_FRAC * (float)B.snake_len))
-      continue;
-
-    float er = snake_width(sk->sc) * 0.5f, ew = er * 2.0f;
-    bool boosting = sk->sp > 10.0f;
-    float sp = fmaxf(sk->sp, SPEED_BASE);
-    float ve = boosting ? sp : sp + HEAD_BOOST_RISK * (BOOST_SP - sp);
-    float v3 = boosting ? fmaxf(sp, BOOST_SP * 0.8f) : BOOST_SP * 0.8f;
-    v2 dir = {cosf(sk->ang), sinf(sk->ang)};
-
-    /* Is this head in the sector from my heading toward the OUTWARD side?
-     * Only those can threaten the bulge soon; the rest get a shorter reach. */
-    float rx = eh.x - B.x, ry = eh.y - B.y;
-    float ang_rel = atan2f(B.ca * ry - B.sa * rx, B.ca * rx + B.sa * ry);
-    float out_sign = ((-B.sa) * close_norm.x + B.ca * close_norm.y) >= 0.0f ? 1.0f : -1.0f;
-    float ang_out = ang_rel * out_sign;
-    bool in_sector =
-        ang_out >= 0.0f && ang_out <= HEAD_SECTOR_DEG * (float)M_PI / 180.0f;
-    float face_e, dmin_e;
-    head_arc_info(sk, R->q, PATH_N + 1, &face_e, &dmin_e);
-    bool facing_e = face_e <= FACE_REACT_DEG * (float)M_PI / 180.0f;
-    bool close_e = dmin_e <= CLOSE_ARC_W * B.width + er + B.radius;
-    bool early_e = boosting && facing_e;  /* boosting straight at me */
-    bool late_e = !boosting && facing_e;  /* walking at me: react last */
-    float head_hold = early_e ? HEAD_HOLD_EARLY_M
-                              : (late_e ? HEAD_HOLD_LATE_M : HEAD_HOLD_M);
-    float head_free =
-        early_e ? (in_sector ? HEAD_FREE_EARLY_M : HEAD_FREE_OUT_EARLY_M)
-                : (late_e ? (in_sector ? HEAD_FREE_LATE_M : HEAD_FREE_OUT_LATE_M)
-                          : (in_sector ? HEAD_FREE_M : HEAD_FREE_OUT_M));
-    float hon_hold = early_e ? HEADON_HOLD_EARLY_M
-                             : (late_e ? HEADON_HOLD_LATE_M : HEADON_HOLD_M);
-    float hon_free = early_e ? HEADON_FREE_EARLY_M
-                             : (late_e ? HEADON_FREE_LATE_M : HEADON_FREE_M);
-    bool do_head =
-        react && in_ellipse(eh.x, eh.y, R->oc_x, R->oc_y, zax.x, zax.y,
-                            R->oa + er, R->ob + er) &&
-        (face_e <= FACE_AWAY_DEG * (float)M_PI / 180.0f || close_e);
-
-    for (int k = 0; k <= PATH_N; k++) {
-      v2 q = R->q[k];
-      float tm = R->s[k] / v_me;
-
-      if (do_head) {
-      /* 2) time to reach, including the turn it needs to face the point */
-      float dq = sqrtf(dist2(q.x, q.y, eh.x, eh.y));
-      float d_reach = fmaxf(0.0f, dq - er - B.radius);
-      float dth = angdiff_abs(atan2f(q.y - eh.y, q.x - eh.x), sk->ang);
-      float te = (d_reach + dth * HEAD_TURN_W * ew) / ve;
-      float m = (te - tm) * SPEED_BASE / B.width;
-      float lk = margin_to_lim(m, head_hold, head_free, HEAD_NEG_SLOPE);
-      if (lk < lim_head) {
-        lim_head = lk;
-        h_src = eh;
-        h_q = q;
-      }
-      if (m < m_head) {
-        m_head = m;
-        h_te = te;
-        h_s = R->s[k];
-      }
-      }
-
-      /* 3) straight along its heading, worst case boost */
-      float u = (q.x - eh.x) * dir.x + (q.y - eh.y) * dir.y;
-      float u_max = (boosting ? HEADON_MAX_BOOST_W : HEADON_MAX_IDLE_W) * B.width;
-      if (u > 0.0f && u <= u_max) {
-        float perp = fabsf((q.x - eh.x) * dir.y - (q.y - eh.y) * dir.x);
-        float tol = er + B.radius + HEADON_BUF_W * B.width + 0.08f * u;
-        if (perp <= tol) {
-          /* a walking head far away is assumed to stay at walking pace;
-           * nearby it may boost any moment */
-          float vv = (!boosting && u > HEADON_CLOSE_W * B.width) ? ve : v3;
-          float te3 = fmaxf(0.0f, u - er - B.radius) / vv;
-          float m3 = (te3 - tm) * SPEED_BASE / B.width;
-          float lk3 = margin_to_lim(m3, hon_hold, hon_free, HEADON_NEG_SLOPE);
-          /* only a real threat is worth the body-in-between test */
-          if (lk3 < LIM_FREE && (lk3 < lim_on || m3 < m_on) &&
-              !ray_blocked(gdata, i, eh, dir, er, u - B.radius - B.width)) {
-            if (lk3 < lim_on) {
-              lim_on = lk3;
-              o_src = eh;
-              o_q = q;
-            }
-            if (m3 < m_on) {
-              m_on = m3;
-              o_te = te3;
-              o_s = R->s[k];
-            }
-          }
-        }
-      }
-    }
-  }
-
-  R->lim = fminf(lim_body, fminf(lim_head, lim_on));
-  if (tier == 2) R->lim = fminf(R->lim, TIER2_COURSE);
-  if (m_on < m_head) {
-    R->m_urgent = m_on;
-    R->te_worst = o_te;
-    R->s_worst = o_s;
-  } else {
-    R->m_urgent = m_head;
-    R->te_worst = h_te;
-    R->s_worst = h_s;
-  }
-
-  if (R->lim < LIM_FREE && !(tier == 2 && R->lim == TIER2_COURSE)) {
-    if (R->lim == lim_on && lim_on < LIM_FREE) {
-      R->kind = 3;
-      R->tx = o_src.x; R->ty = o_src.y; R->qx = o_q.x; R->qy = o_q.y;
-    } else if (R->lim == lim_head && lim_head < LIM_FREE) {
-      R->kind = 2;
-      R->tx = h_src.x; R->ty = h_src.y; R->qx = h_q.x; R->qy = h_q.y;
-    } else {
-      R->kind = 1;
-      R->tx = b_src.x; R->ty = b_src.y; R->qx = b_q.x; R->qy = b_q.y;
-    }
-  }
-}
-
 static void follow_circle_self(game_data* gdata) {
   populate_pts(gdata);
   determine_circle_dir();
   int o = B.circle_dir;
 
-  /*
-   * The corridor/spine projection below needs enough looped body (9
-   * body-widths) to have a stable near/far reference point -- on a
-   * small or freshly-formed loop that isn't met yet. This matches the
-   * faithful original: just leave B.goal untouched and wait for the
-   * loop to grow, rather than actively steering here. An earlier
-   * version of this fix nudged the heading directly, but that nudge
-   * had no awareness of the arena center or the wall -- if this
-   * condition kept re-triggering it could walk the snake straight
-   * toward the boundary with nothing pulling it back. Freezing the
-   * goal is safe because check_collision()/check_encircle() (stage 1,
-   * run before the snake ever reaches stage 2) already handle wall
-   * and enemy avoidance reactively; this early-return only matters
-   * for the brief window right as a loop first forms.
-   */
   if (B.bpts_len < 9.0f * B.width) return;
 
   float close_t = closest_body_point();
@@ -1132,11 +677,13 @@ static void follow_circle_self(game_data* gdata) {
   float cur_course = asinf(
       fmaxf(-1.0f, fminf(1.0f, B.ca * close_norm.x + B.sa * close_norm.y)));
 
+  const float ax = B.x + B.fx, ay = B.y + B.fy;
   float close_dist =
-      (B.x - close_pt.x) * close_norm.x + (B.y - close_pt.y) * close_norm.y;
+      (ax - close_pt.x) * close_norm.x + (ay - close_pt.y) * close_norm.y;
 
-  poly_box_large inside_poly;
-  construct_inside_polygon(close_t, &inside_poly);
+  static poly_box_large inside;
+  poly_box_large* ip = &inside;
+  construct_inside_polygon(close_t, ip);
 
   float target_t = close_t;
   float target_far = 0.0f;
@@ -1152,81 +699,64 @@ static void follow_circle_self(game_data* gdata) {
 
   float offset_incr = 0.0625f * B.width;
 
-  /*
-   * Track the nearest enemy head and the nearest enemy body point
-   * separately, each as one plain min-distance scan (no per-point
-   * polygon-offset search -- that's what caused the earlier
-   * instability, not the general idea of reacting to proximity).
-   * Deliberately no tight "collision imminent" distance gate here: a
-   * gate tight enough to only fire once contact is nearly certain
-   * doesn't leave enough frames for target_course to actually turn the
-   * loop away in time, especially while the loop itself is actively
-   * expanding outward -- confirmed against real play, not assumed.
-   * The smooth falloff + hard cap below is what keeps this from
-   * overreacting to merely-nearby, harmless enemies; it doesn't need
-   * a hard range cutoff on top of that to behave.
-   */
+  float enemy_body_od = ENEMY_BODY_OD0 * B.width;
   float enemy_head_d2 = 64.0f * 64.0f * B.width * B.width;
-  float enemy_body_d2 = 64.0f * 64.0f * B.width * B.width;
+  bool enemy_head_inside = false;
 
   int ns = tdarray_length(gdata->data.snakes);
   for (int i = 0; i < ns; i++) {
     snake* sk = gdata->data.snakes + i;
-    if (sk->id == B.id) continue;
+    if (sk->id == B.id || sk->dead) continue;
 
-    v2 eh = {sk->xx, sk->yy};
+    float ew = snake_width(sk->sc);
+    v2 eh = {sk->xx + sk->fx, sk->yy + sk->fy};
     v2 ea = {eh.x + cosf(sk->ang) * B.width, eh.y + sinf(sk->ang) * B.width};
 
-    if (!point_in_poly_large(eh, &inside_poly)) {
+    if (point_in_poly_large(eh, ip)) {
+      enemy_head_inside = true;
+    } else {
       float d1 = dist2(eh.x, eh.y, target_pt.x, target_pt.y);
       float d2_ = dist2(ea.x, ea.y, target_pt.x, target_pt.y);
       float dm = d1 < d2_ ? d1 : d2_;
-      /* direction: a head pointing away from my ring point is no pull, unless
-       * it is already very close */
-      float face_t = angdiff_abs(
-          atan2f(target_pt.y - eh.y, target_pt.x - eh.x), sk->ang);
-      float near_r = CLOSE_ARC_W * B.width + B.radius;
-      bool relevant = face_t <= FACE_AWAY_DEG * (float)M_PI / 180.0f ||
-                      dm < near_r * near_r;
-      if (relevant && dm < enemy_head_d2) enemy_head_d2 = dm;
+      if (dm < enemy_head_d2) enemy_head_d2 = dm;
     }
 
-    /*
-     * Same idea as the head check above, but for the enemy's body --
-     * catches a snake trapping the loop by parking its body nearby
-     * while its head moves elsewhere (or leaves entirely), which was
-     * invisible to head_prox alone.
-     */
+    bool offset_set = false;
+    float offset = 0.0f;
+    poly_box cpolbody;
+    float body_offset = ENEMY_BODY_MULT * (B.width + ew);
+
     int pn = tdarray_length(sk->pts);
     for (int j = 0; j < pn; j++) {
       body_part* po = sk->pts + j;
       if (po->dying) continue;
-      v2 pt = {po->xx, po->yy};
-      if (point_in_poly_large(pt, &inside_poly)) continue;
+      v2 pt = {po->xx + po->fx, po->yy + po->fy};
+      if (point_in_poly_large(pt, ip)) continue;
 
-      float dbp = dist2(pt.x, pt.y, target_pt.x, target_pt.y);
-      if (dbp < enemy_body_d2) enemy_body_d2 = dbp;
+      while (!offset_set ||
+             (enemy_body_od >= -B.width && point_in_poly(pt, &cpolbody))) {
+        if (!offset_set) {
+          offset_set = true;
+        } else {
+          enemy_body_od -= offset_incr;
+        }
+        offset = body_offset + enemy_body_od;
+        body_danger_zone(offset, target_pt, close_norm, close_dist, past_target,
+                         close_pt, &cpolbody);
+      }
     }
   }
 
-  float dist_to_ctr = sqrtf(dist2(B.x, B.y, gdata->data.grd, gdata->data.grd));
-  bool near_wall = (gdata->data.flux_grd - dist_to_ctr) < 1000.0f;
-  float wall_od = 0.0f;
-
-  if (near_wall) {
-    float view_ang = atan2f(gdata->data.view_yy - gdata->data.grd,
-                            gdata->data.view_xx - gdata->data.grd);
-    float bpw = BORDER_PT_RADIUS * 2.0f;
-    float brad = gdata->data.flux_grd + BORDER_PT_RADIUS;
-    float wall_off = 0.5f * (B.width + BORDER_PT_RADIUS);
+  float wall_od = WALL_OD0 * B.width;
+  if (B.near_wall && gdata->data.grd > 0.0f) {
+    const float grd = gdata->data.grd;
     bool offset_set = false;
     float offset = 0.0f;
     poly_box cpolbody;
 
-    for (int k = -2; k <= 2; k++) {
-      float wa = view_ang + (k * bpw) / gdata->data.flux_grd;
-      v2 wp = {gdata->data.grd + brad * cosf(wa),
-               gdata->data.grd + brad * sinf(wa)};
+    for (int k = -WALL_HALF_SPAN; k <= WALL_HALF_SPAN; k += WALL_STEP) {
+      float wa = B.wall_view_ang + (float)k / grd;
+      v2 wp = {grd + cosf(wa) * B.wall_ring_r, grd + sinf(wa) * B.wall_ring_r};
 
       while (!offset_set ||
              (wall_od >= -B.width && point_in_poly(wp, &cpolbody))) {
@@ -1235,7 +765,7 @@ static void follow_circle_self(game_data* gdata) {
         } else {
           wall_od -= offset_incr;
         }
-        offset = wall_off + wall_od;
+        offset = WALL_OFF_MULT * (B.width + wall_od);
         body_danger_zone(offset, target_pt, close_norm, close_dist, past_target,
                          close_pt, &cpolbody);
       }
@@ -1244,160 +774,55 @@ static void follow_circle_self(game_data* gdata) {
 
   float enemy_head_dist = sqrtf(enemy_head_d2);
 
-  /* New: predicted-arc body clearance, head time-to-reach, head-on check.
-   * Tightens instantly, relaxes slowly (no flip-flopping). */
-  threat_res th;
-  scan_threats(gdata, &inside_poly, target_pt, close_norm, close_tang, o, &th);
-  if (th.lim < B.safe_lim || th.tier == 1)
-    B.safe_lim = th.lim; /* tighten at once; free space snaps back to full push */
-  else
-    B.safe_lim += (th.lim - B.safe_lim) * SAFE_RELAX;
-  float clear_f = clampf(B.safe_lim, 0.0f, 1.0f);
+  float target_course = cur_course;
+  if (B.wall_dist_grd < COIL_WALL_BIAS_RANGE) target_course += 0.25f;
 
-  float target_course = cur_course + 0.25f + EXPAND_BONUS * clear_f;
-
-  float head_prox =
-      -1.0f - (fminf(2.0f * target_far, HEAD_LEGACY_REACH_W * B.width) -
-               enemy_head_dist) / B.width;
+  float head_prox = -1.0f - (2.0f * target_far - enemy_head_dist) / B.width;
   if (head_prox > 0)
     head_prox = 0.125f * head_prox * head_prox;
   else
     head_prox = -0.500f * head_prox * head_prox;
-  /* In a dense crowd, the single nearest enemy head is often just close
-   * by from sheer density, not on an actual collision line -- without a
-   * floor here, that still forces target_course arbitrarily negative,
-   * which yanks the goal toward the center of the loop instead of
-   * continuing to circle. Cap the pull so a genuinely close call still
-   * gets a strong reaction, but bystanders can't override circling. */
-  head_prox = fmaxf(head_prox, -2.0f);
-  /* The old distance-only rule treats every direction alike, so its reach is
-   * capped (HEAD_LEGACY_REACH_W above) and it is only an emergency net for
-   * heads right on top of the loop; the time-to-reach limit handles the rest.
-   * The body rule is capped the same way (BODY_LEGACY_REACH_W) so the loop
-   * can press its edge against a neighbouring body instead of shrinking. */
   target_course = fminf(target_course, head_prox);
 
-  float enemy_body_dist = sqrtf(enemy_body_d2);
-
-  float body_prox =
-      -1.0f - (fminf(2.0f * target_far, BODY_LEGACY_REACH_W * B.width) -
-               enemy_body_dist) / B.width;
-  if (body_prox > 0)
-    body_prox = 0.125f * body_prox * body_prox;
-  else
-    body_prox = -0.500f * body_prox * body_prox;
-  /* Same reasoning as head_prox's cap: a body segment merely nearby in a
-   * crowd shouldn't override circling, only one actually on the
-   * approach line should pull the target hard. */
-  body_prox = fmaxf(body_prox, -2.0f);
-  target_course = fminf(target_course, body_prox);
-
-  target_course = fminf(target_course, B.safe_lim);
-
-  /* ---- ring keeper: remember the lap size, resist collapsing it ---- */
-  float ring_def = 0.0f, ring_urg = 0.0f;
-#if RING_KEEP_ON
-  {
-    float lap = close_t;
-    bool lap_ok = lap > 4.0f * B.width && lap < B.bpts_len - 2.0f * B.width;
-    if (lap_ok) {
-      if (B.ring_ref <= 0.0f) {
-        B.ring_ref = lap;
-      } else if (lap > B.ring_ref) {
-        float up = (lap - B.ring_ref) * RING_REF_RISE;
-        B.ring_ref += fminf(up, B.ring_ref * RING_REF_RISE_CAP);
-      } else {
-        B.ring_ref -= B.ring_ref * RING_REF_DECAY;
-        if (B.ring_ref < lap) B.ring_ref = lap;
-      }
-      float keep = RING_KEEP_FRAC * B.ring_ref, hard = RING_HARD_FRAC * B.ring_ref;
-      ring_def = clampf((keep - lap) / (keep - hard), 0.0f, 1.0f);
-    }
-
-    /* how close is a REAL collision? 0 = nothing coming, 1 = imminent */
-    if (th.m_urgent < RING_URG_FAR_M)
-      ring_urg = clampf((RING_URG_FAR_M - th.m_urgent) /
-                            (RING_URG_FAR_M - RING_URG_NEAR_M), 0.0f, 1.0f);
-    if (th.kind == 1 && th.lim < 0.0f) ring_urg = 1.0f;
-    if (enemy_head_dist < RING_HEAD_CLOSE_W * B.width) ring_urg = 1.0f;
-    if (enemy_body_dist < RING_BODY_CLOSE_W * B.width) ring_urg = 1.0f;
-
-    /* way is clear enough and the ring is small: lean outward again. Never
-     * overrides the outward limit of the threat scan or a close enemy. */
-    if (ring_def > 0.0f && !near_wall && th.tier < 3 &&
-        close_dist < RING_REGROW_GAP_W * B.width && head_prox > -0.5f &&
-        body_prox > -0.5f) {
-      float regrow = RING_REGROW_COURSE * ring_def * (1.0f - ring_urg);
-      regrow = fminf(regrow, fmaxf(B.safe_lim, 0.0f));
-      target_course = fmaxf(target_course, regrow);
-    }
+  bool body_adj = false;
+  float body_adj_course = 0.0f;
+  float adj_body = (enemy_body_od - 0.0625f * B.width) / B.width;
+  if (adj_body < 0.0f) {
+    target_course += adj_body;
+    body_adj = true;
+    body_adj_course = target_course;
   }
-#endif
 
-  if (near_wall) {
+  if (B.near_wall) {
     float adj_wall = (wall_od - 0.0625f * B.width) / B.width;
     target_course = fminf(target_course, target_course + adj_wall);
   }
 
   float tail_behind = B.bpts_len - close_t;
-  float allow_tail = B.width * 2.0f;
+  v2 ft = unit_vec((v2){B.follow_tx - ax, B.follow_ty - ay});
+  float face = ft.x * close_norm.x + ft.y * close_norm.y;
+  float allow_tail = B.width * (2.0f - 0.5f * face);
   target_course =
       fminf(target_course,
             (tail_behind - allow_tail + (B.width - close_dist)) / B.width);
 
-  target_course =
-      fminf(target_course, (-0.5f * (close_dist - 4.0f * B.width)) / B.width);
+  target_course = fminf(
+      target_course,
+      (-0.5f * (close_dist - (enemy_head_inside ? 1.0f : 4.0f) * B.width)) /
+          B.width);
 
-  float floor_c = (-0.75f * close_dist) / B.width;
-  /* small ring + no imminent danger: allow far less cutting into the loop.
-   * (Not near the wall: wall escapes keep their full strength.) */
-  if (floor_c < 0.0f && !near_wall)
-    floor_c *= 1.0f - RING_PROTECT * ring_def * (1.0f - ring_urg);
-  target_course = fmaxf(target_course, floor_c);
+  target_course = fmaxf(target_course, (COIL_MIN_COURSE * close_dist) / B.width);
   target_course = fminf(target_course, 1.0f);
 
-  /* Boost only as a last resort: an enemy would beat me to my path AND either
-   * boosting gets me there first or tightening is already maxed out. */
-  if (th.m_urgent < BOOST_URGENT_M) {
-    float m_boost = (th.te_worst - th.s_worst / BOOST_SP) * SPEED_BASE / B.width;
-    if (m_boost >= BOOST_OK_M ||
-        (target_course <= floor_c + 0.02f && th.m_urgent < -2.0f))
-      B.boost_hold = BOOST_HOLD_FRAMES;
-  }
-  if (B.boost_hold > 0) {
-    B.boost_hold--;
-    gdata->bot.output.accel = true;
-  }
-
-  g_bot_dbg.safe_lim = B.safe_lim;
-  g_bot_dbg.zone_tier = th.tier;
-  g_bot_dbg.zone_ax = th.ax;
-  g_bot_dbg.zone_ay = th.ay;
-  g_bot_dbg.zone_cx = th.zc_x;
-  g_bot_dbg.zone_cy = th.zc_y;
-  g_bot_dbg.zone_a = th.za;
-  g_bot_dbg.zone_b = th.zb;
-  g_bot_dbg.outer_cx = th.oc_x;
-  g_bot_dbg.outer_cy = th.oc_y;
-  g_bot_dbg.outer_a = th.oa;
-  g_bot_dbg.outer_b = th.ob;
-  g_bot_dbg.thr_kind = th.kind;
-  g_bot_dbg.thr_ex = th.tx;
-  g_bot_dbg.thr_ey = th.ty;
-  g_bot_dbg.thr_qx = th.qx;
-  g_bot_dbg.thr_qy = th.qy;
-  g_bot_dbg.arc_n = PATH_N + 1;
-  for (int i = 0; i <= PATH_N; i++) {
-    g_bot_dbg.arc_x[i] = th.q[i].x;
-    g_bot_dbg.arc_y[i] = th.q[i].y;
-  }
+  if (body_adj && target_course > body_adj_course)
+    target_course -= COIL_BODY_PENALTY;
 
   v2 goal_dir = {close_tang.x * cosf(target_course) -
                      o * close_tang.y * sinf(target_course),
                  close_tang.y * cosf(target_course) +
                      o * close_tang.x * sinf(target_course)};
-  v2 goal = {B.x + goal_dir.x * 4.0f * B.width,
-             B.y + goal_dir.y * 4.0f * B.width};
+  v2 goal = {ax + goal_dir.x * 4.0f * B.width,
+             ay + goal_dir.y * 4.0f * B.width};
 
   if (fabsf(goal.x - B.goal.x) < 1000.0f &&
       fabsf(goal.y - B.goal.y) < 1000.0f) {
@@ -1408,44 +833,51 @@ static void follow_circle_self(game_data* gdata) {
   }
 }
 
+static snake* find_me(game_data* gdata) {
+  int ns = tdarray_length(gdata->data.snakes);
+  for (int i = 0; i < ns; i++)
+    if (gdata->data.snakes[i].id == B.id) return gdata->data.snakes + i;
+  return NULL;
+}
+
 static void to_circle(game_data* gdata) {
   if (!B.enable_follow_circle) return;
-  int ns = tdarray_length(gdata->data.snakes);
-  snake* me = NULL;
-  for (int i = 0; i < ns; i++)
-    if (gdata->data.snakes[i].id == B.id) {
-      me = gdata->data.snakes + i;
-      break;
-    }
+  snake* me = find_me(gdata);
   if (!me) return;
 
-  /*
-   * Scan the WHOLE body for the head looping back onto it, not just
-   * the first 20 non-dying points encountered. That arbitrary cap
-   * only reliably finds the self-intersection on a small, regular
-   * coil -- on anything else (a larger loop, an irregular shape, or
-   * simply having eaten/grown since the loop started forming), the
-   * actual crossing point can sit well past the 20th point, so it's
-   * never found. B.stage then never advances to 2, and the bot is
-   * left running the reactive, turn-by-turn avoidance in stage 1
-   * (check_collision/check_encircle) indefinitely instead of
-   * settling into the smooth, dedicated circle-following behavior
-   * below -- which looks exactly like "boosting and running here
-   * and there" instead of holding a steady loop.
-   */
   int pn = tdarray_length(me->pts);
-  for (int i = 0; i < pn; i++) {
+  int first = 0;
+  while (first < pn && me->pts[first].dying) first++;
+  if (first >= pn) return;
+
+  float wsz = fminf(B.width, 100.0f);
+  int div = (int)(wsz / 100.0f * TO_CIRCLE_I8);
+  if (div < 8) div = 8;
+
+  gdata->bot.output.accel = (bool)B.default_accel;
+  B.goal = heading_rel(((float)B.circle_dir * (float)M_PI) / (float)div);
+
+  circ tail = {me->pts[first].xx, me->pts[first].yy,
+               (float)(int)(roundf(B.head_circle.r) / 2.0f)};
+  if (circle_intersect(B.head_circle, tail, NULL)) {
+    B.stage = 2;
+    return;
+  }
+
+  float body_r = (float)(int)(B.width / 2.0f);
+  circ hc = {B.x, B.y, body_r};
+  int limit = (int)ceilf((float)pn * SELF_CHECK_FRAC);
+  for (int i = 0; i < limit && i < pn; i++) {
     body_part* po = me->pts + i;
     if (po->dying) continue;
-    circ tc = {po->xx, po->yy, B.radius};
-    if (circle_intersect(B.head_circle, tc, NULL)) {
+    circ bc = {po->xx, po->yy, body_r};
+    if (circle_intersect(hc, bc, NULL)) {
       B.stage = 2;
       return;
     }
   }
-  gdata->bot.output.accel = (bool)B.default_accel;
-  B.goal = heading_rel((B.circle_dir * (float)M_PI) / 32.0f);
 }
+
 
 static void compute_food_goal(game_data* gdata) {
   memset(B.food_angles_set, 0, sizeof(B.food_angles_set));
@@ -1530,6 +962,8 @@ static void every(game_data* gdata) {
 
   B.x = me->xx;
   B.y = me->yy;
+  B.fx = me->fx;
+  B.fy = me->fy;
   B.ang = me->ang;
   B.ca = cosf(B.ang);
   B.sa = sinf(B.ang);
@@ -1546,6 +980,26 @@ static void every(game_data* gdata) {
                     B.y + (B.x + B.ca * B.width - B.x), B.width * B.speed_mult};
   B.side_l = (circ){B.x + (B.y + B.sa * B.width - B.y),
                     B.y - (B.x + B.ca * B.width - B.x), B.width * B.speed_mult};
+
+  const float grd = gdata->data.grd;
+  float dcx = B.x - grd, dcy = B.y - grd;
+  float dctr = sqrtf(dcx * dcx + dcy * dcy);
+  float safe = safe_border_radius(gdata);
+  bool shrinking = grd > 0.0f && safe > 0.0f && safe < grd - 1.0f;
+  float edge = shrinking ? safe : grd;
+  B.wall_dist = fabsf(edge - dctr);
+  B.wall_dist_grd = fabsf(grd - dctr);
+  B.near_wall = grd > 0.0f && B.wall_dist < WALL_RANGE;
+  B.wall_ring_r = shrinking ? safe : WALL_RING_SCALE * grd;
+  B.wall_view_ang = atan2f(B.y - grd, B.x - grd);
+  if (grd > 0.0f && B.wall_dist_grd < WALL_RANGE) {
+    float fa = B.wall_view_ang + 64.0f * (float)B.circle_dir / grd;
+    B.follow_tx = grd + cosf(fa) * WALL_RING_SCALE * grd;
+    B.follow_ty = grd + sinf(fa) * WALL_RING_SCALE * grd;
+  } else {
+    B.follow_tx = grd;
+    B.follow_ty = grd;
+  }
 }
 
 void sbot_init(tenv* env) {
@@ -1558,7 +1012,6 @@ void sbot_init(tenv* env) {
   B.circle_dir = +1;
   B.enable_encircle = true;
   B.enable_follow_circle = true;
-  B.safe_lim = 1.0f;
   gdata->bot.output.accel = false;
   gdata->bot.output.xm = 0;
   gdata->bot.output.ym = 0;
@@ -1589,11 +1042,6 @@ void sbot_go(tenv* env) {
    * this check re-triggering mid-circle. */
   if (B.snake_len < B.follow_circle_length) B.stage = 0;
   if (B.has_food && B.stage != 0) B.has_food = false;
-  if (B.stage != 2) {
-    B.safe_lim = 1.0f;
-    B.boost_hold = 0;
-    B.ring_ref = 0.0f;
-  }
 
   if (B.stage == 2) {
     bot->output.accel = (bool)B.default_accel;

@@ -524,7 +524,10 @@ static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
     mg_tls_init(c, &tls);
     mg_printf(c,
               "GET %s HTTP/1.1\r\nHost: ntl-slither.com\r\n"
-              "User-Agent: Vlither/4.2\r\nAccept: */*\r\n"
+              "User-Agent: Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36 Vlither/4.2\r\n"
+              "Origin: https://slither.io\r\nReferer: https://slither.io/\r\n"
+              "Accept: */*\r\nAccept-Language: en-US,en;q=0.9\r\n"
               "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
               s_rq.path);
   } else if (ev == MG_EV_HTTP_MSG) {
@@ -576,7 +579,7 @@ static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
         auth_add(s_rq.id, s_rq.md5);
         s_sel = s_rq.id;
         cfg_save();
-        status_set("Tag unlocked - shows from your next life");
+        status_set("Tag unlocked - announcing it to NTL players");
       } else {
         char m[100];
         size_t k = bn < 60 ? bn : 60;
@@ -592,6 +595,20 @@ static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
        gives the reason with MG_EV_ERROR) so a failure can be diagnosed. */
     char why[96] = "";
     if (ev == MG_EV_ERROR && ev_data) snprintf(why, sizeof why, "%.90s", (const char *)ev_data);
+    /* The server may answer without a Content-Length and just close the
+       connection (the browser's fetch() accepts that). Mongoose then never
+       reports a message, so read what arrived ourselves. */
+    if (ev == MG_EV_CLOSE && s_rq.kind != RQ_NONE && c->recv.len > 12) {
+      struct mg_http_message hm;
+      int hl = mg_http_parse((const char *)c->recv.buf, c->recv.len, &hm);
+      if (hl > 0) {
+        hm.body = mg_str_n((const char *)c->recv.buf + hl, c->recv.len - (size_t)hl);
+        http_cb(c, MG_EV_HTTP_MSG, &hm);
+        return;
+      }
+    }
+    if (ev == MG_EV_CLOSE && !why[0])
+      snprintf(why, sizeof why, "closed after %u bytes", (unsigned)c->recv.len);
     rq_kind k = s_rq.kind;
     int id = s_rq.id;
     s_rq.kind = RQ_NONE;
@@ -933,6 +950,12 @@ static void ws_callback(struct mg_connection *c, int ev, void *ev_data) {
       s_map_val[id] = tg == 65535u ? (int16_t)-1 : (int16_t)tg;
       s_map_gen[id] = s_cur_gen;
     }
+  } else if (ev == MG_EV_ERROR) {
+    if (s_sel >= 0 && !ntl_tags_valid(s_sel)) { /* only matters for uploaded tags */
+      char m[112];
+      snprintf(m, sizeof m, "NTL feed: %.80s", ev_data ? (const char *)ev_data : "connect failed");
+      status_set(m);
+    }
   } else if (ev == MG_EV_CLOSE) {
     if (c == s_conn) s_conn = NULL;
     s_ws_open = false;
@@ -971,9 +994,24 @@ static void ws_close(void) {
   s_registered = false;
 }
 
+static char s_reg_tc[33];
+static int s_reg_tid = -1;
+
 static void ws_send_position(user_settings *us, snake *me) {
   char buf[512];
   size_t n = 0;
+  /* The NTL feed learns our tag only from the registration message, and the
+     NTL mod sends that once per connection. If the tag changed since (typed
+     "!tag" mid-game), reconnect so the registration is sent again. */
+  if (s_registered) {
+    const char *a = (s_sel >= 0 && !ntl_tags_valid(s_sel)) ? auth_find(s_sel) : NULL;
+    int tid = a ? s_sel : -1;
+    if (tid != s_reg_tid || strcmp(a ? a : "", s_reg_tc)) {
+      ws_close();
+      s_next_connect = 0.0;
+      return;
+    }
+  }
   if (!s_registered) {
     /* [nick, "ip:port", tagToken, tagId, skin, x, y, ntlid] -- same as the
        NTL mod. */
@@ -991,6 +1029,13 @@ static void ws_send_position(user_settings *us, snake *me) {
         tc = a;
         tid = s_sel;
       }
+    }
+    s_reg_tid = tid;
+    snprintf(s_reg_tc, sizeof s_reg_tc, "%s", tc);
+    if (tid >= 0) {
+      char m[64];
+      snprintf(m, sizeof m, "Tag #%d announced to NTL players", tid);
+      status_set(m);
     }
     n += (size_t)snprintf(buf + n, sizeof buf - n, ",\"%s\",%d,%d,%d,%d,%d]", tc, tid,
                           us->custom_skin ? 0 : (int)us->default_skin,
@@ -1159,10 +1204,13 @@ static void draw_tag_chain(int tid, int owner, float ang, float sc, float gsc, f
 
   ant_t *a = ant_get(owner, now);
   float cs = cosf(ang), sn = sinf(ang);
-  a->x[0] = hx - 8.0f * cs * sc;
-  a->y[0] = hy - 8.0f * sn * sc;
+  /* where the antenna is anchored now (behind the head) */
+  const float cur_x = hx - 8.0f * cs * sc;
+  const float cur_y = hy - 8.0f * sn * sc;
 
   if (!a->shown) { /* lay the antenna out straight behind the head */
+    a->x[0] = cur_x;
+    a->y[0] = cur_y;
     for (int i = 1; i < NT_PTS; ++i) {
       a->x[i] = a->x[0] - cs * i * NT_SEG * sc;
       a->y[i] = a->y[0] - sn * i * NT_SEG * sc;
@@ -1180,7 +1228,15 @@ static void draw_tag_chain(int tid, int owner, float ang, float sc, float gsc, f
   if (ticks > 4) ticks = 4;
   a->t += ticks * NT_TICK;
   float maxlen = NT_SEG * sc;
+  /* The head moves every frame but the chain steps at 60 Hz, so a frame can
+     get 0, 1 or 2 steps. Boosting makes the head move far per frame, and the
+     uneven steps showed up as the tag vibrating. Spread the anchor's movement
+     evenly over the steps taken (a->x[0] still holds the previous anchor). */
+  const float from_x = a->x[0], from_y = a->y[0];
   for (int k = 0; k < ticks; ++k) {
+    float f = (float)(k + 1) / (float)ticks;
+    a->x[0] = from_x + (cur_x - from_x) * f;
+    a->y[0] = from_y + (cur_y - from_y) * f;
     for (int i = 1; i < NT_PTS; ++i) {
       float dx = a->x[i] - a->x[i - 1], dy = a->y[i] - a->y[i - 1];
       float z = atan2f(dy, dx);
@@ -1217,10 +1273,13 @@ static void draw_tag_chain(int tid, int owner, float ang, float sc, float gsc, f
   if (alpha <= 0.01f) return;
 
   ImDrawList *dl = igGetWindowDrawList();
+  /* A frame with no physics step: carry the whole chain along with the head
+     instead of leaving it behind (that gap is what flickered). */
+  const float off_x = cur_x - a->x[0], off_y = cur_y - a->y[0];
   ImVec2 sp[NT_PTS];
   for (int i = 0; i < NT_PTS; ++i)
-    sp[i] = (ImVec2){screen_cx + (a->x[i] - view_x) * gsc,
-                     screen_cy + (a->y[i] - view_y) * gsc};
+    sp[i] = (ImVec2){screen_cx + (a->x[i] + off_x - view_x) * gsc,
+                     screen_cy + (a->y[i] + off_y - view_y) * gsc};
 
   /* antenna line: tip -> head, smoothed through the points like NTL */
   ImVec2 path[4 * NT_PTS + 4];

@@ -517,27 +517,8 @@ static void cache_load(void) {
 }
 
 /* ---- HTTPS client (one request at a time, on the shared mongoose mgr) ---- */
-static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
-  if (c != s_rq.conn) return;
-  if (ev == MG_EV_CONNECT) {
-    /* .name = the server name sent in the TLS handshake (SNI). Without it
-     ntl-slither.com closes the connection before answering. Certificate
-     checks stay skipped. */
-    struct mg_tls_opts tls = {.name = mg_str("ntl-slither.com"), .skip_verification = 1};
-    mg_tls_init(c, &tls);
-    mg_printf(c,
-              "GET %s HTTP/1.1\r\nHost: ntl-slither.com\r\n"
-              "User-Agent: Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36 Vlither/4.2\r\n"
-              "Origin: https://slither.io\r\nReferer: https://slither.io/\r\n"
-              "Accept: */*\r\nAccept-Language: en-US,en;q=0.9\r\n"
-              "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
-              s_rq.path);
-  } else if (ev == MG_EV_HTTP_MSG) {
-    struct mg_http_message *hm = (struct mg_http_message *)ev_data;
-    int status = mg_http_status(hm);
-    const char *body = hm->body.buf;
-    size_t bn = hm->body.len;
+/* What to do with a finished request (status + body) or a failed one. */
+static void rq_on_response(int status, const char *body, size_t bn) {
     double now = now_s();
     if (s_rq.kind == RQ_LIST) {
       s_list_busy = false;
@@ -590,28 +571,11 @@ static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
         status_set(m);
       }
     }
-    s_rq.kind = RQ_NONE;
-    s_rq.conn = NULL;
-    c->is_draining = 1;
-  } else if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE) {
-    /* The connection died before a full HTTP answer arrived. Say why (mongoose
-       gives the reason with MG_EV_ERROR) so a failure can be diagnosed. */
-    char why[96] = "";
-    if (ev == MG_EV_ERROR && ev_data) snprintf(why, sizeof why, "%.90s", (const char *)ev_data);
-    /* The server may answer without a Content-Length and just close the
-       connection (the browser's fetch() accepts that). Mongoose then never
-       reports a message, so read what arrived ourselves. */
-    if (ev == MG_EV_CLOSE && s_rq.kind != RQ_NONE && c->recv.len > 12) {
-      struct mg_http_message hm;
-      int hl = mg_http_parse((const char *)c->recv.buf, c->recv.len, &hm);
-      if (hl > 0) {
-        hm.body = mg_str_n((const char *)c->recv.buf + hl, c->recv.len - (size_t)hl);
-        http_cb(c, MG_EV_HTTP_MSG, &hm);
-        return;
-      }
-    }
-    if (ev == MG_EV_CLOSE && !why[0])
-      snprintf(why, sizeof why, "closed after %u bytes", (unsigned)c->recv.len);
+  s_rq.kind = RQ_NONE;
+  s_rq.conn = NULL;
+}
+
+static void rq_on_failure(const char *why) {
     rq_kind k = s_rq.kind;
     int id = s_rq.id;
     s_rq.kind = RQ_NONE;
@@ -641,10 +605,125 @@ static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
         snprintf(m, sizeof m, "NTL server did not answer");
       status_set(m);
     }
+  s_rq.kind = RQ_NONE;
+  s_rq.conn = NULL;
+}
+
+static void http_cb(struct mg_connection *c, int ev, void *ev_data) {
+  if (c != s_rq.conn) return;
+  if (ev == MG_EV_CONNECT) {
+    /* .name = the server name sent in the TLS handshake (SNI). Without it
+     ntl-slither.com closes the connection before answering. Certificate
+     checks stay skipped. */
+    struct mg_tls_opts tls = {.name = mg_str("ntl-slither.com"), .skip_verification = 1};
+    mg_tls_init(c, &tls);
+    mg_printf(c,
+              "GET %s HTTP/1.1\r\nHost: ntl-slither.com\r\n"
+              "User-Agent: Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36 Vlither/4.2\r\n"
+              "Origin: https://slither.io\r\nReferer: https://slither.io/\r\n"
+              "Accept: */*\r\nAccept-Language: en-US,en;q=0.9\r\n"
+              "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
+              s_rq.path);
+  } else if (ev == MG_EV_HTTP_MSG) {
+    struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+    int status = mg_http_status(hm);
+    const char *body = hm->body.buf;
+    size_t bn = hm->body.len;
+    rq_on_response(status, body, bn);
+    s_rq.kind = RQ_NONE;
+    s_rq.conn = NULL;
+    c->is_draining = 1;
+  } else if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE) {
+    /* The connection died before a full HTTP answer arrived. Say why (mongoose
+       gives the reason with MG_EV_ERROR) so a failure can be diagnosed. */
+    char why[96] = "";
+    if (ev == MG_EV_ERROR && ev_data) snprintf(why, sizeof why, "%.90s", (const char *)ev_data);
+    /* The server may answer without a Content-Length and just close the
+       connection (the browser's fetch() accepts that). Mongoose then never
+       reports a message, so read what arrived ourselves. */
+    if (ev == MG_EV_CLOSE && s_rq.kind != RQ_NONE && c->recv.len > 12) {
+      struct mg_http_message hm;
+      int hl = mg_http_parse((const char *)c->recv.buf, c->recv.len, &hm);
+      if (hl > 0) {
+        hm.body = mg_str_n((const char *)c->recv.buf + hl, c->recv.len - (size_t)hl);
+        http_cb(c, MG_EV_HTTP_MSG, &hm);
+        return;
+      }
+    }
+    if (ev == MG_EV_CLOSE && !why[0])
+      snprintf(why, sizeof why, "closed after %u bytes", (unsigned)c->recv.len);
+    rq_on_failure(why);
     if (ev == MG_EV_ERROR) c->is_closing = 1;
   }
 }
 
+#ifdef ANDROID
+/* On Android the request goes through the phone's own HTTPS stack
+ * (java.net.HttpURLConnection) on a worker thread: mongoose's built-in TLS
+ * client cannot complete a handshake with ntl-slither.com. */
+#include <pthread.h>
+static struct {
+  volatile int state; /* 0 idle, 1 running, 2 finished (waiting to be read) */
+  char url[300];
+  int status;
+  char *body;
+  size_t n;
+  char err[96];
+} s_job;
+
+static void *job_main(void *arg) {
+  (void)arg;
+  char *b = NULL;
+  size_t n = 0;
+  char err[96] = "";
+  int st = android_jni_http_get(s_job.url, &b, &n, err, sizeof err);
+  s_job.status = st;
+  s_job.body = b;
+  s_job.n = n;
+  snprintf(s_job.err, sizeof s_job.err, "%s", err);
+  __atomic_store_n(&s_job.state, 2, __ATOMIC_RELEASE);
+  return NULL;
+}
+
+static void rq_start(rq_kind k, int id, const char *path) {
+  if (s_job.state != 0) return;
+  s_rq.kind = k;
+  s_rq.id = id;
+  s_rq.started = now_s();
+  s_rq.conn = NULL;
+  snprintf(s_rq.path, sizeof s_rq.path, "%s", path);
+  snprintf(s_job.url, sizeof s_job.url, "%s%s", NT_HOST, path);
+  s_job.state = 1;
+  pthread_t th;
+  if (pthread_create(&th, NULL, job_main, NULL) != 0) {
+    s_job.state = 0;
+    rq_on_failure("cannot start network thread");
+    return;
+  }
+  pthread_detach(th);
+}
+
+/* Collect a finished worker-thread request. Returns true while the worker is
+ * busy or just delivered (the pump must not start another request). */
+static bool job_poll(void) {
+  int js = __atomic_load_n(&s_job.state, __ATOMIC_ACQUIRE);
+  if (js == 1) return true;
+  if (js == 2) {
+    if (s_rq.kind != RQ_NONE) {
+      if (s_job.status > 0 && s_job.body)
+        rq_on_response(s_job.status, s_job.body, s_job.n);
+      else
+        rq_on_failure(s_job.err[0] ? s_job.err : "no answer");
+    }
+    free(s_job.body);
+    s_job.body = NULL;
+    s_job.state = 0;
+    return true;
+  }
+  return false;
+}
+#else
 static void rq_start(rq_kind k, int id, const char *path) {
   s_rq.kind = k;
   s_rq.id = id;
@@ -657,7 +736,12 @@ static void rq_start(rq_kind k, int id, const char *path) {
   }
 }
 
+#endif
+
 static void net_pump(void) {
+#ifdef ANDROID
+  if (job_poll()) return;
+#endif
   if (s_rq.kind != RQ_NONE) {
     if (now_s() - s_rq.started > 25.0) { /* stuck request */
       struct mg_connection *c = s_rq.conn;

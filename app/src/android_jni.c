@@ -1187,4 +1187,152 @@ android_backup_event android_jni_poll_backup_event(void) {
 }
 
 
+
+/* ---- blocking HTTPS GET via java.net.HttpURLConnection ------------------ */
+#define AJNI_HTTP_MAX (12 * 1024 * 1024)
+
+static void ajni_http_err(char* err, size_t cap, const char* msg) {
+    if (err && cap) snprintf(err, cap, "%s", msg);
+}
+
+int android_jni_http_get(const char* url, char** out_body, size_t* out_len,
+                         char* err, size_t err_cap) {
+    if (out_body) *out_body = NULL;
+    if (out_len) *out_len = 0;
+    ajni_http_err(err, err_cap, "");
+    if (!url || !out_body || !out_len || !g_android_app ||
+        !g_android_app->activity || !g_android_app->activity->vm) {
+        ajni_http_err(err, err_cap, "no JVM");
+        return -1;
+    }
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+    int st = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (st == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) {
+            ajni_http_err(err, err_cap, "attach failed");
+            return -1;
+        }
+        did_attach = true;
+    } else if (st != JNI_OK || !env) {
+        ajni_http_err(err, err_cap, "GetEnv failed");
+        return -1;
+    }
+
+    int result = -1;
+    char* buf = NULL;
+    size_t len = 0, cap = 0;
+    jclass url_c = NULL, hc = NULL, is_c = NULL;
+    jobject u = NULL, conn = NULL, is = NULL;
+    jbyteArray arr = NULL;
+
+#define AJ_FAIL(msg) do { (*env)->ExceptionClear(env); \
+    ajni_http_err(err, err_cap, msg); goto http_done; } while (0)
+#define AJ_CHK(msg) do { if ((*env)->ExceptionCheck(env)) AJ_FAIL(msg); } while (0)
+
+    url_c = (*env)->FindClass(env, "java/net/URL");
+    hc = (*env)->FindClass(env, "java/net/HttpURLConnection");
+    is_c = (*env)->FindClass(env, "java/io/InputStream");
+    if (!url_c || !hc || !is_c) AJ_FAIL("java classes missing");
+
+    {
+        jstring js = (*env)->NewStringUTF(env, url);
+        jmethodID ctor = (*env)->GetMethodID(env, url_c, "<init>", "(Ljava/lang/String;)V");
+        u = (*env)->NewObject(env, url_c, ctor, js);
+        (*env)->DeleteLocalRef(env, js);
+        AJ_CHK("bad url");
+        jmethodID open = (*env)->GetMethodID(env, url_c, "openConnection",
+                                             "()Ljava/net/URLConnection;");
+        conn = (*env)->CallObjectMethod(env, u, open);
+        AJ_CHK("openConnection failed");
+        if (!conn) AJ_FAIL("no connection");
+
+        jmethodID set_ct = (*env)->GetMethodID(env, hc, "setConnectTimeout", "(I)V");
+        jmethodID set_rt = (*env)->GetMethodID(env, hc, "setReadTimeout", "(I)V");
+        jmethodID set_rp = (*env)->GetMethodID(env, hc, "setRequestProperty",
+                                               "(Ljava/lang/String;Ljava/lang/String;)V");
+        (*env)->CallVoidMethod(env, conn, set_ct, 10000);
+        (*env)->CallVoidMethod(env, conn, set_rt, 10000);
+        static const char* const props[][2] = {
+            {"User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"},
+            {"Origin", "https://slither.io"},
+            {"Referer", "https://slither.io/"},
+            {"Accept", "*/*"},
+        };
+        for (int i = 0; i < 4; ++i) {
+            jstring k = (*env)->NewStringUTF(env, props[i][0]);
+            jstring v = (*env)->NewStringUTF(env, props[i][1]);
+            (*env)->CallVoidMethod(env, conn, set_rp, k, v);
+            (*env)->DeleteLocalRef(env, k);
+            (*env)->DeleteLocalRef(env, v);
+        }
+        AJ_CHK("request setup failed");
+
+        jmethodID get_code = (*env)->GetMethodID(env, hc, "getResponseCode", "()I");
+        int code = (*env)->CallIntMethod(env, conn, get_code);
+        AJ_CHK("no response (network/TLS error)");
+
+        jmethodID get_is = (*env)->GetMethodID(
+            env, hc, code >= 400 ? "getErrorStream" : "getInputStream",
+            "()Ljava/io/InputStream;");
+        is = (*env)->CallObjectMethod(env, conn, get_is);
+        (*env)->ExceptionClear(env);
+        result = code;
+        if (is) {
+            jmethodID rd = (*env)->GetMethodID(env, is_c, "read", "([B)I");
+            arr = (*env)->NewByteArray(env, 16384);
+            for (;;) {
+                int n = (*env)->CallIntMethod(env, is, rd, arr);
+                if ((*env)->ExceptionCheck(env)) {
+                    (*env)->ExceptionClear(env);
+                    if (len == 0) result = -1;
+                    ajni_http_err(err, err_cap, "read failed");
+                    break;
+                }
+                if (n <= 0) break;
+                if (len + (size_t)n + 1 > cap) {
+                    size_t nc = cap ? cap * 2 : 32768;
+                    while (nc < len + (size_t)n + 1) nc *= 2;
+                    if (nc > AJNI_HTTP_MAX + 1) { result = -1; ajni_http_err(err, err_cap, "reply too large"); break; }
+                    char* nb = (char*)realloc(buf, nc);
+                    if (!nb) { result = -1; break; }
+                    buf = nb;
+                    cap = nc;
+                }
+                (*env)->GetByteArrayRegion(env, arr, 0, n, (jbyte*)(buf + len));
+                len += (size_t)n;
+            }
+            jmethodID cl = (*env)->GetMethodID(env, is_c, "close", "()V");
+            (*env)->CallVoidMethod(env, is, cl);
+            (*env)->ExceptionClear(env);
+        }
+        jmethodID disc = (*env)->GetMethodID(env, hc, "disconnect", "()V");
+        (*env)->CallVoidMethod(env, conn, disc);
+        (*env)->ExceptionClear(env);
+    }
+
+http_done:
+    if (arr) (*env)->DeleteLocalRef(env, arr);
+    if (is) (*env)->DeleteLocalRef(env, is);
+    if (conn) (*env)->DeleteLocalRef(env, conn);
+    if (u) (*env)->DeleteLocalRef(env, u);
+    if (url_c) (*env)->DeleteLocalRef(env, url_c);
+    if (hc) (*env)->DeleteLocalRef(env, hc);
+    if (is_c) (*env)->DeleteLocalRef(env, is_c);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+#undef AJ_FAIL
+#undef AJ_CHK
+    if (result > 0) {
+        if (!buf) buf = (char*)calloc(1, 1);
+        if (buf) buf[len] = 0;
+        *out_body = buf;
+        *out_len = len;
+    } else {
+        free(buf);
+    }
+    return result;
+}
+
 #endif

@@ -2,6 +2,7 @@
 #include "../user.h"
 #include "../external/mongoose.h"
 #include "global_chat.h"
+#include "ntl_tags.h"
 #include "ntl_emoji.h"
 #include "thermite/jsr_network.h"
 #include <stdio.h>
@@ -814,9 +815,10 @@ static void ntl_poll_request(tenv *env) {
       S.request_path, sizeof S.request_path,
       "/slither/ntlplay-mt.php?auth=%s&tid=%s&nick=%s&score=%d"
       "&valx=%.0f&valy=%.0f&bot=false&sos=false&food=false&srv=%s"
-      "&sid=%d&msg=%s&rank=%d&dt=Vlither&cs=%d&ver=4.1&tlm=&di=1000",
+      "&sid=%d&msg=%s&rank=%d&dt=Vlither&cs=%d&tg=%d&ver=4.1&tlm=&di=1000",
       us->ntl_auth_key, us->ntl_team_id, nick, score, x, y, srv, sid,
-      msg, rank, local ? local->accessory : 0);
+      msg, rank, local ? local->accessory : 0,
+      ntl_tags_selected()); /* NTL teammates read our tag from "tg" */
 
   S.request_conn =
       mg_http_connect(&S.mgr, "https://ntl-slither.com", cb, NULL);

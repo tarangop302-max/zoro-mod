@@ -415,14 +415,10 @@ void ui_overlay(tenv* env) {
           float sy = mhh2 + (hy - gdata->data.view_yy) * gdata->data.gsc;
           float sw_ = (float)ctx->size[0], sh_ = (float)ctx->size[1];
           float ddx = cosf(ang), ddy = sinf(ang);
-          float tx_ = ddx > 1e-4f ? (sw_ - sx) / ddx
-                                  : (ddx < -1e-4f ? (0.0f - sx) / ddx : 1e9f);
-          float ty_ = ddy > 1e-4f ? (sh_ - sy) / ddy
-                                  : (ddy < -1e-4f ? (0.0f - sy) / ddy : 1e9f);
-          float len = fminf(tx_, ty_); /* 100% = all the way to the screen edge */
-          if (len < 0.0f) len = 0.0f;
-          /* Settings > "Joystick laser length" (100% = to the screen edge). */
-          len *= (float)user_settings_joy_laser_pct(usrs) / 100.0f;
+          /* Same length in every direction: 100% = half the screen width
+             (head to the horizontal screen edge). Longer than the screen
+             height just runs off-screen vertically. */
+          float len = sw_ * 0.5f * (float)user_settings_joy_laser_pct(usrs) / 100.0f;
           laser_tx = sx + ddx * len;
           laser_ty = sy + ddy * len;
         }

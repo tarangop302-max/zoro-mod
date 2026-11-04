@@ -697,7 +697,10 @@ static void cb(struct mg_connection *c, int ev, void *ev_data) {
   if (c != S.request_conn) return;
 
   if (ev == MG_EV_CONNECT) {
-    struct mg_tls_opts tls = {.skip_verification = 1};
+    /* .name = the server name sent in the TLS handshake (SNI). Without it
+     ntl-slither.com closes the connection before answering. Certificate
+     checks stay skipped. */
+    struct mg_tls_opts tls = {.name = mg_str("ntl-slither.com"), .skip_verification = 1};
     mg_tls_init(c, &tls);
     mg_printf(c,
               "GET %s HTTP/1.1\r\nHost: ntl-slither.com\r\n"

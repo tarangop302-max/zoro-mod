@@ -1,4 +1,7 @@
 #include "server.h"
+#ifdef ANDROID
+#include "../android_glfw_shim.h"
+#endif
 
 #include "../user.h"
 #include "callback.h"
@@ -124,6 +127,10 @@ void server_poll(tenv* env) {
 #else
   mg_mgr_poll(&gdata->network_manager, 0);
 #endif
+  /* Ping accuracy: the socket is only read here, once per frame, so a pong is
+     seen up to a frame after it really arrived. Remember when this read ended;
+     the next pong was NOT there at this moment (see the 'p' handler). */
+  gdata->data.rt_poll_end_ms = glfwGetTime() * 1000.0;
 }
 
 void server_destroy(tenv* env) {

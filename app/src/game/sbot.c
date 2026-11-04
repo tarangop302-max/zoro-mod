@@ -107,6 +107,30 @@ sbot_dbg g_bot_dbg;
 #define BODY_NEAR_W 4.0f        /* how far ahead along my arc bodies matter */
 #define BODY_RAMP_W 1.0f        /* clearance (beyond touching) that is fully free */
 
+/*
+ * Ring keeper (stage 2 only). In a crowded area the head-distance / head-on /
+ * tier checks keep asking for a tighter course, and nothing remembered how big
+ * the loop used to be, so the coil collapsed into a small ball. The ring keeper
+ * remembers the lap length (arc length of one full lap = close_t) and, when the
+ * lap has shrunk below that memory, (a) allows much less "cut into the loop"
+ * unless a real collision is imminent, and (b) adds a gentle outward push when
+ * the way is clear. Imminent danger always gets the original full reaction.
+ * Set RING_KEEP_ON to 0 to get the old behaviour back exactly.
+ */
+#define RING_KEEP_ON 1
+#define RING_REF_RISE 0.02f        /* how fast the remembered size follows a bigger lap */
+#define RING_REF_RISE_CAP 0.0015f  /* ...but never more than this fraction per frame (ignores glitches) */
+#define RING_REF_DECAY 0.0002f     /* slow forgetting per frame (half-life ~1 minute) */
+#define RING_KEEP_FRAC 0.85f       /* lap above this x memory = healthy, no change */
+#define RING_HARD_FRAC 0.55f       /* lap at/below this x memory = fully protected */
+#define RING_PROTECT 0.9f          /* how much of the allowed tuck is removed at full shrink */
+#define RING_REGROW_COURSE 0.35f   /* outward course asked for while re-growing (rad) */
+#define RING_REGROW_GAP_W 3.6f     /* only regrow while the coil gap is under this (w) */
+#define RING_URG_NEAR_M 0.0f       /* arrival margin at/below which danger is "imminent" */
+#define RING_URG_FAR_M 3.0f        /* arrival margin at/above which danger is ignored */
+#define RING_HEAD_CLOSE_W 2.0f     /* an enemy head this close to my ring point = imminent */
+#define RING_BODY_CLOSE_W 1.2f     /* an enemy body this close to my ring point = imminent */
+
 #define MAX_BODY_PTS 8192
 #define MAX_HULL_PTS 32
 #define MAX_INSIDE_PTS 512
@@ -186,6 +210,7 @@ typedef struct {
 
   float safe_lim;  /* smoothed stage-2 threat limit */
   int boost_hold;  /* frames of boost still latched */
+  float ring_ref;  /* remembered healthy lap length (px), 0 = unknown */
 } bot_state;
 
 static bot_state B;
@@ -1269,6 +1294,46 @@ static void follow_circle_self(game_data* gdata) {
 
   target_course = fminf(target_course, B.safe_lim);
 
+  /* ---- ring keeper: remember the lap size, resist collapsing it ---- */
+  float ring_def = 0.0f, ring_urg = 0.0f;
+#if RING_KEEP_ON
+  {
+    float lap = close_t;
+    bool lap_ok = lap > 4.0f * B.width && lap < B.bpts_len - 2.0f * B.width;
+    if (lap_ok) {
+      if (B.ring_ref <= 0.0f) {
+        B.ring_ref = lap;
+      } else if (lap > B.ring_ref) {
+        float up = (lap - B.ring_ref) * RING_REF_RISE;
+        B.ring_ref += fminf(up, B.ring_ref * RING_REF_RISE_CAP);
+      } else {
+        B.ring_ref -= B.ring_ref * RING_REF_DECAY;
+        if (B.ring_ref < lap) B.ring_ref = lap;
+      }
+      float keep = RING_KEEP_FRAC * B.ring_ref, hard = RING_HARD_FRAC * B.ring_ref;
+      ring_def = clampf((keep - lap) / (keep - hard), 0.0f, 1.0f);
+    }
+
+    /* how close is a REAL collision? 0 = nothing coming, 1 = imminent */
+    if (th.m_urgent < RING_URG_FAR_M)
+      ring_urg = clampf((RING_URG_FAR_M - th.m_urgent) /
+                            (RING_URG_FAR_M - RING_URG_NEAR_M), 0.0f, 1.0f);
+    if (th.kind == 1 && th.lim < 0.0f) ring_urg = 1.0f;
+    if (enemy_head_dist < RING_HEAD_CLOSE_W * B.width) ring_urg = 1.0f;
+    if (enemy_body_dist < RING_BODY_CLOSE_W * B.width) ring_urg = 1.0f;
+
+    /* way is clear enough and the ring is small: lean outward again. Never
+     * overrides the outward limit of the threat scan or a close enemy. */
+    if (ring_def > 0.0f && !near_wall && th.tier < 3 &&
+        close_dist < RING_REGROW_GAP_W * B.width && head_prox > -0.5f &&
+        body_prox > -0.5f) {
+      float regrow = RING_REGROW_COURSE * ring_def * (1.0f - ring_urg);
+      regrow = fminf(regrow, fmaxf(B.safe_lim, 0.0f));
+      target_course = fmaxf(target_course, regrow);
+    }
+  }
+#endif
+
   if (near_wall) {
     float adj_wall = (wall_od - 0.0625f * B.width) / B.width;
     target_course = fminf(target_course, target_course + adj_wall);
@@ -1284,6 +1349,10 @@ static void follow_circle_self(game_data* gdata) {
       fminf(target_course, (-0.5f * (close_dist - 4.0f * B.width)) / B.width);
 
   float floor_c = (-0.75f * close_dist) / B.width;
+  /* small ring + no imminent danger: allow far less cutting into the loop.
+   * (Not near the wall: wall escapes keep their full strength.) */
+  if (floor_c < 0.0f && !near_wall)
+    floor_c *= 1.0f - RING_PROTECT * ring_def * (1.0f - ring_urg);
   target_course = fmaxf(target_course, floor_c);
   target_course = fminf(target_course, 1.0f);
 
@@ -1523,6 +1592,7 @@ void sbot_go(tenv* env) {
   if (B.stage != 2) {
     B.safe_lim = 1.0f;
     B.boost_hold = 0;
+    B.ring_ref = 0.0f;
   }
 
   if (B.stage == 2) {

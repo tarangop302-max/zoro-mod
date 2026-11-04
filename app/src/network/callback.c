@@ -32,6 +32,9 @@ static void set_tcp_nodelay(struct mg_connection* c) { (void)c; }
 
 #include "../game/food.h"
 #include "../game/eyes_back.h"
+#include "../game/lag_comp.h"
+#include "../game/steer_model.h"
+#include "../game/head_ext.h"
 #include "../game/snake.h"
 #include "../game/snakey_rain.h"
 #include "../game/ntl_tags.h"
@@ -84,7 +87,9 @@ static float net_lead_units(game_data* gdata, snake* o) {
   float lead_ms = net_lead_ms(gdata, o);
   if (lead_ms <= 0.0f) return 0.0f;
   float units = o->sp * lead_ms / 32.0f; /* sp/4 per 8 ms, same as oef() */
-  float cap = 0.9f * o->msl;
+  /* Longer than one segment is fine now: oef.c bridges the gap to the head
+     with temporary body points, so the body always reaches the head. */
+  float cap = (float)(HEAD_EXT_MAX - 1) * o->msl;
   return units > cap ? cap : units;
 }
 
@@ -660,36 +665,45 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
         }
       }
 
-      /* Steering prediction (see input.c): while a locally-started turn is
-         still inside its window, this echo describes where the snake was one
-         round trip ago, so it must not overwrite our heading/turn state.
-         If the server's heading is far off what we predicted (it disagreed,
-         or we were teleported) trust the server and drop the prediction. */
       /* Eyes back needs the exact moment the server reports our heading. */
       if (is_my_snake && ang != -1)
         eyes_back_on_server_ang(gdata, ang, glfwGetTime() * 1000.0);
-      bool keep_local_steer = false;
-#if STEER_PREDICT
-      if (is_my_snake) {
+
+      /* My own heading: this echo describes the server one network trip ago
+         and does not include the turns still in flight. Re-anchor the
+         server-true model (lag_comp.c) on it and replay those turns, instead
+         of either dragging the head back to where it was a round trip ago or
+         ignoring the server for a while (the old "hold" window, which let the
+         screen and the real snake drift apart at high ping and then snapped
+         them together). Small errors are smoothed by the usual fas fade. */
+      bool model_handled = false;
+      if (is_my_snake && steer_model_on(gdata) && (ang != -1 || wang != -1)) {
         double rt_now = glfwGetTime() * 1000.0;
-        double until = gdata->data.steer_pred_until_ms;
-        if (rt_now < until && until - rt_now <= STEER_PRED_MAX_WINDOW_MS + 50.0) {
-          keep_local_steer = true;
-          if (ang != -1) {
-            float pda = fmodf(ang - o->ang, PI2);
-            if (pda < 0) pda += PI2;
-            if (pda > PI) pda -= PI2;
-            float turn_rate = gdata->data.mamu * 125.0f * o->scang * o->spang;
-            float thr = 0.3f + 2.0f * turn_rate * (gdata->data.owd_ms / 1000.0f);
-            if (fabsf(pda) > thr) {
-              keep_local_steer = false;
-              gdata->data.steer_pred_until_ms = 0;
-            }
-          }
+        float up = steer_up_ms(gdata);
+        float rate = steer_rate(gdata, o);
+        lag_comp_echo(rt_now, ang, wang, o->ang, up, up, rate);
+        float da_ang, da_wang;
+        lag_comp_display(rt_now, up, steer_hold_ms(gdata), rate, &da_ang,
+                         &da_wang);
+        float da = fmodf(da_ang - o->ang, PI2);
+        if (da < 0) da += PI2;
+        if (da > PI) da -= PI2;
+        int k = o->fapos;
+        for (int j = 0; j < GD_AFC; j++) {
+          o->fas[k] -= da * gdata->data.afas[j];
+          k++;
+          if (k >= GD_AFC) k = 0;
         }
+        o->fatg = GD_AFC;
+        o->ang = da_ang;
+        o->wang = da_wang;
+        float vd = fmodf(da_wang - da_ang, PI2);
+        if (vd < 0) vd += PI2;
+        if (vd > PI) vd -= PI2;
+        o->dir = fabsf(vd) < 0.0005f ? 0 : (vd < 0 ? 1 : 2);
+        model_handled = true;
       }
-#endif
-      if (!keep_local_steer) {
+      if (!model_handled) {
       if (dir != -1) o->dir = dir;
       if (ang != -1) {
         float da = fmodf(ang - o->ang, PI2);
@@ -787,6 +801,9 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       o = get_snake(gdata, id);
     }
     if (o) {
+      /* Drop the temporary head-extension points (oef.c) so the new real
+         point chains from the last real one. */
+      head_ext_drop(o);
       if (adding_only)
         o->sct++;
       else {
@@ -960,7 +977,27 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       float csp = net_lead_units(gdata, o);
       float lx = xx;
       float ly = yy;
-      if (csp > 0) {
+      if (csp > 0 && is_my_snake && steer_model_on(gdata) && lag_comp_ready()) {
+        /* My own head: integrate the path the server head really took since
+           this packet, replaying the turns that were already in flight to the
+           server (lag_comp.c), rather than guessing a chord from the local
+           turn state. */
+        float lead_ms = net_lead_ms(gdata, o);
+        float up = steer_up_ms(gdata);
+        float ldx, ldy;
+        lag_comp_lead(glfwGetTime() * 1000.0, up, lead_ms,
+                      steer_rate(gdata, o), o->sp / 32.0f, &ldx, &ldy);
+        float cap = (float)(HEAD_EXT_MAX - 1) * o->msl;
+        float dist = sqrtf(ldx * ldx + ldy * ldy);
+        if (dist > cap) {
+          ldx *= cap / dist;
+          ldy *= cap / dist;
+          dist = cap;
+        }
+        lx += ldx;
+        ly += ldy;
+        csp = dist;
+      } else if (csp > 0) {
         float lead_ang = net_lead_heading(gdata, o);
         lx += cosf(lead_ang) * csp;
         ly += sinf(lead_ang) * csp;
@@ -1011,9 +1048,29 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
        rt_ping_sent_ms, so it keeps the old formula. */
     float rtt;
     double rt_now = glfwGetTime() * 1000.0;
-    if (gdata->data.rt_ping_sent_ms > 0 && rt_now >= gdata->data.rt_ping_sent_ms)
-      rtt = (float)(rt_now - gdata->data.rt_ping_sent_ms);
-    else
+    if (gdata->data.rt_ping_sent_ms > 0 && rt_now >= gdata->data.rt_ping_sent_ms) {
+      /* The pong is only SEEN when the socket is read (once per frame), so
+         rt_now is an upper bound on the round trip. The previous read ended
+         without it, which makes that moment a lower bound. The middle of the
+         two removes the frame-sized bias; if our own frame stalled the window
+         is wide and says little, so keep the running estimate inside it. */
+      double sent = gdata->data.rt_ping_sent_ms;
+      double upper = rt_now - sent;
+      double lower = gdata->data.rt_poll_end_ms - sent;
+      if (lower < 0) lower = 0;
+      if (lower > upper) lower = upper;
+      double est;
+      if (upper - lower <= 34.0) {
+        est = (lower + upper) * 0.5;
+      } else if (gdata->data.owd_ms > 0) {
+        est = gdata->data.owd_ms * 2.0;
+        if (est < lower) est = lower;
+        if (est > upper) est = upper;
+      } else {
+        est = lower;
+      }
+      rtt = (float)est;
+    } else
       rtt = gdata->data.ctm - gdata->data.last_ping_mtm;
     gdata->data.rt_ping_sent_ms = 0;
     gdata->data.pings[gdata->data.cping] = rtt;

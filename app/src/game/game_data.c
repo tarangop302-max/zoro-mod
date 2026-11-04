@@ -7,6 +7,7 @@
 #endif
 
 #include "eyes_back.h"
+#include "lag_comp.h"
 #include "../user.h"
 #include "../network/server.h"
 
@@ -555,6 +556,7 @@ void game_data_reset(tenv* env) {
   game_data* gdata = &usr->gdata;
 
   eyes_back_reset();
+  lag_comp_reset();
   gdata->data.wfpr = false;
   gdata->data.lagging = false;
   gdata->data.lag_mult = 1;
@@ -564,6 +566,7 @@ void game_data_reset(tenv* env) {
   gdata->data.last_e_mtm = 0;
   gdata->data.rt_ltm_ms = 0;
   gdata->data.rt_ping_sent_ms = 0;
+  gdata->data.rt_poll_end_ms = 0;
   gdata->data.rt_last_e_ms = -1e9;
   gdata->data.rt_last_accel_ms = -1e9;
   gdata->data.steer_pred_until_ms = 0;

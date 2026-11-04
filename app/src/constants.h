@@ -40,30 +40,28 @@
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 
-/* 1 = the moment a steering packet is sent, the head starts turning locally
-   (same turn rate the server uses) instead of waiting a full round trip for
-   the server to echo the turn back. Server echoes are reconciled afterwards.
-   0 = old behaviour. */
+/* 1 = my own head is steered by the server-true model (game/lag_comp.c): every
+   steering byte is logged, every heading the server reports re-anchors the
+   model, and the turns still in flight are replayed on top. 0 = old behaviour
+   (echoes simply overwrite the heading). */
 #define STEER_PREDICT 1
 /* Latency compensation is a runtime setting (Settings > General): when ON,
    our own turns are shown when the server will receive them (sent time +
-   one-way delay) instead of the instant they are sent, so the head on screen
-   is where the real head is. */
-/* Longest delay the ON mode will hold a turn back (ms). */
-#define STEER_SERVER_MATCH_MAX_MS 120.0f
-/* While a locally-predicted turn is still "in flight", server echoes about our
-   own heading are not allowed to yank it backwards. The window is
-   2 * one-way-delay + 50 ms, clamped to this range. */
-#define STEER_PRED_MIN_WINDOW_MS 80.0f
-#define STEER_PRED_MAX_WINDOW_MS 400.0f
+   one-way delay x Turn delay) instead of the instant they are sent, so the head
+   on screen is where the real head is. */
 
 /* Latency lead: server positions arrive one network trip late, so every head
    is drawn where it was ~one-way-delay ago -- i.e. short of where the server
-   actually has it, which is a big part of "died before touching the body".
-   Extrapolating that much (along the snake's own heading) draws heads where
-   the server has them now. 0 = off, 1 = full estimate. */
+   actually has it, which is the main reason for "died before touching the
+   body". Extrapolating that much draws heads where the server has them now.
+   0 = off, 1 = full estimate.
+   The limits below used to be 100 ms and 0.9 of a segment, which stopped the
+   lead at ~200 ms ping: the real head kept going while the drawn one waited,
+   so at high ping you died up to ~70 units before touching (boosting). They
+   are now only sanity limits; game/head_ext.c keeps the body joined to a head
+   that is several segments ahead of the newest server point. */
 #define NET_LEAD_FACTOR 1.0f
-#define NET_LEAD_MAX_MS 100.0f
+#define NET_LEAD_MAX_MS 400.0f
 /* Extra extrapolation (ms) on top of the network delay. A frame is read up to
    one frame after its packet arrived and reaches the screen ~1-2 frames after
    it is drawn, none of which the ping covers -- at 90 Hz that is roughly 10-20

@@ -4,104 +4,53 @@
 #endif    
 #include "input.h"    
 #include "eyes_back.h"    
+#include "lag_comp.h"
+#include "steer_model.h"
     
 #include "../user.h"    
 #include "../ui/key_buttons.h"    
     
 /*
- * Steering prediction. The server only starts turning the snake when our
- * steering packet reaches it, and we only see the turn when its echo comes
- * back a full round trip later. The "Latency compensation" setting picks what
- * the local head does meanwhile:
- *   OFF = turn the instant the packet is sent (feels instant, but the
- *         on-screen head is ahead of the real one by one-way delay);
- *   ON  = turn when the server will receive the packet, so the head on screen
- *         is where the real head is.
- * Server echoes about our own heading are held back for a short window (see
- * callback.c) so they can't drag the head back to where it was a round trip
- * ago; once the window closes the normal smoothing reconciles any leftover.
+ * Steering prediction (server-true). The server only starts turning the snake
+ * when our steering packet reaches it, and tells us about the turn a full round
+ * trip later. lag_comp.c keeps a model of the real server heading: every byte
+ * we send is logged here, every heading the server reports re-anchors the model
+ * (callback.c) and the turns still in flight are replayed on top of it.
+ *
+ * The "Latency compensation" settings only choose WHEN a turn is shown:
+ *   OFF            = the instant it is sent (feels instant, but the on-screen
+ *                    head is ahead of the real one by one-way delay);
+ *   ON, Turn delay = that share of the one-way delay after it is sent; 100% =
+ *                    exactly when the server applies it, so the head on screen
+ *                    is where the real head is.
+ * Either way the model keeps the head and the server in step, so there is no
+ * "ignore the server for a while, then snap" window any more.
  */
-/* How long server echoes about our own heading are ignored after a turn. */
-__attribute__((unused)) static float steer_window_ms(game_data* gdata) {
-  float window = 2.0f * gdata->data.owd_ms + 50.0f;
-  if (window < STEER_PRED_MIN_WINDOW_MS) window = STEER_PRED_MIN_WINDOW_MS;
-  if (window > STEER_PRED_MAX_WINDOW_MS) window = STEER_PRED_MAX_WINDOW_MS;
-  return window;
-}
 
-/* Start the local turn toward steering byte `sang` right now. */
-static void steer_turn_now(game_data* gdata, snake* me, int sang,
-                           double now_ms) {
-#if STEER_PREDICT
-  if (me->dead) return;
-  float target = (float)sang * PI2 / 251.0f;
-  float vang = fmodf(target - me->ang, PI2);
-  if (vang < 0) vang += PI2;
-  if (vang > PI) vang -= PI2;
-  if (fabsf(vang) < 0.0005f) return;
-  me->wang = target;
-  me->dir = vang < 0 ? 1 : 2;
-  gdata->data.steer_pred_until_ms = now_ms + steer_window_ms(gdata);
-#else
-  (void)gdata; (void)me; (void)sang; (void)now_ms;
-#endif
-}
-
-/* Called when a steering packet is sent. */
+/* Called when a steering packet is sent: tell the model. */
 static void steer_predict(game_data* gdata, snake* me, int sang,
                           double now_ms) {
 #if STEER_PREDICT
+  (void)gdata;
   if (me->dead) return;
-  if (gdata->data.lat_comp) {
-  float delay = gdata->data.owd_ms * gdata->data.turn_delay_frac;
-  if (delay > STEER_SERVER_MATCH_MAX_MS) delay = STEER_SERVER_MATCH_MAX_MS;
-  if (delay < 1.0f) { /* no ping measured yet */
-    steer_turn_now(gdata, me, sang, now_ms);
-    return;
-  }
-  int n = gdata->data.steer_q_n;
-  if (n >= 16) { /* drop the oldest */
-    for (int i = 1; i < n; i++) {
-      gdata->data.steer_q_due_ms[i - 1] = gdata->data.steer_q_due_ms[i];
-      gdata->data.steer_q_ang[i - 1] = gdata->data.steer_q_ang[i];
-    }
-    n = 15;
-  }
-  gdata->data.steer_q_due_ms[n] = now_ms + delay;
-  gdata->data.steer_q_ang[n] = sang;
-  gdata->data.steer_q_n = n + 1;
-  /* Echoes that arrive before the turn is applied are older still: hold them
-     off too (callback.c ignores a hold longer than STEER_PRED_MAX_WINDOW_MS). */
-  double hold = delay + steer_window_ms(gdata);
-  if (hold > STEER_PRED_MAX_WINDOW_MS) hold = STEER_PRED_MAX_WINDOW_MS;
-  gdata->data.steer_pred_until_ms = now_ms + hold;
-  return;
-  }
-  steer_turn_now(gdata, me, sang, now_ms);
+  lag_comp_sent(now_ms, (float)sang * PI2 / 251.0f);
 #else
   (void)gdata; (void)me; (void)sang; (void)now_ms;
 #endif
 }
 
-/* Every frame: apply the queued turns the server has "received" by now. */
+/* Every frame: point my head at the turn the model says should be showing now. */
 static void steer_apply_due(game_data* gdata, snake* me, double now_ms) {
 #if STEER_PREDICT
-  int n = gdata->data.steer_q_n;
-  if (n <= 0) return;
-  if (me->dead) { gdata->data.steer_q_n = 0; return; }
-  int due = 0;
-  /* Switched off mid-game: apply whatever is still waiting right away. */
-  if (!gdata->data.lat_comp) due = n;
-  /* Frames are ~11 ms apart: a turn due within half a frame is applied now
-     rather than a whole frame late. */
-  else while (due < n && gdata->data.steer_q_due_ms[due] <= now_ms + 5.0) due++;
-  if (due == 0) return;
-  steer_turn_now(gdata, me, gdata->data.steer_q_ang[due - 1], now_ms);
-  for (int i = due; i < n; i++) {
-    gdata->data.steer_q_due_ms[i - due] = gdata->data.steer_q_due_ms[i];
-    gdata->data.steer_q_ang[i - due] = gdata->data.steer_q_ang[i];
-  }
-  gdata->data.steer_q_n = n - due;
+  if (me->dead || !steer_model_on(gdata) || !lag_comp_ready()) return;
+  float shown_ang, shown_wang;
+  lag_comp_display(now_ms, steer_up_ms(gdata), steer_hold_ms(gdata),
+                   steer_rate(gdata, me), &shown_ang, &shown_wang);
+  me->wang = shown_wang;
+  float vang = fmodf(shown_wang - me->ang, PI2);
+  if (vang < 0) vang += PI2;
+  if (vang > PI) vang -= PI2;
+  me->dir = fabsf(vang) < 0.0005f ? 0 : (vang < 0 ? 1 : 2);
 #else
   (void)gdata; (void)me; (void)now_ms;
 #endif
@@ -392,6 +341,7 @@ void input(tenv* env) {
       gdata->data.lsxm = -2147483647;    
       gdata->data.lsang = -1;    
     }    
+    if (eb_was_on != eb_on) lag_comp_reset(); /* the model's commands no longer match */
     eb_was_on = eb_on;    
     gdata->data.eb_eye_on = eb_on;    
     

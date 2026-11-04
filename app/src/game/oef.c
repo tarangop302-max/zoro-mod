@@ -4,6 +4,7 @@
 #include "oef.h"
 
 #include "../user.h"
+#include "head_ext.h"
 #include "net_graph.h"
 #include "sbot.h"
 
@@ -213,6 +214,9 @@ void oef(tenv* env) {
       o->xx += cosf(o->ang) * csp;
       o->yy += sinf(o->ang) * csp;
       o->chl += csp / o->msl;
+      /* The head is drawn ahead of the newest server point (latency lead);
+         keep the body joined to it. */
+      head_ext_update(o);
     }
     if (gdata->data.vfrb > 0) {
       int k = 0;

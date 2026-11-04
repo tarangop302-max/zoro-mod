@@ -317,6 +317,56 @@ static void scene_blade(ImDrawList* dl, ImVec2 p0, float w, float h, float t,
   }
 }
 
+/* ---- Rain: slanted streaks, ripples, occasional lightning --------------- */
+static void scene_rain(ImDrawList* dl, ImVec2 p0, float w, float h, float t,
+                       bool full, const float a[3], const float b[3]) {
+  float u = h / 1000.0f;
+  float slant = 0.20f;
+  int n = full ? 110 : 22;
+  for (int i = 0; i < n; ++i) {
+    float speed = 0.45f + hf(i, 1) * 0.45f;
+    float len = (0.03f + hf(i, 2) * 0.05f) * h;
+    float p = fr(hf(i, 3) + t * speed);
+    float yh = p * (h + len);
+    float xh = hf(i, 4) * (w + h * slant) - h * slant * 0.5f + slant * yh;
+    ImVec2 head = {p0.x + xh, p0.y + yh};
+    ImVec2 tail = {head.x - slant * len, head.y - len};
+    float al = 0.22f + 0.35f * hf(i, 5);
+    float th = (1.0f + hf(i, 6)) * u * 1.6f;
+    if (th < 1.0f) th = 1.0f;
+    ImDrawList_AddLine(dl, tail, head, rgba(hf(i, 7) > 0.3f ? a : b, al), th);
+  }
+  /* ripples near the bottom */
+  int nr = full ? 12 : 3;
+  for (int j = 0; j < nr; ++j) {
+    float ph = fr(t * 0.6f + hf(j, 8));
+    float rx = p0.x + hf(j + (int)floorf(t * 0.6f + hf(j, 8)), 9) * w;
+    float ry = p0.y + h * (0.86f + 0.12f * hf(j, 10));
+    ImDrawList_AddCircle(dl, (ImVec2){rx, ry}, (0.006f + ph * 0.03f) * h,
+                         rgba(a, 0.5f * (1.0f - ph)), 20, 1.2f);
+  }
+  /* lightning every ~9 s: two quick flashes and a bolt */
+  float cyc = t / 9.0f;
+  float ph = fr(cyc);
+  if (ph < 0.05f) {
+    int id = (int)floorf(cyc);
+    float k = ph / 0.05f;
+    float flash = (k < 0.25f || (k > 0.45f && k < 0.65f)) ? 1.0f : 0.3f * (1.0f - k);
+    ImDrawList_AddRectFilled(dl, p0, (ImVec2){p0.x + w, p0.y + h},
+                             rgba3(0.85f, 0.92f, 1.0f, 0.10f * flash), 0, 0);
+    if (k < 0.65f) {
+      ImVec2 pt = {p0.x + w * (0.2f + 0.6f * hf(id, 1)), p0.y};
+      for (int s = 0; s < 9; ++s) {
+        ImVec2 nx = {pt.x + (hf(id, 20 + s) - 0.5f) * w * 0.10f,
+                     pt.y + h * 0.085f};
+        ImDrawList_AddLine(dl, pt, nx, rgba(b, 0.35f * flash), 6.0f * u + 2.0f);
+        ImDrawList_AddLine(dl, pt, nx, rgba3(1, 1, 1, 0.95f * flash), 2.0f * u + 1.0f);
+        pt = nx;
+      }
+    }
+  }
+}
+
 void lobby_scene_draw(ImDrawList* dl, int style, ImVec2 p0, ImVec2 p1,
                       float t, bool full, const float a[3], const float b[3]) {
   float w = p1.x - p0.x;
@@ -332,6 +382,7 @@ void lobby_scene_draw(ImDrawList* dl, int style, ImVec2 p0, ImVec2 p1,
     case LOBBY_STYLE_CODE:     scene_code(dl, p0, w, h, t, full, a, b); break;
     case LOBBY_STYLE_WAVES:    scene_waves(dl, p0, w, h, t, full, a, b); break;
     case LOBBY_STYLE_BLADE:    scene_blade(dl, p0, w, h, t, full, a, b); break;
+    case LOBBY_STYLE_RAIN:     scene_rain(dl, p0, w, h, t, full, a, b); break;
     default: break;
   }
   ImDrawList_PopClipRect(dl);

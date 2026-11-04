@@ -7,7 +7,6 @@
 #include "../rendering/texture.h"
 #include "../user.h"
 #include "crystal_theme.h"
-#include <math.h>
 #include <external/stb/stb_image.h>
 #include "settings.h"
 #include "lobby_scenes.h"
@@ -17,152 +16,196 @@
 #include "../android_path.h"
 #endif
 
-/* ---- built-in backgrounds -------------------------------------------- */
+/* ============================================================================
+ * Lobby background = THEME (the animated design) x COLOUR (the palette).
+ *
+ * Any theme can be combined with any colour. Saved in the settings file
+ * without changing its layout:
+ *   lobby_bg_index       -1 = theme + colour,  LOBBY_BG_CUSTOM = own picture
+ *                        (0..LOBBY_BG_PRESET_COUNT-1 = values written by the
+ *                         older single-list version; converted on first use)
+ *   lobby_bg_reserved[0] 1 = animations frozen
+ *   lobby_bg_reserved[1] theme  index  (0 = Default)
+ *   lobby_bg_reserved[2] colour index  (0 = Purple, the original look)
+ * ========================================================================== */
 
-typedef struct lobby_preset {
+#define LOBBY_THEME_COUNT 10
+#define LOBBY_COLOUR_COUNT 30
+#define LOBBY_LEGACY_CLASSIC 6 /* old list: 0..5 were the plain gradients */
+
+typedef struct lobby_theme {
+  const char* name;
+  int style; /* lobby_style */
+} lobby_theme;
+
+/* Order matters only for the saved index: add new themes at the END. */
+static const lobby_theme THEMES[LOBBY_THEME_COUNT] = {
+    {"Default", LOBBY_STYLE_GLOW},    {"Embers", LOBBY_STYLE_EMBERS},
+    {"Sunburst", LOBBY_STYLE_SUNBURST}, {"Grid", LOBBY_STYLE_GRID},
+    {"Stars", LOBBY_STYLE_STARS},     {"Petals", LOBBY_STYLE_PETALS},
+    {"Code", LOBBY_STYLE_CODE},       {"Waves", LOBBY_STYLE_WAVES},
+    {"Slash", LOBBY_STYLE_BLADE},     {"Rain", LOBBY_STYLE_RAIN},
+};
+
+typedef struct lobby_colour {
   const char* name;
   float c[4][3]; /* corners: top-left, top-right, bottom-right, bottom-left */
-  float ga[3];   /* big glow (upper right) */
-  float gb[3];   /* small glow (lower left) */
-  int style;     /* lobby_style: animated scene drawn over the gradient */
-} lobby_preset;
+  float ga[3];   /* main accent / big glow (upper right) */
+  float gb[3];   /* second accent / small glow (lower left) */
+} lobby_colour;
 
-/* The first LOBBY_BG_CLASSIC_COUNT presets are the original still gradients,
-   everything after them is an animated scene. Never reorder or remove
-   entries: the index is saved in the player's settings. New ones go at the
-   END (and LOBBY_BG_PRESET_COUNT in constants.h goes up by one). */
-#define LOBBY_BG_CLASSIC_COUNT 6
+static lobby_colour COLOURS[LOBBY_COLOUR_COUNT];
+static bool s_palette_ready = false;
 
-/* Same colours crystal_draw_background() uses. Only used for the thumbnail of
-   the "Default" choice -- the full-screen default still calls
-   crystal_draw_background() itself. */
-static const lobby_preset DEFAULT_PRESET = {
-    "Default",
-    {{0.078f, 0.039f, 0.141f},
-     {0.176f, 0.106f, 0.306f},
-     {0.141f, 0.082f, 0.259f},
-     {0.114f, 0.063f, 0.212f}},
-    {0.592f, 0.353f, 1.0f},
-    {0.353f, 0.235f, 0.784f}};
+static void hsv_to_rgb(float h, float s, float v, float out[3]) {
+  h = fmodf(h, 360.0f);
+  if (h < 0.0f) h += 360.0f;
+  if (s < 0.0f) s = 0.0f;
+  if (s > 1.0f) s = 1.0f;
+  if (v < 0.0f) v = 0.0f;
+  if (v > 1.0f) v = 1.0f;
+  float c = v * s;
+  float x = c * (1.0f - fabsf(fmodf(h / 60.0f, 2.0f) - 1.0f));
+  float m = v - c;
+  float r = 0, g = 0, b = 0;
+  if (h < 60.0f) { r = c; g = x; }
+  else if (h < 120.0f) { r = x; g = c; }
+  else if (h < 180.0f) { g = c; b = x; }
+  else if (h < 240.0f) { g = x; b = c; }
+  else if (h < 300.0f) { r = x; b = c; }
+  else { r = c; b = x; }
+  out[0] = r + m;
+  out[1] = g + m;
+  out[2] = b + m;
+}
 
-static const lobby_preset PRESETS[LOBBY_BG_PRESET_COUNT] = {
+/* The 7 original colours keep their exact hand-tuned values (same as the old
+   background list). */
+static const lobby_colour ORIGINAL_COLOURS[7] = {
+    {"Purple",
+     {{0.078f, 0.039f, 0.141f}, {0.176f, 0.106f, 0.306f},
+      {0.141f, 0.082f, 0.259f}, {0.114f, 0.063f, 0.212f}},
+     {0.592f, 0.353f, 1.0f}, {0.353f, 0.235f, 0.784f}},
     {"Midnight",
-     {{0.02f, 0.04f, 0.12f},
-      {0.06f, 0.14f, 0.32f},
-      {0.04f, 0.10f, 0.26f},
+     {{0.02f, 0.04f, 0.12f}, {0.06f, 0.14f, 0.32f}, {0.04f, 0.10f, 0.26f},
       {0.03f, 0.07f, 0.20f}},
-     {0.30f, 0.55f, 1.00f},
-     {0.20f, 0.35f, 0.80f}},
+     {0.30f, 0.55f, 1.00f}, {0.20f, 0.35f, 0.80f}},
     {"Emerald",
-     {{0.02f, 0.09f, 0.07f},
-      {0.06f, 0.25f, 0.18f},
-      {0.04f, 0.20f, 0.14f},
+     {{0.02f, 0.09f, 0.07f}, {0.06f, 0.25f, 0.18f}, {0.04f, 0.20f, 0.14f},
       {0.03f, 0.14f, 0.10f}},
-     {0.25f, 0.90f, 0.60f},
-     {0.15f, 0.60f, 0.45f}},
+     {0.25f, 0.90f, 0.60f}, {0.15f, 0.60f, 0.45f}},
     {"Crimson",
-     {{0.12f, 0.03f, 0.05f},
-      {0.32f, 0.07f, 0.12f},
-      {0.26f, 0.05f, 0.10f},
+     {{0.12f, 0.03f, 0.05f}, {0.32f, 0.07f, 0.12f}, {0.26f, 0.05f, 0.10f},
       {0.20f, 0.04f, 0.08f}},
-     {1.00f, 0.35f, 0.40f},
-     {0.80f, 0.20f, 0.30f}},
+     {1.00f, 0.35f, 0.40f}, {0.80f, 0.20f, 0.30f}},
     {"Sunset",
-     {{0.14f, 0.05f, 0.18f},
-      {0.38f, 0.12f, 0.22f},
-      {0.42f, 0.20f, 0.12f},
+     {{0.14f, 0.05f, 0.18f}, {0.38f, 0.12f, 0.22f}, {0.42f, 0.20f, 0.12f},
       {0.22f, 0.08f, 0.20f}},
-     {1.00f, 0.55f, 0.30f},
-     {0.85f, 0.30f, 0.55f}},
+     {1.00f, 0.55f, 0.30f}, {0.85f, 0.30f, 0.55f}},
     {"Mono",
-     {{0.04f, 0.04f, 0.05f},
-      {0.14f, 0.14f, 0.16f},
-      {0.10f, 0.10f, 0.12f},
+     {{0.04f, 0.04f, 0.05f}, {0.14f, 0.14f, 0.16f}, {0.10f, 0.10f, 0.12f},
       {0.07f, 0.07f, 0.08f}},
-     {0.75f, 0.75f, 0.80f},
-     {0.50f, 0.50f, 0.55f}},
+     {0.75f, 0.75f, 0.80f}, {0.50f, 0.50f, 0.55f}},
     {"Aurora",
-     {{0.02f, 0.07f, 0.12f},
-      {0.10f, 0.12f, 0.30f},
-      {0.06f, 0.20f, 0.26f},
+     {{0.02f, 0.07f, 0.12f}, {0.10f, 0.12f, 0.30f}, {0.06f, 0.20f, 0.26f},
       {0.03f, 0.10f, 0.18f}},
-     {0.30f, 1.00f, 0.80f},
-     {0.55f, 0.35f, 0.95f},
-     LOBBY_STYLE_GLOW},
-    {"Ember",
-     {{0.05f, 0.02f, 0.01f},
-      {0.20f, 0.07f, 0.02f},
-      {0.16f, 0.05f, 0.02f},
-      {0.09f, 0.03f, 0.01f}},
-     {1.00f, 0.55f, 0.15f},
-     {1.00f, 0.30f, 0.10f},
-     LOBBY_STYLE_EMBERS},
-    {"Royal Gold",
-     {{0.03f, 0.02f, 0.01f},
-      {0.16f, 0.11f, 0.03f},
-      {0.11f, 0.07f, 0.02f},
-      {0.06f, 0.04f, 0.01f}},
-     {1.00f, 0.80f, 0.35f},
-     {0.85f, 0.55f, 0.15f},
-     LOBBY_STYLE_SUNBURST},
-    {"Cyber Grid",
-     {{0.06f, 0.02f, 0.16f},
-      {0.20f, 0.05f, 0.30f},
-      {0.10f, 0.03f, 0.22f},
-      {0.05f, 0.02f, 0.14f}},
-     {1.00f, 0.35f, 0.75f},
-     {0.25f, 0.85f, 1.00f},
-     LOBBY_STYLE_GRID},
-    {"Starfield",
-     {{0.01f, 0.01f, 0.06f},
-      {0.05f, 0.05f, 0.18f},
-      {0.03f, 0.04f, 0.14f},
-      {0.02f, 0.02f, 0.09f}},
-     {0.55f, 0.65f, 1.00f},
-     {0.65f, 0.40f, 1.00f},
-     LOBBY_STYLE_STARS},
-    {"Sakura",
-     {{0.14f, 0.05f, 0.10f},
-      {0.34f, 0.12f, 0.24f},
-      {0.26f, 0.09f, 0.20f},
-      {0.18f, 0.06f, 0.14f}},
-     {1.00f, 0.62f, 0.78f},
-     {1.00f, 0.80f, 0.88f},
-     LOBBY_STYLE_PETALS},
-    {"Matrix",
-     {{0.00f, 0.04f, 0.02f},
-      {0.02f, 0.14f, 0.07f},
-      {0.01f, 0.10f, 0.05f},
-      {0.00f, 0.06f, 0.03f}},
-     {0.20f, 1.00f, 0.45f},
-     {0.10f, 0.70f, 0.30f},
-     LOBBY_STYLE_CODE},
-    {"Ocean",
-     {{0.01f, 0.05f, 0.10f},
-      {0.04f, 0.16f, 0.30f},
-      {0.03f, 0.12f, 0.24f},
-      {0.02f, 0.08f, 0.16f}},
-     {0.45f, 0.85f, 1.00f},
-     {0.20f, 0.55f, 0.90f},
-     LOBBY_STYLE_WAVES},
-    {"Blade",
-     {{0.02f, 0.07f, 0.04f},
-      {0.06f, 0.20f, 0.10f},
-      {0.04f, 0.15f, 0.08f},
-      {0.02f, 0.09f, 0.05f}},
-     {0.35f, 1.00f, 0.50f},
-     {0.15f, 0.75f, 0.35f},
-     LOBBY_STYLE_BLADE},
+     {0.30f, 1.00f, 0.80f}, {0.55f, 0.35f, 0.95f}},
 };
+
+/* The other 23 are generated from a hue (same recipe the originals follow:
+   dark gradient corners, bright main accent, shifted second accent). */
+typedef struct colour_gen {
+  const char* name;
+  float hue, sat, val, shift;
+} colour_gen;
+
+static const colour_gen GENERATED[LOBBY_COLOUR_COUNT - 7] = {
+    {"Ruby", 350, 0.80f, 1.00f, 25},     {"Rose", 335, 0.60f, 1.05f, 20},
+    {"Magenta", 305, 0.78f, 1.00f, -30}, {"Violet", 275, 0.72f, 1.00f, 30},
+    {"Indigo", 245, 0.75f, 1.00f, -25},  {"Cobalt", 222, 0.80f, 1.00f, 30},
+    {"Sky", 200, 0.62f, 1.10f, -20},     {"Cyan", 185, 0.78f, 1.00f, 35},
+    {"Teal", 170, 0.72f, 1.00f, -30},    {"Jade", 150, 0.72f, 1.00f, 30},
+    {"Lime", 105, 0.72f, 1.00f, -35},    {"Olive", 72, 0.62f, 1.00f, 25},
+    {"Gold", 46, 0.85f, 1.00f, -15},     {"Amber", 35, 0.88f, 1.00f, 15},
+    {"Orange", 24, 0.86f, 1.00f, -20},   {"Coral", 10, 0.68f, 1.05f, 25},
+    {"Peach", 18, 0.42f, 1.15f, 15},     {"Lavender", 262, 0.38f, 1.10f, 20},
+    {"Mint", 160, 0.38f, 1.10f, -20},    {"Ice", 195, 0.32f, 1.15f, 15},
+    {"Bronze", 30, 0.62f, 0.85f, -12},   {"Wine", 340, 0.72f, 0.80f, 20},
+    {"Steel", 215, 0.26f, 1.00f, 15},
+};
+
+static void ensure_palette(void) {
+  if (s_palette_ready) return;
+  s_palette_ready = true;
+  for (int i = 0; i < 7; ++i) COLOURS[i] = ORIGINAL_COLOURS[i];
+  for (int i = 0; i < LOBBY_COLOUR_COUNT - 7; ++i) {
+    const colour_gen* g = &GENERATED[i];
+    lobby_colour* o = &COLOURS[7 + i];
+    o->name = g->name;
+    hsv_to_rgb(g->hue, g->sat, 0.14f * g->val, o->c[0]);
+    hsv_to_rgb(g->hue, g->sat * 0.90f, 0.31f * g->val, o->c[1]);
+    hsv_to_rgb(g->hue, g->sat * 0.95f, 0.26f * g->val, o->c[2]);
+    hsv_to_rgb(g->hue, g->sat, 0.20f * g->val, o->c[3]);
+    hsv_to_rgb(g->hue, g->sat * 0.90f, 1.00f, o->ga);
+    hsv_to_rgb(g->hue + g->shift, g->sat * 0.90f, 0.80f, o->gb);
+  }
+}
+
+static int colour_by_name(const char* name) {
+  for (int i = 0; i < LOBBY_COLOUR_COUNT; ++i)
+    if (strcmp(COLOURS[i].name, name) == 0) return i;
+  return 0;
+}
 
 static ImU32 col(float r, float g, float b, float a) {
   return igColorConvertFloat4ToU32((ImVec4){r, g, b, a});
 }
 
-/* Gradient + glow blobs inside [p0,p1]. `full` = full-screen (two big glows,
-   like the original); otherwise a thumbnail (one glow, clipped to the rect). */
-static void draw_preset(ImDrawList* dl, const lobby_preset* p, ImVec2 p0,
-                        ImVec2 p1, bool full, float t) {
+/* ---- saved selection ------------------------------------------------------ */
+
+static bool anim_on(const user_settings* u) { return u->lobby_bg_reserved[0] == 0; }
+
+static float scene_time(const user_settings* u) {
+  return anim_on(u) ? (float)fmod(igGetTime(), 7200.0) : 12.0f;
+}
+
+static int cur_theme(const user_settings* u) {
+  int v = u->lobby_bg_reserved[1];
+  return (v >= 0 && v < LOBBY_THEME_COUNT) ? v : 0;
+}
+
+static int cur_colour(const user_settings* u) {
+  int v = u->lobby_bg_reserved[2];
+  return (v >= 0 && v < LOBBY_COLOUR_COUNT) ? v : 0;
+}
+
+/* Settings saved by the previous single-list version (index 0..13) become a
+   theme + colour pair, once. */
+static void migrate_legacy(user_settings* u) {
+  int idx = u->lobby_bg_index;
+  if (idx < 0 || idx >= LOBBY_BG_PRESET_COUNT) return;
+  if (idx < LOBBY_LEGACY_CLASSIC) {
+    u->lobby_bg_reserved[1] = 0;
+    u->lobby_bg_reserved[2] = (uint8_t)(idx + 1); /* Midnight..Aurora */
+  } else {
+    static const char* const NATIVE[8] = {"Orange", "Gold",    "Magenta", "Indigo",
+                                          "Rose",   "Emerald", "Sky",     "Jade"};
+    int t = idx - LOBBY_LEGACY_CLASSIC + 1;
+    if (t >= LOBBY_THEME_COUNT) t = 0;
+    u->lobby_bg_reserved[1] = (uint8_t)t;
+    u->lobby_bg_reserved[2] = (uint8_t)colour_by_name(NATIVE[(t - 1) & 7]);
+  }
+  u->lobby_bg_index = -1;
+  save_user_settings(u);
+}
+
+/* ---- drawing ---------------------------------------------------------------- */
+
+/* Gradient + glow blobs + the theme's animated scene, inside [p0,p1].
+   `full` = full-screen; otherwise a thumbnail (one glow, fewer particles). */
+static void draw_look(ImDrawList* dl, int theme, int colour, ImVec2 p0,
+                      ImVec2 p1, bool full, float t) {
+  const lobby_colour* p = &COLOURS[colour];
   float w = p1.x - p0.x;
   float h = p1.y - p0.y;
   ImDrawList_PushClipRect(dl, p0, p1, true);
@@ -173,27 +216,19 @@ static void draw_preset(ImDrawList* dl, const lobby_preset* p, ImVec2 p0,
       col(p->c[3][0], p->c[3][1], p->c[3][2], 1.0f));
   if (full) {
     crystal_draw_glow_blob_raw(dl, (ImVec2){p0.x + w * 0.72f, p0.y + h * 0.30f},
-                           400.0f, p->ga[0], p->ga[1], p->ga[2], 0.30f);
+                               400.0f, p->ga[0], p->ga[1], p->ga[2], 0.30f);
     crystal_draw_glow_blob_raw(dl, (ImVec2){p0.x + w * 0.20f, p0.y + h * 0.80f},
-                           340.0f, p->gb[0], p->gb[1], p->gb[2], 0.24f);
+                               340.0f, p->gb[0], p->gb[1], p->gb[2], 0.24f);
   } else {
     crystal_draw_glow_blob_raw(dl, (ImVec2){p0.x + w * 0.70f, p0.y + h * 0.35f},
-                           w * 0.55f, p->ga[0], p->ga[1], p->ga[2], 0.45f);
+                               w * 0.45f, p->ga[0], p->ga[1], p->ga[2], 0.45f);
   }
-  if (p->style != LOBBY_STYLE_GLOW)
-    lobby_scene_draw(dl, p->style, p0, p1, t, full, p->ga, p->gb);
+  if (THEMES[theme].style != LOBBY_STYLE_GLOW)
+    lobby_scene_draw(dl, THEMES[theme].style, p0, p1, t, full, p->ga, p->gb);
   ImDrawList_PopClipRect(dl);
 }
 
-/* Animation clock. The "Animated backgrounds" switch is stored in the spare
-   byte lobby_bg_reserved[0] (0 = animated, the default; 1 = frozen), so the
-   settings file layout does not change. */
-static bool anim_on(const user_settings* u) { return u->lobby_bg_reserved[0] == 0; }
-static float scene_time(const user_settings* u) {
-  return anim_on(u) ? (float)fmod(igGetTime(), 7200.0) : 12.0f;
-}
-
-/* ---- uploaded picture -------------------------------------------------- */
+/* ---- uploaded picture -------------------------------------------------------- */
 
 static texture* s_tex = NULL;
 static VkDescriptorSet s_ds = VK_NULL_HANDLE;
@@ -230,10 +265,10 @@ static void ensure_custom_loaded(tenv* env) {
   }
 }
 
-/* ---- theme that follows the selected background -------------------------
-   Presets use their own main glow colour as the UI accent. For an uploaded
-   picture the average colour is measured once and the most similar built-in
-   theme (by hue, or Mono for near-grey pictures) is used. */
+/* ---- UI theme that follows the selected background -----------------------------
+   A colour uses its own main accent for the UI. For an uploaded picture the
+   average colour is measured once and the most similar colour (by hue, or Mono
+   for near-grey pictures) is used. */
 
 static bool s_theme_valid = false;
 static float s_theme_acc[3] = {0.592f, 0.353f, 1.0f};
@@ -263,13 +298,14 @@ static float hue_dist(float a, float b) {
 static void compute_custom_theme(tenv* env) {
   (void)env;
   s_theme_valid = true;
+  ensure_palette();
   char path[700];
   custom_path(path, sizeof path);
   int w = 0, h = 0, c = 0;
   stbi_uc* data = stbi_load(path, &w, &h, &c, 4);
   if (!data || w < 1 || h < 1) {
     if (data) stbi_image_free(data);
-    memcpy(s_theme_acc, DEFAULT_PRESET.ga, sizeof s_theme_acc);
+    memcpy(s_theme_acc, COLOURS[0].ga, sizeof s_theme_acc);
     return;
   }
   long total = (long)w * (long)h;
@@ -300,41 +336,40 @@ static void compute_custom_theme(tenv* env) {
     avg_hue = atan2f((float)sy, (float)sx) * 180.0f / 3.14159265f;
   if (avg_hue < 0.0f) avg_hue += 360.0f;
 
-  /* Near-grey picture -> the grey theme (Mono). */
-  const lobby_preset* best = &DEFAULT_PRESET;
+  int best = 0;
   if (mean_sat < 0.14f) {
-    for (int i = 0; i < LOBBY_BG_PRESET_COUNT; ++i)
-      if (PRESETS[i].name[0] == 'M' && PRESETS[i].name[1] == 'o') best = &PRESETS[i];
+    best = colour_by_name("Mono"); /* near-grey picture -> grey theme */
   } else {
-    float best_d = hue_dist(avg_hue, rgb_hue(DEFAULT_PRESET.ga[0],
-                                             DEFAULT_PRESET.ga[1],
-                                             DEFAULT_PRESET.ga[2], NULL));
-    for (int i = 0; i < LOBBY_BG_PRESET_COUNT; ++i) {
+    float best_d = 1e9f;
+    for (int i = 0; i < LOBBY_COLOUR_COUNT; ++i) {
       float sat;
-      float ph = rgb_hue(PRESETS[i].ga[0], PRESETS[i].ga[1], PRESETS[i].ga[2],
+      float ph = rgb_hue(COLOURS[i].ga[0], COLOURS[i].ga[1], COLOURS[i].ga[2],
                          &sat);
-      if (sat < 0.2f) continue; /* skip the grey theme for coloured pictures */
+      if (sat < 0.5f) continue; /* skip grey / pastel colours */
       float d = hue_dist(avg_hue, ph);
       if (d < best_d) {
         best_d = d;
-        best = &PRESETS[i];
+        best = i;
       }
     }
   }
-  memcpy(s_theme_acc, best->ga, sizeof s_theme_acc);
+  memcpy(s_theme_acc, COLOURS[best].ga, sizeof s_theme_acc);
 }
 
 void lobby_bg_sync_theme(tenv* env) {
   user_settings* usrs = &env->usr->usrs;
-  int idx = usrs->lobby_bg_index;
-  if (idx >= 0 && idx < LOBBY_BG_PRESET_COUNT) {
-    crystal_theme_set_accent(PRESETS[idx].ga[0], PRESETS[idx].ga[1],
-                             PRESETS[idx].ga[2]);
-  } else if (idx == LOBBY_BG_CUSTOM) {
+  ensure_palette();
+  migrate_legacy(usrs);
+  if (usrs->lobby_bg_index == LOBBY_BG_CUSTOM) {
     if (!s_theme_valid) compute_custom_theme(env);
     crystal_theme_set_accent(s_theme_acc[0], s_theme_acc[1], s_theme_acc[2]);
   } else {
-    crystal_theme_reset_default();
+    int c = cur_colour(usrs);
+    if (c == 0)
+      crystal_theme_reset_default();
+    else
+      crystal_theme_set_accent(COLOURS[c].ga[0], COLOURS[c].ga[1],
+                               COLOURS[c].ga[2]);
   }
 }
 
@@ -377,13 +412,15 @@ static void poll_picker(tenv* env) {
 }
 #endif
 
-/* ---- public ------------------------------------------------------------- */
+/* ---- public ------------------------------------------------------------------- */
 
 void ui_lobby_bg_draw(tenv* env) {
   user_settings* usrs = &env->usr->usrs;
 #ifdef ANDROID
   poll_picker(env);
 #endif
+  ensure_palette();
+  migrate_legacy(usrs);
 
   float w = (float)env->ctx->size[0];
   float h = (float)env->ctx->size[1];
@@ -399,107 +436,102 @@ void ui_lobby_bg_draw(tenv* env) {
                                  col(0.0f, 0.0f, 0.0f, dim), 0, 0);
       return;
     }
-  } else if (usrs->lobby_bg_index >= 0 &&
-             usrs->lobby_bg_index < LOBBY_BG_PRESET_COUNT) {
-    draw_preset(dl, &PRESETS[usrs->lobby_bg_index], (ImVec2){0, 0},
-                (ImVec2){w, h}, true, scene_time(usrs));
+  } else {
+    int theme = cur_theme(usrs);
+    int colour = cur_colour(usrs);
+    if (theme == 0 && colour == 0) {
+      crystal_draw_background(env); /* the original look, untouched */
+      return;
+    }
+    draw_look(dl, theme, colour, (ImVec2){0, 0}, (ImVec2){w, h}, true,
+              scene_time(usrs));
     return;
   }
-  /* Default, or the uploaded picture is missing: original look. */
+  /* uploaded picture missing: original look */
   crystal_draw_background(env);
 }
 
-typedef struct grid_metrics {
-  int cols;
-  float margin, gap, tw, th, t;
-  bool anim;
-} grid_metrics;
+/* ---- picker -------------------------------------------------------------------- */
 
-/* One group of thumbnails. Only the hovered / selected thumbnail animates;
-   the rest show a still frame, so the picker stays cheap to draw. */
-static void draw_grid(tenv* env, const int* entries, int n,
-                      const grid_metrics* gm, int id_base) {
-  user_settings* usrs = &env->usr->usrs;
-  ImDrawList* dl = igGetWindowDrawList();
-  float tw = gm->tw, th = gm->th;
-  float card_h = th + igGetTextLineHeight() + 8.0f;
+/* Touch-friendly tap on a rectangle drawn with the draw list. Unlike an
+   InvisibleButton it never becomes the "active item", so a finger that lands
+   on a tile can still scroll the panel, and a scroll can never select a tile:
+   it only counts when the finger lifts without having moved or scrolled. */
+static int s_press_id = -1;
+static ImVec2 s_press_pos;
+static float s_press_scroll = 0.0f;
+static bool s_press_moved = false;
 
-  for (int k = 0; k < n; ++k) {
-    int e = entries[k];
-    int c = k % gm->cols;
-    if (c == 0) igDummy((ImVec2){1.0f, 2.0f});
-    ImVec2 p0;
-    if (c == 0) {
-      ImVec2 cur;
-      igGetCursorScreenPos(&cur);
-      p0 = (ImVec2){cur.x + gm->margin, cur.y};
+static bool tile_tap(int id, ImVec2 p0, ImVec2 p1, bool* hot) {
+  ImGuiIO* io = igGetIO_Nil();
+  bool inside = igIsWindowHovered(ImGuiHoveredFlags_None) &&
+                igIsMouseHoveringRect(p0, p1, true);
+  if (hot) *hot = inside;
+  bool tap = false;
+  if (inside && igIsMouseClicked_Bool(0, false)) {
+    s_press_id = id;
+    s_press_pos = io->MousePos;
+    s_press_scroll = igGetScrollY();
+    s_press_moved = false;
+  }
+  if (s_press_id == id) {
+    if (igIsMouseDown_Nil(0)) {
+      float dx = io->MousePos.x - s_press_pos.x;
+      float dy = io->MousePos.y - s_press_pos.y;
+      if (dx * dx + dy * dy > 9.0f * 9.0f ||
+          fabsf(igGetScrollY() - s_press_scroll) > 2.0f)
+        s_press_moved = true;
+    } else if (igIsMouseReleased_Nil(0)) {
+      tap = !s_press_moved;
+      s_press_id = -1;
     } else {
-      igSameLine(0, gm->gap);
-      igGetCursorScreenPos(&p0);
-    }
-    igSetCursorScreenPos(p0);
-
-    bool sel = usrs->lobby_bg_index == e;
-    if (sel) crystal_glow_rect(p0, (ImVec2){tw, th}, 0.690f, 0.580f, 0.960f);
-
-    igPushID_Int(id_base + k);
-    bool clicked = igInvisibleButton("##thumb", (ImVec2){tw, card_h}, 0);
-    bool hot = igIsItemHovered(0);
-    igPopID();
-
-    ImVec2 p1 = {p0.x + tw, p0.y + th};
-    float tt = (gm->anim && (hot || sel)) ? gm->t : 12.0f;
-    if (e == -1)
-      draw_preset(dl, &DEFAULT_PRESET, p0, p1, false, tt);
-    else if (e == LOBBY_BG_CUSTOM)
-      draw_cover(dl, p0, p1);
-    else
-      draw_preset(dl, &PRESETS[e], p0, p1, false, tt);
-
-    /* small "moving" marker on animated looks */
-    if (e >= LOBBY_BG_CLASSIC_COUNT && e < LOBBY_BG_PRESET_COUNT) {
-      ImDrawList_AddTriangleFilled(
-          dl, (ImVec2){p0.x + 8.0f, p0.y + 7.0f},
-          (ImVec2){p0.x + 8.0f, p0.y + 19.0f},
-          (ImVec2){p0.x + 18.0f, p0.y + 13.0f}, col(1.0f, 1.0f, 1.0f, 0.75f));
-    }
-
-    ImDrawList_AddRect(
-        dl, p0, p1,
-        sel ? col(0.87f, 0.77f, 1.0f, 1.0f)
-            : col(0.65f, 0.55f, 0.95f, hot ? 0.90f : 0.40f),
-        8.0f, 0, sel ? 3.0f : 1.2f);
-
-    if (sel) { /* check badge, top-right of the thumbnail */
-      ImVec2 bc = {p1.x - 12.0f, p0.y + 12.0f};
-      ImDrawList_AddCircleFilled(dl, bc, 9.0f, col(0.80f, 0.70f, 1.0f, 1.0f),
-                                 18);
-      ImDrawList_AddLine(dl, (ImVec2){bc.x - 4.0f, bc.y + 0.5f},
-                         (ImVec2){bc.x - 1.0f, bc.y + 3.5f},
-                         col(0.10f, 0.05f, 0.20f, 1.0f), 2.0f);
-      ImDrawList_AddLine(dl, (ImVec2){bc.x - 1.0f, bc.y + 3.5f},
-                         (ImVec2){bc.x + 4.5f, bc.y - 3.0f},
-                         col(0.10f, 0.05f, 0.20f, 1.0f), 2.0f);
-    }
-
-    const char* label = "Default";
-    if (e == LOBBY_BG_CUSTOM)
-      label = "My picture";
-    else if (e >= 0)
-      label = PRESETS[e].name;
-    ImVec2 ts;
-    igCalcTextSize(&ts, label, NULL, false, -1.0f);
-    ImDrawList_AddText_Vec2(
-        dl, (ImVec2){p0.x + (tw - ts.x) * 0.5f, p1.y + 5.0f},
-        sel ? col(0.95f, 0.92f, 1.0f, 1.0f) : col(0.70f, 0.64f, 0.84f, 1.0f),
-        label, NULL);
-
-    if (clicked) {
-      usrs->lobby_bg_index = e;
-      save_user_settings(usrs);
+      s_press_id = -1; /* lost the release (panel closed, etc.) */
     }
   }
-  igDummy((ImVec2){1.0f, 4.0f});
+  return tap;
+}
+
+static void draw_check(ImDrawList* dl, ImVec2 p1, ImVec2 p0) {
+  ImVec2 bc = {p1.x - 12.0f, p0.y + 12.0f};
+  ImDrawList_AddCircleFilled(dl, bc, 9.0f, col(0.80f, 0.70f, 1.0f, 1.0f), 18);
+  ImDrawList_AddLine(dl, (ImVec2){bc.x - 4.0f, bc.y + 0.5f},
+                     (ImVec2){bc.x - 1.0f, bc.y + 3.5f},
+                     col(0.10f, 0.05f, 0.20f, 1.0f), 2.0f);
+  ImDrawList_AddLine(dl, (ImVec2){bc.x - 1.0f, bc.y + 3.5f},
+                     (ImVec2){bc.x + 4.5f, bc.y - 3.0f},
+                     col(0.10f, 0.05f, 0.20f, 1.0f), 2.0f);
+}
+
+static void draw_frame(ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool sel,
+                       bool hot) {
+  ImDrawList_AddRect(dl, p0, p1,
+                     sel ? col(0.87f, 0.77f, 1.0f, 1.0f)
+                         : col(0.65f, 0.55f, 0.95f, hot ? 0.90f : 0.40f),
+                     8.0f, 0, sel ? 3.0f : 1.2f);
+}
+
+/* Name strip along the bottom of a tile. */
+static void draw_tile_label(ImDrawList* dl, ImVec2 p0, ImVec2 p1,
+                            const char* label, bool sel) {
+  float lh = igGetTextLineHeight();
+  ImDrawList_AddRectFilled(dl, (ImVec2){p0.x, p1.y - lh - 8.0f}, p1,
+                           col(0.0f, 0.0f, 0.0f, 0.50f), 0, 0);
+  ImDrawList_AddText_Vec2(
+      dl, (ImVec2){p0.x + 9.0f, p1.y - lh - 4.0f},
+      sel ? col(1.0f, 0.97f, 1.0f, 1.0f) : col(0.82f, 0.78f, 0.92f, 1.0f),
+      label, NULL);
+}
+
+static void set_theme(user_settings* u, int theme) {
+  u->lobby_bg_reserved[1] = (uint8_t)theme;
+  u->lobby_bg_index = -1;
+  save_user_settings(u);
+}
+
+static void set_colour(user_settings* u, int colour) {
+  u->lobby_bg_reserved[2] = (uint8_t)colour;
+  u->lobby_bg_index = -1;
+  save_user_settings(u);
 }
 
 void ui_lobby_bg_button(tenv* env, float frame_height) {
@@ -524,72 +556,121 @@ void ui_lobby_bg_button(tenv* env, float frame_height) {
 
   /* Fixed-size themed panel (see crystal_panel_begin): it can't shrink. */
   if (crystal_panel_begin(env, "Lobby Background", "LOBBY BACKGROUND",
-                          "Pick a look for the main menu", 480.0f)) {
+                          "Pick a theme and a colour", 540.0f)) {
     ui_touch_scroll(env, 21);
     ensure_custom_loaded(env);
+    ensure_palette();
+    migrate_legacy(usrs);
 
-    const char* sel_name = "Default";
-    if (usrs->lobby_bg_index >= 0 &&
-        usrs->lobby_bg_index < LOBBY_BG_PRESET_COUNT)
-      sel_name = PRESETS[usrs->lobby_bg_index].name;
-    else if (usrs->lobby_bg_index == LOBBY_BG_CUSTOM)
-      sel_name = "My picture";
+    const bool custom = usrs->lobby_bg_index == LOBBY_BG_CUSTOM && s_tex;
+    const int theme = cur_theme(usrs);
+    const int colour = cur_colour(usrs);
+    ImDrawList* dl = igGetWindowDrawList();
 
-    igTextDisabled("Now: %s", sel_name);
+    if (custom)
+      igTextDisabled("Now: My picture");
+    else
+      igTextDisabled("Now: %s  +  %s", THEMES[theme].name, COLOURS[colour].name);
 
-    /* animation switch (also saves battery when off) */
     bool anim = anim_on(usrs);
     if (igCheckbox("Animated backgrounds", &anim)) {
       usrs->lobby_bg_reserved[0] = anim ? 0 : 1;
       save_user_settings(usrs);
     }
+    igSpacing();
 
-    /* grid metrics shared by every group */
+    /* ---- layout: themes down the left, 3 columns of colours on the right.
+       Every theme row lines up with one row of three colours. ---- */
     ImVec2 avail;
     igGetContentRegionAvail(&avail);
-    grid_metrics gm;
-    gm.cols = 3;
-    gm.margin = 10.0f; /* room for the selection glow */
-    gm.gap = style->ItemSpacing.x + 2.0f;
-    gm.tw = (avail.x - gm.margin * 2.0f - gm.gap * (gm.cols - 1)) / gm.cols;
-    if (gm.tw < 40.0f) gm.tw = 40.0f;
-    gm.th = gm.tw * 0.60f;
-    gm.t = scene_time(usrs);
-    gm.anim = anim;
+    const float m = 8.0f;   /* room for the selection glow */
+    const float gap = 14.0f;
+    float left_w = floorf(avail.x * 0.47f);
+    float tile_w = left_w - m * 2.0f;
+    if (tile_w < 80.0f) tile_w = 80.0f;
+    float th = tile_w * 0.34f;
+    float rh = th + 8.0f;
+    float lh = igGetTextLineHeight();
+    float cap_h = lh + 8.0f;
+    float rx = left_w + gap; /* x offset of the colour block */
+    float cgap = 8.0f;
+    float cw = (avail.x - rx - m - cgap * 2.0f) / 3.0f;
+    if (cw < 24.0f) cw = 24.0f;
 
-    /* entries: -1 = default, 0..n-1 = presets, LOBBY_BG_CUSTOM = upload */
-    int classic[LOBBY_BG_CLASSIC_COUNT + 1];
-    int nc = 0;
-    classic[nc++] = -1;
-    for (int i = 0; i < LOBBY_BG_CLASSIC_COUNT && i < LOBBY_BG_PRESET_COUNT; ++i)
-      classic[nc++] = i;
-    crystal_section("Classic");
-    draw_grid(env, classic, nc, &gm, 100);
+    ImVec2 org;
+    igGetCursorScreenPos(&org);
+    ImU32 cap_col = col(0.70f, 0.64f, 0.84f, 1.0f);
+    ImDrawList_AddText_Vec2(dl, (ImVec2){org.x + m, org.y}, cap_col, "THEME",
+                            NULL);
+    ImDrawList_AddText_Vec2(dl, (ImVec2){org.x + rx, org.y}, cap_col, "COLOUR",
+                            NULL);
+    float y0 = org.y + cap_h;
+    float t_now = scene_time(usrs);
 
-    int animated[LOBBY_BG_PRESET_COUNT + 1];
-    int na = 0;
-    for (int i = LOBBY_BG_CLASSIC_COUNT; i < LOBBY_BG_PRESET_COUNT; ++i)
-      animated[na++] = i;
-    if (na > 0) {
-      crystal_section("Animated");
-      draw_grid(env, animated, na, &gm, 200);
+    /* themes (drawn in the currently selected colour) */
+    for (int i = 0; i < LOBBY_THEME_COUNT; ++i) {
+      ImVec2 p0 = {org.x + m, y0 + i * rh};
+      ImVec2 p1 = {p0.x + tile_w, p0.y + th};
+      bool sel = !custom && theme == i;
+      bool hot = false;
+      bool tap = tile_tap(1000 + i, p0, p1, &hot);
+      if (sel) crystal_glow_rect(p0, (ImVec2){tile_w, th}, 0.690f, 0.580f, 0.960f);
+      draw_look(dl, i, colour, p0, p1, false,
+                (anim && (hot || sel)) ? t_now : 12.0f);
+      draw_tile_label(dl, p0, p1, THEMES[i].name, sel);
+      draw_frame(dl, p0, p1, sel, hot);
+      if (sel) draw_check(dl, p1, p0);
+      if (tap) set_theme(usrs, i);
     }
 
+    /* colours (3 per row) */
+    for (int k = 0; k < LOBBY_COLOUR_COUNT; ++k) {
+      int r = k / 3, c = k % 3;
+      ImVec2 p0 = {org.x + rx + c * (cw + cgap), y0 + r * rh};
+      ImVec2 p1 = {p0.x + cw, p0.y + th};
+      bool sel = !custom && colour == k;
+      bool hot = false;
+      bool tap = tile_tap(2000 + k, p0, p1, &hot);
+      if (sel) crystal_glow_rect(p0, (ImVec2){cw, th}, 0.690f, 0.580f, 0.960f);
+      draw_look(dl, 0, k, p0, p1, false, 12.0f);
+      draw_frame(dl, p0, p1, sel, hot);
+      if (sel) draw_check(dl, p1, p0);
+      if (tap) set_colour(usrs, k);
+    }
+
+    igDummy((ImVec2){1.0f, cap_h + rh * LOBBY_THEME_COUNT + 4.0f});
+
+    /* ---- own picture ---- */
     if (s_tex) {
-      int mine[1] = {LOBBY_BG_CUSTOM};
-      crystal_section("Your picture");
-      draw_grid(env, mine, 1, &gm, 300);
+      crystal_section("My picture");
+      ImVec2 cur;
+      igGetCursorScreenPos(&cur);
+      ImVec2 p0 = {cur.x + m, cur.y + 2.0f};
+      ImVec2 p1 = {p0.x + tile_w, p0.y + th};
+      bool hot = false;
+      bool tap = tile_tap(3000, p0, p1, &hot);
+      if (custom) crystal_glow_rect(p0, (ImVec2){tile_w, th}, 0.690f, 0.580f, 0.960f);
+      draw_cover(dl, p0, p1);
+      draw_tile_label(dl, p0, p1, "My picture", custom);
+      draw_frame(dl, p0, p1, custom, hot);
+      if (custom) draw_check(dl, p1, p0);
+      if (tap) {
+        usrs->lobby_bg_index = LOBBY_BG_CUSTOM;
+        save_user_settings(usrs);
+      }
+      igDummy((ImVec2){1.0f, th + 8.0f});
+    } else {
+      crystal_section("My picture");
     }
 
-    if (usrs->lobby_bg_index == LOBBY_BG_CUSTOM && s_tex) {
-      crystal_section("Picture dimming");
+    if (custom) {
+      igTextDisabled("Picture dimming");
       igSetNextItemWidth(-1);
       igSliderFloat("##lobby_bg_dim", &usrs->lobby_bg_dim, 0.0f, 0.85f,
                     "Dim %.2f", ImGuiSliderFlags_AlwaysClamp);
       if (igIsItemDeactivatedAfterEdit()) save_user_settings(usrs);
     }
 
-    crystal_section("My picture");
 #ifdef ANDROID
     if (igButton("Upload from gallery", (ImVec2){-1, 0.0f})) {
       s_status[0] = '\0';
@@ -601,8 +682,6 @@ void ui_lobby_bg_button(tenv* env, float frame_height) {
 #endif
     if (s_status[0]) igTextWrapped("%s", s_status);
 
-    igSpacing();
-    igTextDisabled("Selected: %s", sel_name);
     igDummy((ImVec2){1.0f, 6.0f});
 
     crystal_panel_end();

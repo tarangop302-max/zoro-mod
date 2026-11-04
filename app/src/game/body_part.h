@@ -29,6 +29,9 @@ typedef struct body_part {
 
   bool iiv;
   bool dying;
+  /* Temporary point added by head_ext.c to bridge the gap between the last
+     real point and a head drawn ahead of it. Never sent by the server. */
+  bool virt;
 } body_part;
 
 #endif

@@ -4,6 +4,7 @@
 #ifdef ANDROID
 
 #include <stdbool.h>
+#include <stddef.h>
 
 long android_jni_get_unlock_remaining_ms(void);
 
@@ -129,6 +130,13 @@ typedef struct android_ime_event {
     int meta_state;
     int replace_codepoints;
 } android_ime_event;
+
+/* Blocking HTTPS GET through Android's own network stack (system TLS).
+   Call from a worker thread, never the render thread. Returns the HTTP status
+   (>0) and a malloc'ed, NUL-terminated body in *out_body (free() it), or -1
+   with a short reason in err. */
+int android_jni_http_get(const char* url, char** out_body, size_t* out_len,
+                         char* err, size_t err_cap);
 
 bool android_jni_poll_ime_event(android_ime_event* out_event);
 void android_jni_release_ime_event(android_ime_event* event);

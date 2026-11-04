@@ -57,8 +57,6 @@ class MainActivity : Activity() {
     }
 
     private lateinit var btnPlay: Button
-    private lateinit var btnPlay2: Button
-    private lateinit var btnPlay3: Button
     private lateinit var btnChangelog: Button
 
     private lateinit var layoutUpdate: LinearLayout
@@ -629,31 +627,6 @@ Changes made by Lucky
             launchGame()
         }
 
-        // Window 2 and 3 — each opens a second/third independent game
-        // instance (own process, own connection) that can be dragged into
-        // a floating pop-up window alongside the others.
-        btnPlay2 = Button(this)
-        btnPlay2.text = "▶  PLAY (Window 2)"
-        btnPlay2.textSize = 18f
-        btnPlay2.setPadding(56, 28, 56, 28)
-        btnPlay2.layoutParams = buttonParams
-        btnPlay2.isEnabled = true
-        btnPlay2.alpha = 1.0f
-        btnPlay2.setOnClickListener {
-            launchGame2()
-        }
-
-        btnPlay3 = Button(this)
-        btnPlay3.text = "▶  PLAY (Window 3)"
-        btnPlay3.textSize = 18f
-        btnPlay3.setPadding(56, 28, 56, 28)
-        btnPlay3.layoutParams = buttonParams
-        btnPlay3.isEnabled = true
-        btnPlay3.alpha = 1.0f
-        btnPlay3.setOnClickListener {
-            launchGame3()
-        }
-
         // Changelog
 
         btnChangelog = Button(this)
@@ -822,14 +795,6 @@ Changes made by Lucky
         )
 
         column.addView(
-            btnPlay2
-        )
-
-        column.addView(
-            btnPlay3
-        )
-
-        column.addView(
             btnChangelog
         )
 
@@ -852,44 +817,12 @@ Changes made by Lucky
     // ─────────────────────────────────────────────────────────────
 
     private fun launchGame() {
-        launchGameWindow(GameActivity::class.java, "GameActivity")
-    }
-
-    // Window 2/3 — separate process + separate task, so each shows as its
-    // own Recents entry and can be dragged into a floating pop-up /
-    // split-screen window independently of the others.
-    private fun launchGame2() {
-        launchGameWindow(GameActivity2::class.java, "GameActivity2")
-    }
-
-    private fun launchGame3() {
-        launchGameWindow(GameActivity3::class.java, "GameActivity3")
-    }
-
-    private fun launchGameWindow(activityClass: Class<*>, tag: String) {
         try {
-            val intent =
-                Intent(
-                    this,
-                    activityClass
-                )
-
-            intent.addFlags(
-                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_MULTIPLE_TASK
-            )
-
-            startActivity(
-                intent
-            )
-
+            val intent = Intent(this, GameActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            startActivity(intent)
         } catch (e: Exception) {
-            Log.e(
-                TAG,
-                "Failed to launch $tag: ${e.message}"
-            )
-
+            Log.e(TAG, "Failed to launch GameActivity: ${e.message}")
             android.widget.Toast.makeText(
                 this,
                 "Failed to start game: ${e.message}",

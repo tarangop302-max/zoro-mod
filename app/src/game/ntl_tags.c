@@ -117,6 +117,7 @@ static char s_auth_md5[33];
 static char s_status[112];
 static double s_status_until = 0.0;
 static double s_last_ui = 0.0;
+static int s_user_req = -1; /* tag id the user just asked for (Add ID) */
 
 /* passwords the user unlocked community tags with (md5, like the NTL mod) */
 static struct { int id; char md5[33]; } s_auth[NT_MAX_AUTH];
@@ -442,6 +443,39 @@ static uint8_t *b64_to_bytes(const char *s, size_t n, size_t *out_n) {
   return buf;
 }
 
+/* JSON string value -> malloc'ed C string. mongoose's own mg_json_get_str()
+ * fails on "\/" (which PHP's json_encode writes for every "/" -- and base64
+ * pictures are full of them), so every tag picture in the NTL list was lost. */
+static char *json_str_value(struct mg_str json, const char *path) {
+  int len = 0, off = mg_json_get(json, path, &len);
+  if (off < 0 || len < 2 || json.buf[off] != '"') return NULL;
+  char *r = (char *)malloc((size_t)len);
+  if (!r) return NULL;
+  const char *p = json.buf + off + 1;
+  size_t n = (size_t)len - 2, j = 0;
+  for (size_t i = 0; i < n; ++i) {
+    char ch = p[i];
+    if (ch == '\\' && i + 1 < n) {
+      char e = p[++i];
+      if (e == 'u' && i + 4 < n) {
+        unsigned v = 0;
+        for (int k = 1; k <= 4; ++k) {
+          char h = p[i + k];
+          v = v * 16 + (unsigned)(h >= '0' && h <= '9' ? h - '0' : (h | 32) - 'a' + 10);
+        }
+        i += 4;
+        ch = v < 256 ? (char)v : '?';
+      } else if (e == 'n') ch = '\n';
+      else if (e == 't') ch = '\t';
+      else if (e == 'r') ch = '\r';
+      else ch = e; /* \/ \" \\ */
+    }
+    r[j++] = ch;
+  }
+  r[j] = 0;
+  return r;
+}
+
 /* Parse {"v":N,"d":[{id,w,h,c1,c2,bx,by,src},...]}. Returns number of tags. */
 static int parse_list(const char *body, size_t n, bool from_cache) {
   struct mg_str json = mg_str_n(body, n);
@@ -472,7 +506,7 @@ static int parse_list(const char *body, size_t n, bool from_cache) {
     t->meta_default = 0;
     count++;
     if (t->state == CT_READY || t->state == CT_HAVE_WEBP) continue;
-    char *src = mg_json_get_str(val, "$.src");
+    char *src = json_str_value(val, "$.src");
     if (src) {
       size_t bn = 0;
       uint8_t *bytes = b64_to_bytes(src, strlen(src), &bn);
@@ -552,9 +586,11 @@ static void rq_on_response(int status, const char *body, size_t bn) {
           t->state = CT_FAILED;
           t->tries = 3; /* the server answered: it really has no such tag */
           t->retry_at = now + NT_IMG_RETRY_S;
-          char m[64];
-          snprintf(m, sizeof m, "Tag #%d was not found on the server", t->def.id);
-          status_set(m);
+          if (t->def.id == s_user_req) {
+            char m[64];
+            snprintf(m, sizeof m, "Tag #%d was not found on the server", t->def.id);
+            status_set(m);
+          }
         }
       }
     } else if (s_rq.kind == RQ_AUTH) {
@@ -864,6 +900,7 @@ static int comm_add_by_text(const char *text) {
     return -1;
   }
   comm_ensure_loaded();
+  s_user_req = (int)id;
   int i = ct_add((int)id);
   if (i < 0) return -1;
   ctag_t *t = &s_ct[i];

@@ -886,17 +886,41 @@ static void ct_default_meta(ctag_t *t) {
  *   476                        just download and show tag 476
  * Returns the tag id, or -1 when the text is not understood. */
 static int comm_add_by_text(const char *text) {
-  while (*text == ' ') text++;
+  /* NTL's chat prefixes commands with "# " in some places: accept that, extra
+     spaces, and any letter case ("# !Tag 535 pass"). */
+  while (*text == ' ' || *text == '#' || *text == '\t') text++;
   bool is_tag_cmd = false;
-  if (*text == '!' || !strncmp(text, "tag ", 4)) { /* "!tag ..." (or just "tag ...") */
+  if (*text == '!' || ((text[0] | 32) == 't' && (text[1] | 32) == 'a' && (text[2] | 32) == 'g' &&
+                       text[3] == ' ')) {
     const char *w = *text == '!' ? text + 1 : text;
-    is_tag_cmd = !strncmp(w, "tag", 3) && (w[3] == ' ' || w[3] == 0);
+    is_tag_cmd = (w[0] | 32) == 't' && (w[1] | 32) == 'a' && (w[2] | 32) == 'g' &&
+                 (w[3] == ' ' || w[3] == 0);
     while (*text && *text != ' ') text++;
   }
   long id = 0;
   char tok2[64] = "";
-  if (sscanf(text, " %ld %63s", &id, tok2) < 1 || !comm_id_ok((int)id)) {
-    status_set("That is not a valid uploaded-tag ID");
+  int got_tokens = sscanf(text, " %ld %63s", &id, tok2);
+  /* a bundled tag (built-in / public fstag) needs no download and no password */
+  if (got_tokens >= 1 && ntl_tags_valid((int)id)) {
+    s_sel = (int)id;
+    cfg_save();
+    char m[64];
+    snprintf(m, sizeof m, "Tag #%ld selected", id);
+    status_set(m);
+    return (int)id;
+  }
+  if (got_tokens >= 1 && !comm_id_ok((int)id)) {
+    /* NTL itself answers "tagid missing" for such numbers: 60..199 and the
+       ids between the bundled and uploaded ranges are not tags. */
+    char m[100];
+    snprintf(m, sizeof m, "Tag #%ld does not exist", id);
+    status_set(m);
+    return -1;
+  }
+  if (got_tokens < 1) {
+    char m[100];
+    snprintf(m, sizeof m, "No tag ID in \"%.20s\"", text);
+    status_set(m);
     return -1;
   }
   comm_ensure_loaded();

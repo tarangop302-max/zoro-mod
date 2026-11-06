@@ -671,6 +671,7 @@ static const char* hotkey_desc(int i) {
     case HOTKEY_OPEN_SETTINGS: return "Opens this Settings window during a match.";
     case HOTKEY_EYES_BACK: return "Toggles the Eyes back steering trick (from NTL).";
     case HOTKEY_KEY_EDITOR: return "Opens the on-screen keyboard layout editor.";
+    case HOTKEY_TEAM_CHAT: return "Opens or closes the TEAM CHAT window (not while typing in it).";
     default: return "";
   }
 }
@@ -717,7 +718,7 @@ static void sec_hotkeys(tenv* env) {
       ImVec2 rest;
       igGetContentRegionAvail(&rest);
       igSetNextItemWidth(rest.x - style->ItemInnerSpacing.x);
-      if (i == HOTKEY_RESTART || i == HOTKEY_QUIT) {
+      if (i == HOTKEY_RESTART || i == HOTKEY_QUIT || i == HOTKEY_TEAM_CHAT) {
         igBeginDisabled(true);
         igCombo_Str_arr("##hotkey mode", &(int){0}, (const char*[]){"Toggle"}, 1, -1);
         igEndDisabled();

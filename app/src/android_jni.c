@@ -1186,6 +1186,54 @@ android_backup_event android_jni_poll_backup_event(void) {
                : ANDROID_BACKUP_EVENT_NONE;
 }
 
+void android_jni_skinio_import(void) {
+    call_static_void_activity("requestSkinImport");
+}
+
+void android_jni_skinio_export(void) {
+    call_static_void_activity("requestSkinExport");
+}
+
+int android_jni_poll_skinio_event(void) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm) {
+        return 0;
+    }
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+    int result = 0;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) return 0;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return 0;
+    }
+
+    jclass cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (cls && !(*env)->ExceptionCheck(env)) {
+        jmethodID mid = (*env)->GetStaticMethodID(
+            env, cls, "pollSkinIoEvent", "(Landroid/app/Activity;)I");
+        if (mid && !(*env)->ExceptionCheck(env)) {
+            result = (*env)->CallStaticIntMethod(
+                env, cls, mid, g_android_app->activity->clazz);
+        }
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+            result = 0;
+        }
+    } else if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+    return (result >= 1 && result <= 4) ? result : 0;
+}
+
 
 
 /* ---- blocking HTTPS GET via java.net.HttpURLConnection ------------------ */

@@ -73,6 +73,7 @@ void game_loop(tenv* env) {
       // boost while the popup is open). It also stays open if you die.
       input_settings_hotkey(env);
       if (!gdata->death_pending) input_key_editor_hotkey(env);
+      input_team_chat_hotkey(env);
       if (!gdata->death_pending) {
         input(env);
       }

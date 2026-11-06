@@ -494,6 +494,13 @@ typedef struct user_settings {
   bool    lb_names_color_enabled;
   bool    lb_own_color_enabled;
   char    lb_title[33];
+
+  /* v2.29 extension: "Team chat" hotkey (opens / closes the TEAM CHAT window).
+     Appended after lb_title so every earlier file stays a compatible prefix
+     (see v229_prefix in read_user_settings). Access through
+     usr_hotkey(usrs, HOTKEY_TEAM_CHAT). */
+  uint8_t team_chat_reserved[8];
+  hotkey  hotkey_team_chat;
 } user_settings;
 
 #define CENTER_LINE_WIDTH_MIN 1.0f
@@ -506,6 +513,7 @@ static inline hotkey* usr_hotkey(user_settings* u, int i) {
   if (i < NUM_STORED_HOTKEYS) return &u->hotkeys[i];
   if (i == HOTKEY_OPEN_SETTINGS) return &u->hotkey_open_settings;
   if (i == HOTKEY_KEY_EDITOR) return &u->hotkey_key_editor;
+  if (i == HOTKEY_TEAM_CHAT) return &u->hotkey_team_chat;
   return &u->hotkey_eyes_back;
 }
 

@@ -14,4 +14,8 @@ void input_settings_hotkey(tenv* env);
    editor mid-match. Called every frame from game_loop(). */
 void input_key_editor_hotkey(tenv* env);
 
+/* Handles the "Team chat" hotkey: opens / closes the TEAM CHAT window
+   mid-match. Called every frame from game_loop(). */
+void input_team_chat_hotkey(tenv* env);
+
 #endif

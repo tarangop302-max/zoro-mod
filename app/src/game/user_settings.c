@@ -155,6 +155,10 @@ void user_settings_default(user_settings* usr_settings) {
          sizeof(usr_settings->key_editor_reserved));
   usr_settings->hotkey_key_editor =
       (hotkey){GLFW_KEY_L, false, 0, "Keyboard layout"};
+  memset(usr_settings->team_chat_reserved, 0,
+         sizeof(usr_settings->team_chat_reserved));
+  usr_settings->hotkey_team_chat =
+      (hotkey){GLFW_KEY_C, false, 0, "Team chat"};
   memset(usr_settings->lobby_bg_reserved, 0,
          sizeof(usr_settings->lobby_bg_reserved));
   usr_settings->lobby_bg_index = -1;
@@ -403,9 +407,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v226_prefix = offsetof(user_settings, key_editor_reserved);
   size_t v227_prefix = offsetof(user_settings, lobby_bg_reserved);
   size_t v228_prefix = offsetof(user_settings, lb_style_reserved);
+  size_t v229_prefix = offsetof(user_settings, team_chat_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v229_prefix)
+    /* A file saved before the Team chat hotkey existed ends at v229_prefix,
+       possibly followed only by compiler tail padding. Keep every saved
+       value; the new hotkey keeps its default. */
+    bytes_to_read = v229_prefix;
   else if ((size_t)file_size >= v228_prefix)
     /* A file saved before the centre line width / leaderboard style options
        existed ends at v228_prefix (it already contains the lobby background),
@@ -867,6 +877,24 @@ void read_user_settings(user_settings* usr_settings) {
     if (ke->mode < 0 || ke->mode > 1) ke->mode = 0;
     ke->active = false;
     strcpy(ke->description, "Keyboard layout");
+  }
+
+  {
+    /* Team chat: same key rules and de-duplication as Keyboard layout. */
+    hotkey* tc = &loaded.hotkey_team_chat;
+    bool ok = (tc->key >= 48 && tc->key < 58) || (tc->key >= 65 && tc->key < 91);
+    if (!ok || tc->key == GLFW_KEY_M || tc->key == GLFW_KEY_N)
+      tc->key = GLFW_KEY_C;
+    for (int tries = 0; tries < 36; ++tries) {
+      bool taken = false;
+      for (int d = 0; d < HOTKEY_TEAM_CHAT; ++d)
+        if (usr_hotkey(&loaded, d)->key == tc->key) taken = true;
+      if (!taken && tc->key != GLFW_KEY_M && tc->key != GLFW_KEY_N) break;
+      tc->key = (tc->key >= 65 && tc->key < 90) ? tc->key + 1 : 65;
+    }
+    if (tc->mode < 0 || tc->mode > 1) tc->mode = 0;
+    tc->active = false;
+    strcpy(tc->description, "Team chat");
   }
 
   if (!(loaded.lobby_bg_index == -1 ||

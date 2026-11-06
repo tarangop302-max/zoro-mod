@@ -9,6 +9,7 @@
 #include "game/screenshot.h"
 #include "game/recorder.h"
 #include "game/backup.h"
+#include "game/skin_io.h"
 
 #include "ui/skin_editor.h"
 #include "ui/title_screen.h"
@@ -1156,6 +1157,7 @@ void trender(tenv* env) {
 
     recorder_update();
     backup_update(env);
+    skin_io_update(env);
     recorder_button_draw(
         env
     );

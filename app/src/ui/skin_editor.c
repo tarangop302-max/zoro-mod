@@ -8,6 +8,9 @@
 #include "crystal_theme.h"
 #include "lobby_bg.h"
 #include "../game/ntl_tags.h"
+#include "../game/skin_io.h"
+
+static int s_lib_idx = -1; /* current Slither-library skin (-1 = none picked) */
 
 int skin_code_filter(ImGuiInputTextCallbackData* data) {
   return !((data->EventChar >= 'a' && data->EventChar <= 'z') ||
@@ -157,7 +160,9 @@ void ui_skin_editor(tenv* env) {
        editing:     [skin code input] [Save] [Default] [OK]        -> 4
        not editing: [Default skins] [<>] [Saved skins] [<>]
                     [Custom] [OK]                                   -> 6 */
-  int picker_rows = gdata->skin_editing ? 4 : 6;
+  /* Editing: Save/Import/Export share one row (no extra row); otherwise +3 rows (Slither
+     skins label, arrows, Import | Export). */
+  int picker_rows = gdata->skin_editing ? 4 : 9;
   /* The NTL tag block (label + sliding picker + buttons) sits between the
      "Saved skins" arrows and the Custom button; editing a custom skin needs
      the room for its colour grid instead, so it only shows when not editing. */
@@ -232,6 +237,22 @@ void ui_skin_editor(tenv* env) {
                                4.5f, se_col(0.800f, 0.700f, 1.0f, 1.0f), 16);
     ImDrawList_AddText_Vec2(hdl, tp, se_col(0.850f, 0.780f, 1.0f, 1.0f),
                             "SKIN EDITOR", NULL);
+    {
+      const char* st = skin_io_status();
+      if (st[0]) {
+        ImVec2 ts;
+        igCalcTextSize(&ts, "SKIN EDITOR", NULL, false, -1.0f);
+        float sx = tp.x + ts.x + 18.0f;
+        float room = pop_x + pop_w - hpad - d - 8.0f - sx;
+        if (room > 40.0f) {
+          ImDrawList_PushClipRect(hdl, (ImVec2){sx, pop_y},
+                                  (ImVec2){sx + room, pop_y + header_h}, true);
+          ImDrawList_AddText_Vec2(hdl, (ImVec2){sx, tp.y},
+                                  se_col(0.700f, 0.650f, 0.850f, 0.95f), st, NULL);
+          ImDrawList_PopClipRect(hdl);
+        }
+      }
+    }
     if (crystal_close_button("##skin_close",
                              (ImVec2){pop_x + pop_w - hpad - d,
                                       pop_y + (header_h - d) * 0.5f},
@@ -437,10 +458,12 @@ void ui_skin_editor(tenv* env) {
 
     igSetCursorPosX(picker_x);
     igSetCursorPosY((grid_y) - row_h * 3);
+    float sp = style->ItemSpacing.x;
+    float qw = (tot_size[0] - 3 * sp) / 4.0f;
     bool can_save =
         usrs->skin_code[0] != 0 && usrs->saved_skin_count < MAX_SAVED_SKINS;
     igBeginDisabled(!can_save);
-    if (igButton("Save", (ImVec2){tot_size[0]})) {
+    if (igButton("Save", (ImVec2){qw * 2 + sp, 0})) {
       int idx = usrs->saved_skin_count++;
       snprintf(usrs->saved_skins[idx].name, MAX_SAVED_SKIN_NAME + 1, "Skin %d",
                idx + 1);
@@ -452,14 +475,22 @@ void ui_skin_editor(tenv* env) {
     }
     crystal_sheen();
     igEndDisabled();
+    igSameLine(0, -1);
+    if (igButton("Import##skin_imp_e", (ImVec2){qw, 0})) skin_io_request_import(env);
+    crystal_sheen();
+    igSameLine(0, -1);
+    if (igButton("Export##skin_exp_e", (ImVec2){qw, 0})) skin_io_request_export(env);
+    crystal_sheen();
+    igEndDisabled();
   } else {
+    const float lib_off = row_h * 3.0f; /* Slither skins block above Custom */
     /* Row 6-5: "Default skins" label + arrows (image 1, unchanged). */
     igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 6);
+    igSetCursorPosY((grid_y) - tag_h - lib_off - row_h * 6);
     igTextDisabled("Default skins");
 
     igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 5);
+    igSetCursorPosY((grid_y) - tag_h - lib_off - row_h * 5);
     if (igButton("\uea38##default_prev", (ImVec2){half_w, 0})) {
       usrs->default_skin =
           (usrs->default_skin + (NUM_DEFAULT_SKINS - 1)) % NUM_DEFAULT_SKINS;
@@ -479,11 +510,11 @@ void ui_skin_editor(tenv* env) {
        list instead of the built-ins. Disabled until you've saved at least
        one (via Custom > Save). */
     igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 4);
+    igSetCursorPosY((grid_y) - tag_h - lib_off - row_h * 4);
     igTextDisabled("Saved skins");
 
     igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 3);
+    igSetCursorPosY((grid_y) - tag_h - lib_off - row_h * 3);
     bool has_saved = usrs->saved_skin_count > 0;
     int base = usrs->active_saved_skin < 0 ? 0 : usrs->active_saved_skin;
     igBeginDisabled(!has_saved);
@@ -508,7 +539,48 @@ void ui_skin_editor(tenv* env) {
     igEndDisabled();
 
     /* NTL tags: label + show toggle, sliding picker, Upload/Add ID/Sync/Remove. */
-    ntl_tags_skin_editor_ui(env, picker_x, grid_y - row_h * 2 - tag_h, tot_size[0]);
+    ntl_tags_skin_editor_ui(env, picker_x, grid_y - row_h * 2 - lib_off - tag_h, tot_size[0]);
+
+    /* Slither skins: library imported from .ntlmod files. */
+    {
+      int lc = skin_lib_count();
+      if (s_lib_idx >= lc) s_lib_idx = lc - 1;
+      igSetCursorPosX(picker_x);
+      igSetCursorPosY((grid_y) - row_h * 5);
+      if (lc > 0 && s_lib_idx >= 0)
+        igTextDisabled("Slither skins  %d/%d", s_lib_idx + 1, lc);
+      else
+        igTextDisabled("Slither skins  (%d)", lc);
+
+      igSetCursorPosX(picker_x);
+      igSetCursorPosY((grid_y) - row_h * 4);
+      igBeginDisabled(lc == 0);
+      bool lprev = igButton("\uea38##lib_prev", (ImVec2){half_w, 0});
+      crystal_sheen();
+      igSameLine(0, -1);
+      bool lnext = igButton("\uea34##lib_next", (ImVec2){half_w, 0});
+      crystal_sheen();
+      igEndDisabled();
+      if (lc > 0 && (lprev || lnext)) {
+        if (lprev) s_lib_idx = (s_lib_idx <= 0 ? lc : s_lib_idx) - 1;
+        else s_lib_idx = (s_lib_idx + 1) % lc;
+        const slither_skin* ls = skin_lib_get(s_lib_idx);
+        if (ls) {
+          strncpy(usrs->skin_code, ls->code, MAX_SKIN_CODE_LEN + 1);
+          usrs->skin_code[MAX_SKIN_CODE_LEN] = 0;
+          usrs->accessory = ls->accessory;
+          usrs->custom_skin = true;
+        }
+      }
+
+      igSetCursorPosX(picker_x);
+      igSetCursorPosY((grid_y) - row_h * 3);
+      if (igButton("Import##skin_imp", (ImVec2){half_w, 0})) skin_io_request_import(env);
+      crystal_sheen();
+      igSameLine(0, -1);
+      if (igButton("Export##skin_exp", (ImVec2){half_w, 0})) skin_io_request_export(env);
+      crystal_sheen();
+    }
   }
 
   igSetCursorPosX(picker_x);

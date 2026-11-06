@@ -115,6 +115,14 @@ void android_jni_backup_export(void);
 void android_jni_backup_import(void);
 android_backup_event android_jni_poll_backup_event(void);
 
+/* Skin file import/export (see game/skin_io.c). Import: system picker, Kotlin
+   copies the chosen file to skin_import.tmp in the files dir. Export: C writes
+   skin_export.tmp first, then Kotlin copies it to a "save as" location.
+   Poll events: 0 none, 1 import file ready, 2 exported, 3 cancelled, 4 error. */
+void android_jni_skinio_import(void);
+void android_jni_skinio_export(void);
+int android_jni_poll_skinio_event(void);
+
 typedef enum android_ime_event_type {
     ANDROID_IME_EVENT_NONE = 0,
     ANDROID_IME_EVENT_TEXT        = 1,

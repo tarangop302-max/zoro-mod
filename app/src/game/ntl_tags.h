@@ -12,6 +12,8 @@
  *     app/res/textures/ntl_tags.png, described by ntl_tags_data.h (both made
  *     by tools/gen_ntl_tags.py). Tag ids are NTL's own ids, so every NTL
  *     client agrees on which tag is which.
+ *   - Free tags newer than the bundled 164 (ids 304..367, 668..755) are synced from
+ *     tags/fstags (like the NTL mod) and need no password.
  *   - How a snake gets its tag (same as the NTL mod):
  *       1. the spawn packet's skin header bytes (own choice, see
  *          ntl_tags_encode_header / ntl_tags_decode_header), and

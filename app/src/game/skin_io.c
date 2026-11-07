@@ -90,20 +90,6 @@ static void lib_load(void) {
   fclose(f);
 }
 
-int skin_lib_count(void) {
-  lib_load();
-  return s_count;
-}
-const slither_skin *skin_lib_get(int i) {
-  lib_load();
-  return (i >= 0 && i < s_count) ? &s_lib[i] : NULL;
-}
-void skin_lib_clear(void) {
-  lib_load();
-  s_count = 0;
-  lib_save();
-}
-
 static bool lib_has(const char *code) {
   for (int i = 0; i < s_count; i++)
     if (strcmp(s_lib[i].code, code) == 0) return true;
@@ -123,6 +109,49 @@ static bool lib_add(const char *code, uint8_t acc) {
   strncpy(s_lib[s_count].code, code, MAX_SKIN_CODE_LEN);
   s_lib[s_count].accessory = acc;
   s_count++;
+  return true;
+}
+
+/* ---- unified Saved skins list ---- */
+int skin_saved_total(const user_settings *us) {
+  lib_load();
+  return us->saved_skin_count + s_count;
+}
+bool skin_saved_get(const user_settings *us, int i, char *code_out, uint8_t *acc_out) {
+  lib_load();
+  if (i < 0) return false;
+  const char *c;
+  uint8_t a;
+  if (i < us->saved_skin_count) {
+    c = us->saved_skins[i].skin_code;
+    a = us->saved_skins[i].accessory;
+  } else if (i - us->saved_skin_count < s_count) {
+    c = s_lib[i - us->saved_skin_count].code;
+    a = s_lib[i - us->saved_skin_count].accessory;
+  } else return false;
+  strncpy(code_out, c, MAX_SKIN_CODE_LEN);
+  code_out[MAX_SKIN_CODE_LEN] = 0;
+  *acc_out = a;
+  return true;
+}
+static bool saved_has(const user_settings *us, const char *code) {
+  for (int i = 0; i < us->saved_skin_count; i++)
+    if (strcmp(us->saved_skins[i].skin_code, code) == 0) return true;
+  return lib_has(code);
+}
+bool skin_saved_add(user_settings *us, const char *code, uint8_t acc) {
+  lib_load();
+  if (!code[0]) return false;
+  if (us->saved_skin_count < MAX_SAVED_SKINS) {
+    int idx = us->saved_skin_count++;
+    snprintf(us->saved_skins[idx].name, MAX_SAVED_SKIN_NAME + 1, "Skin %d", idx + 1);
+    strncpy(us->saved_skins[idx].skin_code, code, MAX_SKIN_CODE_LEN);
+    us->saved_skins[idx].skin_code[MAX_SKIN_CODE_LEN] = 0;
+    us->saved_skins[idx].accessory = acc;
+    return true;
+  }
+  if (!lib_add(code, acc)) return false;
+  lib_save();
   return true;
 }
 
@@ -286,7 +315,9 @@ static int import_buffer(tenv *env, const char *file, size_t flen) {
       char code[MAX_SKIN_CODE_LEN + 1];
       if (ntl_s_to_code(gd, sbuf, code) > 0) {
         uint8_t acc = (cval >= 0 && cval < NUM_ACCESSORIES) ? (uint8_t)cval : NO_ACCESSORY;
-        if (lib_add(code, acc)) added++;
+        if (!saved_has(&env->usr->usrs, code) &&
+            skin_saved_add(&env->usr->usrs, code, acc))
+          added++;
       }
     }
   }
@@ -295,11 +326,13 @@ static int import_buffer(tenv *env, const char *file, size_t flen) {
   return added;
 }
 
-static void report_import(int added) {
+static void report_import(tenv *env, int added) {
   if (added < 0) set_status("Import failed: not a skins .ntlmod file");
   else {
-    set_status("Imported %d new skin%s (%d total)", added, added == 1 ? "" : "s", s_count);
+    set_status("Imported %d new skin%s to Saved skins (%d total)", added,
+               added == 1 ? "" : "s", skin_saved_total(&env->usr->usrs));
     lib_save();
+    save_user_settings(&env->usr->usrs);
   }
 }
 
@@ -419,7 +452,7 @@ void skin_io_request_import(tenv *env) {
   size_t n = 0;
   char *buf = read_whole(SKIN_DESKTOP_IN, &n);
   if (!buf) { set_status("Put %s next to the game, then tap Import", SKIN_DESKTOP_IN); return; }
-  report_import(import_buffer(env, buf, n));
+  report_import(env, import_buffer(env, buf, n));
   free(buf);
 #endif
 }
@@ -458,7 +491,7 @@ void skin_io_update(tenv *env) {
         size_t n = 0;
         char *buf = read_whole(SKIN_IMPORT_TMP, &n);
         if (!buf) { set_status("Import failed: could not read file"); break; }
-        report_import(import_buffer(env, buf, n));
+        report_import(env, import_buffer(env, buf, n));
         free(buf);
         remove_in_files_dir(SKIN_IMPORT_TMP);
         break;

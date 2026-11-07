@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #ifdef ANDROID
 #include "../android_path.h"
 #include "../android_jni.h"
@@ -34,6 +35,7 @@
 #define NT_CFG_FILE "ntl_tags.cfg"
 #define NT_AUTH_FILE "ntl_tags_auth.cfg"       /* "id md5(password)" lines   */
 #define NT_CACHE_FILE "ntl_tags_cache.json"    /* last community tag list    */
+#define NT_FCACHE_FILE "ntl_fstags_cache.json" /* last free-tag list         */
 #define NT_HOST "https://ntl-slither.com"
 #define NT_UPLOAD_URL "https://ntl-slither.com/uploadtag.php?ntlmod=wbst"
 #define NT_MOD_VERSION "9.78"                  /* modv the NTL server expects */
@@ -95,7 +97,7 @@ static int s_ndisp = 0;
 static bool s_disp_dirty = true;
 
 /* network (one request at a time) */
-typedef enum { RQ_NONE = 0, RQ_LIST, RQ_IMG, RQ_AUTH } rq_kind;
+typedef enum { RQ_NONE = 0, RQ_LIST, RQ_IMG, RQ_AUTH, RQ_FLIST } rq_kind;
 static struct {
   struct mg_connection *conn;
   rq_kind kind;
@@ -162,6 +164,19 @@ static bool comm_id_ok(int id) {
   return id >= 368 && id != 667 && !(id > 667 && id < 756) && id < 65535;
 }
 
+/* Free ("public") tags the NTL server added after the ones bundled here. The
+ * NTL mod downloads them from tags/fstags and appends them to its fstags list,
+ * so entry g gets id 200+g (g < 168) or 500+g (g >= 168, i.e. 668..755), at
+ * most 256 entries. They need no password, unlike uploaded tags (368+). */
+#define NT_FST_MAX 256
+static bool free_id_ok(int id) {
+  bool in_range = (id >= NT_FST_BASE && id < NT_FST_BASE + NT_FST_SPLIT) ||
+                  (id >= NT_FST_BASE2 + NT_FST_SPLIT && id < NT_FST_BASE2 + NT_FST_MAX);
+  return in_range && !ntl_tags_valid(id);
+}
+/* Usable without a password: bundled, or a free tag from the server list. */
+static bool tag_open(int id) { return ntl_tags_valid(id) || free_id_ok(id); }
+
 static int ct_find(int id) {
   if (!s_cindex_init) return -1;
   if (id < 0 || id > 65534) return -1;
@@ -183,7 +198,7 @@ static int ct_add(int id) {
   }
   int i = ct_find(id);
   if (i >= 0) return i;
-  if (s_nct >= NT_COMM_MAX || !comm_id_ok(id)) return -1;
+  if (s_nct >= NT_COMM_MAX || (!comm_id_ok(id) && !free_id_ok(id))) return -1;
   i = s_nct++;
   memset(&s_ct[i], 0, sizeof s_ct[i]);
   s_ct[i].def.id = (short)id;
@@ -410,11 +425,25 @@ static double jnum(struct mg_str v, const char *path, double dflt) {
   }
   return dflt;
 }
+static unsigned css_color(const char *s, unsigned dflt) {
+  if (!strcasecmp(s, "red")) return 0xFF0000u;
+  if (!strcasecmp(s, "yellow")) return 0xFFFF00u;
+  if (!strcasecmp(s, "white")) return 0xFFFFFFu;
+  if (!strcasecmp(s, "black")) return 0x000000u;
+  const char *p = s[0] == '#' ? s + 1 : s;
+  if (strlen(p) == 3) { /* #rgb -> #rrggbb */
+    unsigned r = (unsigned)strtoul((char[]){p[0], 0}, NULL, 16);
+    unsigned g = (unsigned)strtoul((char[]){p[1], 0}, NULL, 16);
+    unsigned b = (unsigned)strtoul((char[]){p[2], 0}, NULL, 16);
+    return (r * 17u << 16) | (g * 17u << 8) | (b * 17u);
+  }
+  if (!*p) return dflt;
+  return (unsigned)strtoul(p, NULL, 16) & 0xFFFFFFu;
+}
 static unsigned jcolor(struct mg_str v, const char *path, unsigned dflt) {
   char *s = mg_json_get_str(v, path);
   if (s) {
-    const char *p = s[0] == '#' ? s + 1 : s;
-    dflt = (unsigned)strtoul(p, NULL, 16) & 0xFFFFFFu;
+    dflt = css_color(s, dflt);
     free(s);
     return dflt;
   }
@@ -525,6 +554,83 @@ static int parse_list(const char *body, size_t n, bool from_cache) {
   return count;
 }
 
+/* Parse the free-tag list {"v":N,"d":[{fst_blbw,fst_blbh,fst_atc1,fst_atc2,
+ * fst_blbx,fst_blby,fst_src},...]}. Entry k of "d" is entry (bundled + k) of
+ * the NTL mod's fstags array (the mod concatenates the two). */
+static bool s_flist_want = false, s_flist_busy = false;
+static double s_flist_next = 0.0;
+static int s_flist_ver = 0;
+
+static int parse_fst_list(const char *body, size_t n) {
+  struct mg_str json = mg_str_n(body, n);
+  struct mg_str arr = mg_json_get_tok(json, "$.d");
+  if (arr.len < 2 || arr.buf[0] != '[') return -1;
+  long ver = mg_json_get_long(json, "$.v", 0);
+  if (ver > 0) s_flist_ver = (int)ver;
+  int count = 0, index = 0;
+  size_t ofs = 0;
+  struct mg_str key, val;
+  while ((ofs = mg_json_next(arr, ofs, &key, &val)) > 0) {
+    int g = (NTL_TAG_COUNT - NT_BUILTIN_COUNT) + index++;
+    if (g >= NT_FST_MAX) break;
+    int id = g < NT_FST_SPLIT ? NT_FST_BASE + g : NT_FST_BASE2 + g;
+    if (!free_id_ok(id)) continue;
+    int ti = ct_add(id);
+    if (ti < 0) continue;
+    ctag_t *t = &s_ct[ti];
+    t->def.w = (short)jnum(val, "$.fst_blbw", 140);
+    t->def.h = (short)jnum(val, "$.fst_blbh", 140);
+    t->def.bx = (short)jnum(val, "$.fst_blbx", -32);
+    t->def.by = (short)jnum(val, "$.fst_blby", -70);
+    t->def.c1 = jcolor(val, "$.fst_atc1", 0xFFFFFFu);
+    t->def.c2 = jcolor(val, "$.fst_atc2", 0x92EFFEu);
+    t->meta_default = 0;
+    count++;
+    if (t->state == CT_READY || t->state == CT_HAVE_WEBP) continue;
+    char *src = json_str_value(val, "$.fst_src");
+    if (src) {
+      size_t bn = 0;
+      uint8_t *bytes = b64_to_bytes(src, strlen(src), &bn);
+      free(src);
+      if (bytes) {
+        free(t->webp);
+        t->webp = bytes;
+        t->webp_n = bn;
+        t->state = CT_HAVE_WEBP;
+        continue;
+      }
+    }
+    if (t->state != CT_FAILED || now_s() >= t->retry_at) t->state = CT_NEED_IMG; /* newtag.php */
+  }
+  ct_sort();
+  return count;
+}
+
+static void fcache_save(const char *body, size_t n) {
+  FILE *f = open_named(NT_FCACHE_FILE, "wb");
+  if (!f) return;
+  fwrite(body, 1, n, f);
+  fclose(f);
+}
+
+static void fcache_load(void) {
+  FILE *f = open_named(NT_FCACHE_FILE, "rb");
+  if (!f) return;
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (n > 16 && n < 12 * 1024 * 1024) {
+    char *buf = (char *)malloc((size_t)n + 1);
+    if (buf) {
+      size_t got = fread(buf, 1, (size_t)n, f);
+      buf[got] = 0;
+      parse_fst_list(buf, got);
+      free(buf);
+    }
+  }
+  fclose(f);
+}
+
 static void cache_save(const char *body, size_t n) {
   FILE *f = open_named(NT_CACHE_FILE, "wb");
   if (!f) return;
@@ -568,6 +674,19 @@ static void rq_on_response(int status, const char *body, size_t bn) {
       } else {
         status_set("Could not read the NTL tag list");
         s_list_next = now + 30.0;
+      }
+    } else if (s_rq.kind == RQ_FLIST) {
+      s_flist_busy = false;
+      s_flist_next = now + 600.0;
+      int cnt = status == 200 ? parse_fst_list(body, bn) : -1;
+      if (cnt > 0) {
+        fcache_save(body, bn);
+        char m[64];
+        snprintf(m, sizeof m, "%d free tags synced", cnt);
+        status_set(m);
+      } else if (cnt < 0 && !(status == 200 && bn < 64)) {
+        status_set("Could not read the NTL free tag list");
+        s_flist_next = now + 30.0;
       }
     } else if (s_rq.kind == RQ_IMG) {
       int i = ct_find(s_rq.id);
@@ -619,6 +738,9 @@ static void rq_on_failure(const char *why) {
     if (k == RQ_LIST) {
       s_list_busy = false;
       s_list_next = now_s() + 60.0;
+    } else if (k == RQ_FLIST) {
+      s_flist_busy = false;
+      s_flist_next = now_s() + 60.0;
     } else if (k == RQ_IMG) {
       int i = ct_find(id);
       if (i >= 0) {
@@ -782,6 +904,7 @@ static void net_pump(void) {
     if (now_s() - s_rq.started > 25.0) { /* stuck request */
       struct mg_connection *c = s_rq.conn;
       if (s_rq.kind == RQ_LIST) s_list_busy = false;
+      if (s_rq.kind == RQ_FLIST) s_flist_busy = false;
       if (s_rq.kind == RQ_IMG) {
         int i = ct_find(s_rq.id);
         if (i >= 0) {
@@ -827,6 +950,14 @@ static void net_pump(void) {
     rq_start(RQ_LIST, 0, path);
     return;
   }
+  if (s_flist_want && now >= s_flist_next) {
+    s_flist_want = false;
+    s_flist_busy = true;
+    char path[120];
+    snprintf(path, sizeof path, "/tags/fstags?v=%d&modv=%s", s_flist_ver, NT_MOD_VERSION);
+    rq_start(RQ_FLIST, 0, path);
+    return;
+  }
 }
 
 /* Make sure the cached list is loaded and a sync is scheduled. */
@@ -835,26 +966,32 @@ static void comm_ensure_loaded(void) {
   s_loaded = true;
   auth_load();
   cache_load();
+  fcache_load();
   s_list_want = true;
   s_list_next = 0.0;
+  s_flist_want = true;
+  s_flist_next = 0.0;
 }
 
 static void comm_request_refresh(void) {
-  if (s_list_busy) return;
+  if (s_list_busy || s_flist_busy) return;
   s_list_want = true;
   s_list_next = 0.0;
+  s_flist_want = true;
+  s_flist_next = 0.0;
   status_set("Syncing NTL tags...");
 }
 
 /* A feed packet named a tag we have no picture for: ask for it. */
 static void comm_note_unknown(int id) {
-  if (!comm_id_ok(id)) return;
+  if (!comm_id_ok(id) && !free_id_ok(id)) return;
   comm_ensure_loaded();
   int i = ct_find(id);
   if (i >= 0) return; /* known entry: already queued / failed / loading */
   /* Not in the list we have: re-sync the list (it may be newer), and also ask
      for the picture by id so it shows even if the list lags behind. */
   if (!s_list_busy && now_s() >= s_list_next) s_list_want = true;
+  if (!s_flist_busy && now_s() >= s_flist_next) s_flist_want = true;
   i = ct_add(id);
   if (i >= 0) {
     s_ct[i].meta_default = 1;
@@ -909,7 +1046,7 @@ static int comm_add_by_text(const char *text) {
     status_set(m);
     return (int)id;
   }
-  if (got_tokens >= 1 && !comm_id_ok((int)id)) {
+  if (got_tokens >= 1 && !comm_id_ok((int)id) && !free_id_ok((int)id)) {
     /* NTL itself answers "tagid missing" for such numbers: 60..199 and the
        ids between the bundled and uploaded ranges are not tags. */
     char m[100];
@@ -928,6 +1065,21 @@ static int comm_add_by_text(const char *text) {
   int i = ct_add((int)id);
   if (i < 0) return -1;
   ctag_t *t = &s_ct[i];
+
+  /* a free tag from the server list: no password, just select it */
+  if (free_id_ok((int)id)) {
+    s_sel = (int)id;
+    cfg_save();
+    if (t->state == CT_META || t->state == CT_FAILED) {
+      if (!t->def.w) ct_default_meta(t);
+      t->tries = 0;
+      t->state = CT_NEED_IMG;
+    }
+    char m[64];
+    snprintf(m, sizeof m, "Tag #%ld selected", id);
+    status_set(m);
+    return (int)id;
+  }
 
   /* a password was given: unlock the tag for use */
   bool has_pass = tok2[0] && !isdigit((unsigned char)tok2[0]) && tok2[0] != '#' && tok2[0] != '-';
@@ -1018,7 +1170,7 @@ static void cfg_load(void) {
   /* New file: the byte is "show in Assist". An old (NTG1) file never had that
      choice, so Assist starts OFF for it as well. */
   s_show_assist = c.magic == NT_CFG_MAGIC ? c.assist_hide != 0 : false;
-  s_sel = (ntl_tags_valid(c.selected) || (comm_id_ok(c.selected) && auth_find(c.selected)))
+  s_sel = (tag_open(c.selected) || (comm_id_ok(c.selected) && auth_find(c.selected)))
               ? c.selected
               : NTL_TAG_NONE;
 }
@@ -1045,7 +1197,7 @@ int ntl_tags_selected(void) { return s_sel; }
 
 /* ---- spawn-packet skin header (NTL "e" array) --------------------------- */
 bool ntl_tags_encode_header(uint8_t hdr[8]) {
-  if (!ntl_tags_valid(s_sel)) return false;
+  if (!tag_open(s_sel)) return false;
   if (s_sel < NT_BUILTIN_COUNT) {
     hdr[0] = 254; /* built-in tag marker */
     hdr[1] = 18;
@@ -1068,7 +1220,10 @@ int ntl_tags_decode_header(const uint8_t *h, int len, int *plain_skin) {
   } else if (h[1] == 38) {
     int idx = h[6];
     int id = idx < NT_FST_SPLIT ? idx + NT_FST_BASE : idx + NT_FST_BASE2;
-    if (ntl_tags_valid(id)) tag = id;
+    if (tag_open(id)) {
+      tag = id;
+      if (free_id_ok(id)) comm_note_unknown(id); /* picture not downloaded yet */
+    }
   } else {
     return NTL_TAG_NONE;
   }
@@ -1099,7 +1254,7 @@ static void ws_callback(struct mg_connection *c, int ev, void *ev_data) {
       s_map_gen[id] = s_cur_gen;
     }
   } else if (ev == MG_EV_ERROR) {
-    if (s_sel >= 0 && !ntl_tags_valid(s_sel)) { /* only matters for uploaded tags */
+    if (s_sel >= 0 && !tag_open(s_sel)) { /* only matters for uploaded tags */
       char m[112];
       snprintf(m, sizeof m, "NTL feed: %.80s", ev_data ? (const char *)ev_data : "connect failed");
       status_set(m);
@@ -1152,7 +1307,7 @@ static void ws_send_position(user_settings *us, snake *me) {
      NTL mod sends that once per connection. If the tag changed since (typed
      "!tag" mid-game), reconnect so the registration is sent again. */
   if (s_registered) {
-    const char *a = (s_sel >= 0 && !ntl_tags_valid(s_sel)) ? auth_find(s_sel) : NULL;
+    const char *a = (s_sel >= 0 && !tag_open(s_sel)) ? auth_find(s_sel) : NULL;
     int tid = a ? s_sel : -1;
     if (tid != s_reg_tid || strcmp(a ? a : "", s_reg_tc)) {
       ws_close();
@@ -1171,7 +1326,7 @@ static void ws_send_position(user_settings *us, snake *me) {
        with the md5 of its password, like the NTL mod does after "!tag". */
     const char *tc = "";
     int tid = -1;
-    if (s_sel >= 0 && !ntl_tags_valid(s_sel)) {
+    if (s_sel >= 0 && !tag_open(s_sel)) {
       const char *a = auth_find(s_sel);
       if (a) {
         tc = a;
@@ -1554,7 +1709,7 @@ static void draw_cell(ImDrawList *dl, ImVec2 a, ImVec2 b, int id, bool sel, bool
     ImDrawList_AddText_Vec2(dl, (ImVec2){a.x + ((b.x - a.x) - ts.x) * 0.5f, b.y - ts.y - 4.0f},
                             tcol(0.78f, 0.70f, 0.95f, 0.9f), t, NULL);
   }
-  if (!ntl_tags_valid(id)) { /* community tag: amber = needs password, green = unlocked */
+  if (!tag_open(id)) { /* community tag: amber = needs password, green = unlocked */
     bool unlocked = auth_find(id) != NULL;
     ImDrawList_AddCircleFilled(dl, (ImVec2){b.x - 7, a.y + 7}, 4.0f,
                                unlocked ? 0xFF60D060u : 0xFF3CBEFFu, 12);
@@ -1569,7 +1724,7 @@ static float s_goal_big = -1.0f;
 static bool s_scroll_big_sel = false;
 
 static void select_tag(int id) {
-  if (ntl_tags_valid(id) || auth_find(id)) {
+  if (tag_open(id) || auth_find(id)) {
     s_sel = id;
     cfg_save();
     status_set("Tag selected - shows from your next life");
@@ -1707,7 +1862,7 @@ static void tag_modals(tenv *env) {
       }
       if (tap >= 0) {
         int id = s_disp[tap];
-        if (ntl_tags_valid(id) || auth_find(id)) {
+        if (tag_open(id) || auth_find(id)) {
           select_tag(id);
           igCloseCurrentPopup();
         } else {

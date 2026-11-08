@@ -679,15 +679,13 @@ static void rq_on_response(int status, const char *body, size_t bn) {
       s_flist_busy = false;
       s_flist_next = now + 600.0;
       int cnt = status == 200 ? parse_fst_list(body, bn) : -1;
-      if (cnt > 0) {
-        fcache_save(body, bn);
-        char m[64];
-        snprintf(m, sizeof m, "%d free tags synced", cnt);
-        status_set(m);
-      } else if (cnt < 0 && !(status == 200 && bn < 64)) {
-        status_set("Could not read the NTL free tag list");
-        s_flist_next = now + 30.0;
-      }
+      if (cnt > 0) fcache_save(body, bn);
+      if (cnt < 0 && !(status == 200 && bn < 64)) s_flist_next = now + 30.0;
+      /* always say what came back, so a missing free tag can be diagnosed */
+      char m[112];
+      snprintf(m, sizeof m, "Free tags: HTTP %d, %u bytes, %d tags (v%d)", status, (unsigned)bn,
+               cnt < 0 ? 0 : cnt, s_flist_ver);
+      status_set(m);
     } else if (s_rq.kind == RQ_IMG) {
       int i = ct_find(s_rq.id);
       if (i >= 0) {

@@ -4,6 +4,12 @@ project(vlither C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+# Version comes from `appVersion` in android/app/build.gradle (passed in by
+# Gradle). The fallback only matters if CMake is run by hand.
+if(NOT DEFINED APP_VERSION_NAME)
+    set(APP_VERSION_NAME "1.2")
+endif()
+
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../)
 
 file(GLOB_RECURSE THERMITE_SRC
@@ -50,7 +56,7 @@ target_compile_definitions(vlither PRIVATE
     MG_MAX_RECV_SIZE=25165824UL  # NTL community tag list can exceed the 3 MB default
     CGLM_FORCE_DEPTH_ZERO_TO_ONE
     CIMGUI_NO_EXPORT
-    APP_VERSION="4.2"
+    APP_VERSION="${APP_VERSION_NAME}"
     SETTINGS_VERSION="2.0"
     VK_USE_PLATFORM_ANDROID_KHR
 )

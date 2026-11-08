@@ -3,6 +3,13 @@
 
 #include <thermite.h>
 
+/* ImVec4 / ImDrawList etc. come from cimgui.h. Without this define it declares
+   them as opaque types, so define it first -- same as user.h / net_graph.h. */
+#ifndef CIMGUI_DEFINE_ENUMS_AND_STRUCTS
+#define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
+#endif
+#include "../cimgui/cimgui.h"
+
 #include "user_settings.h"
 
 /* Leaderboard text effects (Settings > General > Leaderboard ...).

@@ -121,6 +121,7 @@ static char s_auth_md5[33];
 static char s_status[112];
 static char s_idiag[100] = "";                         /* last picture problem   */
 static double s_img_next = 0.0;                         /* pace picture downloads */
+static void fimg_save(int id, const uint8_t *webp, size_t n); /* defined below */
 static double s_status_until = 0.0;
 static double s_last_ui = 0.0;
 static int s_user_req = -1; /* tag id the user just asked for (Add ID) */

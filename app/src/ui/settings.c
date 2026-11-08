@@ -286,6 +286,13 @@ static void sec_general(tenv* env) {
       usrs->fps_limit = fps_values[fps_index];
     opt_end();
   }
+  if (opt_begin("NTL tag size", "Size of NTL tags on snakes and in the Skin Editor (1.00x = NTL's own size).")) {
+    float sz = ntl_tags_size_get();
+    igSetNextItemWidth(-1);
+    if (igSliderFloat("##ntl tag size", &sz, 0.5f, 3.0f, "%.2fx", ImGuiSliderFlags_AlwaysClamp))
+      ntl_tags_size_set(sz);
+    opt_end();
+  }
   if (opt_begin("Performance mode", "Turns off shadows so the game runs smoother on weaker phones.")) {
     igCheckbox("##performance mode", &usrs->performance_mode);
     opt_end();
@@ -518,6 +525,11 @@ static void sec_mode(tenv* env, int i) {
   if (opt_begin("Show NTL tags", "Shows NTL players' tags on their snakes in this mode.")) {
     bool on = ntl_tags_show_get(i);
     if (igCheckbox("##ntl tags", &on)) ntl_tags_show_set(i, on);
+    opt_end();
+  }
+  if (opt_begin("Small NTL tags", "Shrinks tall NTL tags to a height limit, like NTL's Small tags option. Off = full size.")) {
+    bool small = ntl_tags_small_get();
+    if (igCheckbox("##ntl small tags", &small)) ntl_tags_small_set(small);
     opt_end();
   }
   if (opt_begin("Show shadows", "Draws shadows under snakes (off while Performance mode is on).")) {

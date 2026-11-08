@@ -96,23 +96,39 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/shader-slang/slang/releases?per_page=15")
 
-          ASSET_URL=$(echo "$API_RESPONSE" \
+          # Newest few releases that ship a linux-x86_64 tarball.
+          ASSET_URLS=$(echo "$API_RESPONSE" \
             | grep -o '"browser_download_url": *"[^"]*-linux-x86_64\.tar\.gz"' \
-            | head -n 1 \
+            | head -n 6 \
             | grep -o 'https://[^"]*' || true)
 
-          if [ -z "$ASSET_URL" ]; then
+          if [ -z "$ASSET_URLS" ]; then
             echo "ERROR: couldn't find a linux-x86_64 Slang release asset in the last 15 releases"
             echo "$API_RESPONSE" | grep -o '"name": *"slang-[^"]*"' | head -n 40
             exit 1
           fi
 
-          echo "Downloading: $ASSET_URL"
-
-          curl -fL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 --max-time 600 -o slang.tar.gz "$ASSET_URL"
+          # Try newest first. If one release's download is broken (GitHub
+          # sometimes serves HTTP 504 for a specific asset), fall back to
+          # the next-newest release instead of failing the whole build.
+          rm -f slang.tar.gz
+          for ASSET_URL in $ASSET_URLS; do
+            echo "Downloading: $ASSET_URL"
+            if curl -fL --retry 3 --retry-delay 5 --retry-all-errors \
+                 --connect-timeout 30 --max-time 300 \
+                 -o slang.tar.gz "$ASSET_URL"; then
+              if tar -tzf slang.tar.gz > /dev/null 2>&1; then
+                break
+              fi
+              echo "Archive is corrupt, trying the next release"
+            else
+              echo "Download failed, trying the next release"
+            fi
+            rm -f slang.tar.gz
+          done
 
           if [ ! -s slang.tar.gz ]; then
-            echo "ERROR: Slang download failed"
+            echo "ERROR: Slang download failed for every recent release"
             exit 1
           fi
 

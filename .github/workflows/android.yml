@@ -109,7 +109,7 @@ jobs:
 
           echo "Downloading: $ASSET_URL"
 
-          wget -q "$ASSET_URL" -O slang.tar.gz
+          curl -fL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 --max-time 600 -o slang.tar.gz "$ASSET_URL"
 
           if [ ! -s slang.tar.gz ]; then
             echo "ERROR: Slang download failed"

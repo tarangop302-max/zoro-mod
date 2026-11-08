@@ -801,6 +801,15 @@ static void global_chat_on_network_message(
     }
 }
 
+void global_chat_toggle_open(void) {
+    if (global_chat_open) {
+        /* Closed by the draw pass, which also ends any drag/resize mode. */
+        gc_close_requested = true;
+    } else {
+        global_chat_open = true;
+    }
+}
+
 void global_chat_init(tenv* env) {
     global_chat_initialized = true;
     global_chat_open = false;

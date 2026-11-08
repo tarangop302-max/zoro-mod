@@ -84,6 +84,32 @@ typedef struct custom_key_btn {
   float opacity;
 } custom_key_btn;
 
+/* Text effect for one leaderboard element (heading, names/scores, own line).
+   The element's normal colour (lb_title_color / lb_names_color / lb_own_color,
+   or the skin colour when the names colour is not ticked) is the START colour;
+   color2 is the end colour of the gradient / wave / pulse. */
+enum {
+  LB_FX_SOLID = 0,      /* plain colour (the original behaviour) */
+  LB_FX_GRADIENT,       /* colour -> colour 2 across the text */
+  LB_FX_RAINBOW,        /* rainbow across the text */
+  LB_FX_RAINBOW_ANIM,   /* rainbow that scrolls */
+  LB_FX_WAVE,           /* colour <-> colour 2 wave that slides across */
+  LB_FX_PULSE,          /* whole text fades colour <-> colour 2 */
+  LB_FX_COUNT
+};
+enum { LB_OUTLINE_NONE = 0, LB_OUTLINE_THIN, LB_OUTLINE_THICK, LB_OUTLINE_COUNT };
+#define LB_FX_SPEED_MIN 0.2f
+#define LB_FX_SPEED_MAX 4.0f
+
+typedef struct lb_text_fx {
+  int     mode;          /* LB_FX_* */
+  int     outline;       /* LB_OUTLINE_* */
+  bool    shadow;        /* soft drop shadow */
+  float   speed;         /* animation speed multiplier, 1.0 = default */
+  vec4    color2;        /* second colour (gradient / wave / pulse) */
+  vec4    outline_color; /* outline colour (alpha scales with the text's) */
+} lb_text_fx;
+
 typedef struct user_settings {
   char version[4];
   char nickname[MAX_NICKNAME_LEN + 1];
@@ -494,6 +520,34 @@ typedef struct user_settings {
   bool    lb_names_color_enabled;
   bool    lb_own_color_enabled;
   char    lb_title[33];
+
+  /* v2.29 extension: "Team chat" hotkey (opens / closes the TEAM CHAT window).
+     Appended after lb_title so every earlier file stays a compatible prefix
+     (see v229_prefix in read_user_settings). Access through
+     usr_hotkey(usrs, HOTKEY_TEAM_CHAT). */
+  uint8_t team_chat_reserved[8];
+  hotkey  hotkey_team_chat;
+
+  /* v2.30 extension: in-game background style (index into BACKGROUNDS in game/backgrounds.h,
+     0 = classic slither.io). "Show background" per mode still turns it off
+     (black). Appended after hotkey_team_chat so every earlier file stays a
+     compatible prefix (see v230_prefix in read_user_settings). */
+  uint8_t game_bg_reserved[8];
+  int     game_bg_style;
+
+  /* v2.31 extension: leaderboard text effects (gradient, rainbow, wave, pulse,
+     outline, shadow) for the heading, the names/scores and your own line, plus
+     an optional highlight behind your own line. lb_names_fx_down spreads the
+     names' gradient / rainbow DOWN the list (top rank -> bottom rank) instead
+     of along each name. Appended after game_bg_style so every earlier file
+     stays a compatible prefix (see v231_prefix in read_user_settings). */
+  uint8_t    lb_fx_reserved[8];
+  lb_text_fx lb_title_fx;
+  lb_text_fx lb_names_fx;
+  lb_text_fx lb_own_fx;
+  bool       lb_names_fx_down;
+  bool       lb_own_bg_enabled;
+  vec4       lb_own_bg_color;
 } user_settings;
 
 #define CENTER_LINE_WIDTH_MIN 1.0f
@@ -506,6 +560,7 @@ static inline hotkey* usr_hotkey(user_settings* u, int i) {
   if (i < NUM_STORED_HOTKEYS) return &u->hotkeys[i];
   if (i == HOTKEY_OPEN_SETTINGS) return &u->hotkey_open_settings;
   if (i == HOTKEY_KEY_EDITOR) return &u->hotkey_key_editor;
+  if (i == HOTKEY_TEAM_CHAT) return &u->hotkey_team_chat;
   return &u->hotkey_eyes_back;
 }
 

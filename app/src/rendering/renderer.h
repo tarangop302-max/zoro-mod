@@ -11,6 +11,7 @@
 #include "mm_renderer.h"
 #include "spr_renderer.h"
 #include "texture.h"
+#include "../game/backgrounds.h"
 
 typedef struct renderer_image_data {
   VkFramebuffer framebuffer;
@@ -42,6 +43,23 @@ typedef struct renderer {
 
   texture* tex_atlas;
   texture* bg_tex;
+  /* In-game background (arena floor), see game/backgrounds.h. bg_tex is the
+     texture bound in descriptor binding 2 right now. bg_tex_default is the
+     Vlither floor and stays resident. bg_tex_extra is the ONE other floor that
+     is loaded at a time (47 textures would be ~200 MB resident); picking a new
+     floor loads it, rebinds, and frees the previous one. */
+  texture* bg_tex_default;
+  texture* bg_tex_extra;
+  int bg_extra_style;           /* which BACKGROUNDS entry bg_tex_extra holds */
+  bool bg_failed[NUM_BACKGROUNDS]; /* texture file missing/undecodable */
+  int bg_style_applied;   /* BACKGROUNDS index currently showing */
+  int bg_style_requested; /* what the settings want; applied at the top of
+                             renderer_render, before any descriptor is bound */
+  /* Preview sheet for the Background picker (one cell per BACKGROUNDS entry).
+     Optional: if it fails to load the picker shows plain colour tiles. */
+  texture* bg_thumbs_tex;
+  VkDescriptorSet bg_thumbs_ds;
+
   texture* boost_button_tex;
   VkDescriptorSet boost_button_ds;
   /* All nine fixed-colour arrows share one atlas and one ImGui descriptor,
@@ -89,5 +107,13 @@ void renderer_render_cursor(renderer* r, tcontext* ctx);
 void renderer_destroy(renderer* r, tcontext* ctx);
 void renderer_resize(renderer* r, tcontext* ctx, ivec2 size);
 void renderer_clear_instances(renderer* r);
+/* Switches the arena floor to BACKGROUNDS[style]. A floor whose file cannot be
+   loaded falls back to Vlither. Rewrites descriptor binding 2, so it must only
+   run where this frame's command buffer has not bound the global set yet --
+   renderer_render() calls it itself from bg_style_requested, so other code just
+   sets bg_style_requested. Returns the style that is actually showing. */
+int renderer_set_background(renderer* r, tcontext* ctx, int style);
+/* False once a floor's texture failed to load (the settings then fall back). */
+bool renderer_background_available(renderer* r, int style);
 
 #endif

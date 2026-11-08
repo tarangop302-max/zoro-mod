@@ -4,6 +4,8 @@
 #include <math.h>
 #include <string.h>
 
+#include <stdio.h>
+#include "bg_picker.h"
 #include "hud_layout_editor.h"
 #include "key_buttons.h"
 #include "../game/backup.h"
@@ -259,11 +261,95 @@ static void opt_note(const char* text) {
 
 static const char* const kSizeNames[] = {"Small", "Regular", "Large"};
 
+/* ---- Leaderboard text effects (heading / names+scores / own line) --------- */
+static const char* const kLbFxNames[LB_FX_COUNT] = {
+    "Solid colour", "Gradient", "Rainbow", "Rainbow (moving)", "Wave (moving)",
+    "Pulse (fading)"};
+static const char* const kLbOutlineNames[LB_OUTLINE_COUNT] = {"None", "Thin",
+                                                              "Thick"};
+static const char* const kLbDirNames[2] = {"Along each name", "Down the list"};
+
+/* Draws the effect rows for one leaderboard element. `who` is the row prefix
+   ("Leaderboard title"), `id` makes the widget ids unique. `down` is only given
+   for the names/scores (their gradient can run down the list). Rows that do not
+   apply to the chosen effect are hidden. */
+static void lb_fx_rows(const char* who, const char* id, lb_text_fx* fx,
+                       bool* down) {
+  char name[96], wid[64];
+  const int m = fx->mode;
+  const bool two_col = m == LB_FX_GRADIENT || m == LB_FX_WAVE || m == LB_FX_PULSE;
+  const bool animated = m == LB_FX_RAINBOW_ANIM || m == LB_FX_WAVE || m == LB_FX_PULSE;
+
+  snprintf(name, sizeof name, "%s effect", who);
+  if (opt_begin(name, "Gradient, rainbow, wave or pulse instead of one flat colour. The colour above is the start colour.")) {
+    snprintf(wid, sizeof wid, "##lbfx_%s_mode", id);
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr(wid, &fx->mode, kLbFxNames, LB_FX_COUNT, -1);
+    opt_end();
+  }
+  if (two_col) {
+    snprintf(name, sizeof name, "%s colour 2", who);
+    if (opt_begin(name, "The end colour of the gradient, wave or pulse.")) {
+      snprintf(wid, sizeof wid, "##lbfx_%s_c2", id);
+      igSetNextItemWidth(-1);
+      igColorEdit4(wid, fx->color2, ImGuiColorEditFlags_AlphaBar);
+      opt_end();
+    }
+  }
+  if (animated) {
+    snprintf(name, sizeof name, "%s effect speed", who);
+    if (opt_begin(name, "How fast the moving effect runs.")) {
+      snprintf(wid, sizeof wid, "##lbfx_%s_speed", id);
+      igSetNextItemWidth(-1);
+      igSliderFloat(wid, &fx->speed, LB_FX_SPEED_MIN, LB_FX_SPEED_MAX, "%.1fx",
+                    ImGuiSliderFlags_AlwaysClamp);
+      opt_end();
+    }
+  }
+  if (down && (m == LB_FX_GRADIENT || m == LB_FX_RAINBOW ||
+               m == LB_FX_RAINBOW_ANIM || m == LB_FX_WAVE)) {
+    snprintf(name, sizeof name, "%s direction", who);
+    if (opt_begin(name, "Run the effect along each name, or down the list from rank 1 to rank 10.")) {
+      int d = *down ? 1 : 0;
+      snprintf(wid, sizeof wid, "##lbfx_%s_dir", id);
+      igSetNextItemWidth(-1);
+      if (igCombo_Str_arr(wid, &d, kLbDirNames, 2, -1)) *down = d == 1;
+      opt_end();
+    }
+  }
+  snprintf(name, sizeof name, "%s outline", who);
+  if (opt_begin(name, "Draws an outline around the letters so they stay readable on any background.")) {
+    snprintf(wid, sizeof wid, "##lbfx_%s_outline", id);
+    igSetNextItemWidth(-1);
+    igCombo_Str_arr(wid, &fx->outline, kLbOutlineNames, LB_OUTLINE_COUNT, -1);
+    opt_end();
+  }
+  if (fx->outline != LB_OUTLINE_NONE) {
+    snprintf(name, sizeof name, "%s outline colour", who);
+    if (opt_begin(name, "Colour (and opacity) of the outline.")) {
+      snprintf(wid, sizeof wid, "##lbfx_%s_ocol", id);
+      igSetNextItemWidth(-1);
+      igColorEdit4(wid, fx->outline_color, ImGuiColorEditFlags_AlphaBar);
+      opt_end();
+    }
+  }
+  snprintf(name, sizeof name, "%s shadow", who);
+  if (opt_begin(name, "Soft drop shadow under the letters.")) {
+    snprintf(wid, sizeof wid, "##lbfx_%s_shadow", id);
+    igCheckbox(wid, &fx->shadow);
+    opt_end();
+  }
+}
+
 static void sec_general(tenv* env) {
   user_settings* usrs = &env->usr->usrs;
   section_begin(env, "General");
   igIndent(igGetStyle()->WindowPadding.x);
 
+  if (opt_begin("Background", "Pick the game's floor from a gallery of backgrounds, including the Slither ones.")) {
+    ui_bg_picker_button(env);
+    opt_end();
+  }
   if (opt_begin("VSync", "Waits for the screen's refresh to avoid tearing. Can also cap your FPS.")) {
     if (igCheckbox("##vsync", &usrs->vsync)) {
       env->config.vsync = usrs->vsync;
@@ -284,6 +370,13 @@ static void sec_general(tenv* env) {
                         (const char*[]){"Device/VSync", "60 FPS", "90 FPS", "120 FPS", "144 FPS"},
                         5, -1))
       usrs->fps_limit = fps_values[fps_index];
+    opt_end();
+  }
+  if (opt_begin("NTL tag size", "Size of NTL tags on snakes and in the Skin Editor (1.00x = NTL's own size).")) {
+    float sz = ntl_tags_size_get();
+    igSetNextItemWidth(-1);
+    if (igSliderFloat("##ntl tag size", &sz, 0.5f, 3.0f, "%.2fx", ImGuiSliderFlags_AlwaysClamp))
+      ntl_tags_size_set(sz);
     opt_end();
   }
   if (opt_begin("Performance mode", "Turns off shadows so the game runs smoother on weaker phones.")) {
@@ -344,6 +437,7 @@ static void sec_general(tenv* env) {
     igColorEdit4("##leaderboard title colour", usrs->lb_title_color, ImGuiColorEditFlags_AlphaBar);
     opt_end();
   }
+  lb_fx_rows("Leaderboard title", "title", &usrs->lb_title_fx, NULL);
   if (opt_begin("Leaderboard text colour", "Tick to colour every leaderboard name and score the same instead of using skin colours.")) {
     igCheckbox("##leaderboard names colour on", &usrs->lb_names_color_enabled);
     igSameLine(0, -1);
@@ -353,12 +447,23 @@ static void sec_general(tenv* env) {
     igEndDisabled();
     opt_end();
   }
+  lb_fx_rows("Leaderboard text", "names", &usrs->lb_names_fx, &usrs->lb_names_fx_down);
   if (opt_begin("Leaderboard own line colour", "Tick to give your own leaderboard line its own colour.")) {
     igCheckbox("##leaderboard own colour on", &usrs->lb_own_color_enabled);
     igSameLine(0, -1);
     igBeginDisabled(!usrs->lb_own_color_enabled);
     igSetNextItemWidth(-1);
     igColorEdit4("##leaderboard own colour", usrs->lb_own_color, ImGuiColorEditFlags_AlphaBar);
+    igEndDisabled();
+    opt_end();
+  }
+  lb_fx_rows("Leaderboard own line", "own", &usrs->lb_own_fx, NULL);
+  if (opt_begin("Leaderboard own line highlight", "Tick to draw a coloured bar behind your own leaderboard line.")) {
+    igCheckbox("##leaderboard own bg on", &usrs->lb_own_bg_enabled);
+    igSameLine(0, -1);
+    igBeginDisabled(!usrs->lb_own_bg_enabled);
+    igSetNextItemWidth(-1);
+    igColorEdit4("##leaderboard own bg", usrs->lb_own_bg_color, ImGuiColorEditFlags_AlphaBar);
     igEndDisabled();
     opt_end();
   }
@@ -507,7 +612,7 @@ static void sec_mode(tenv* env, int i) {
     igCheckbox("##crosshair", &mode->show_crosshair);
     opt_end();
   }
-  if (opt_begin("Show background", "Draws the game's background pattern.")) {
+  if (opt_begin("Show background", "Draws the game's background. Off gives plain black. Pick which one in General > Background.")) {
     igCheckbox("##bg", &mode->show_background);
     opt_end();
   }
@@ -518,6 +623,11 @@ static void sec_mode(tenv* env, int i) {
   if (opt_begin("Show NTL tags", "Shows NTL players' tags on their snakes in this mode.")) {
     bool on = ntl_tags_show_get(i);
     if (igCheckbox("##ntl tags", &on)) ntl_tags_show_set(i, on);
+    opt_end();
+  }
+  if (opt_begin("Small NTL tags", "Shrinks tall NTL tags to a height limit, like NTL's Small tags option. Off = full size.")) {
+    bool small = ntl_tags_small_get();
+    if (igCheckbox("##ntl small tags", &small)) ntl_tags_small_set(small);
     opt_end();
   }
   if (opt_begin("Show shadows", "Draws shadows under snakes (off while Performance mode is on).")) {
@@ -671,6 +781,7 @@ static const char* hotkey_desc(int i) {
     case HOTKEY_OPEN_SETTINGS: return "Opens this Settings window during a match.";
     case HOTKEY_EYES_BACK: return "Toggles the Eyes back steering trick (from NTL).";
     case HOTKEY_KEY_EDITOR: return "Opens the on-screen keyboard layout editor.";
+    case HOTKEY_TEAM_CHAT: return "Opens or closes the TEAM CHAT window (not while typing in it).";
     default: return "";
   }
 }
@@ -717,7 +828,7 @@ static void sec_hotkeys(tenv* env) {
       ImVec2 rest;
       igGetContentRegionAvail(&rest);
       igSetNextItemWidth(rest.x - style->ItemInnerSpacing.x);
-      if (i == HOTKEY_RESTART || i == HOTKEY_QUIT) {
+      if (i == HOTKEY_RESTART || i == HOTKEY_QUIT || i == HOTKEY_TEAM_CHAT) {
         igBeginDisabled(true);
         igCombo_Str_arr("##hotkey mode", &(int){0}, (const char*[]){"Toggle"}, 1, -1);
         igEndDisabled();

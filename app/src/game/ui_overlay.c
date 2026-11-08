@@ -9,6 +9,7 @@
 #include "ui_overlay.h"
 
 #include <math.h>
+#include <stdio.h>
 #include "../user.h"
 #include "../ui/crystal_theme.h"
 #include "../arrow_styles.h"
@@ -18,6 +19,7 @@
 #include "ntl_team.h"
 #include "lifetime_stats.h"
 #include "global_chat.h"
+#include "lb_text_fx.h"
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
 #endif
@@ -697,9 +699,18 @@ void ui_overlay(tenv* env) {
       igPushFont(usr->imgui_data.mono_font_bold[usrs->lb_font_size],
                  lb_title_font_size);
       igSetCursorPosX(lb_x + (lb_box_w - lb_title_size.x) * 0.5f);
-      igTextColored((ImVec4){usrs->lb_title_color[0], usrs->lb_title_color[1],
-                             usrs->lb_title_color[2], usrs->lb_title_color[3]},
-                    "%s", lb_title_txt);
+      {
+        const ImVec4 lb_title_col = {usrs->lb_title_color[0],
+                                     usrs->lb_title_color[1],
+                                     usrs->lb_title_color[2],
+                                     usrs->lb_title_color[3]};
+        if (lb_fx_active(&usrs->lb_title_fx))
+          lb_fx_text(&usrs->lb_title_fx, lb_title_col,
+                     lb_fx_color2(&usrs->lb_title_fx, 1.0f), 0.0f, 1.0f,
+                     lb_title_txt);
+        else
+          igTextColored(lb_title_col, "%s", lb_title_txt);
+      }
       igPopFont();
       igSetCursorPosX(lb_x + lb_table_dx);
 
@@ -739,12 +750,46 @@ void ui_overlay(tenv* env) {
           }
 
           igTableNextRow(ImGuiTableRowFlags_None, 0);
+          if (is_my_snake && usrs->lb_own_bg_enabled)
+            igTableSetBgColor(
+                ImGuiTableBgTarget_RowBg0,
+                igColorConvertFloat4ToU32((ImVec4){usrs->lb_own_bg_color[0],
+                                                   usrs->lb_own_bg_color[1],
+                                                   usrs->lb_own_bg_color[2],
+                                                   usrs->lb_own_bg_color[3]}),
+                -1);
           igTableSetColumnIndex(0);
           igTextColored((ImVec4){1, 1, 1, itcolor.w}, "%2d.", row + 1);
+
+          /* Names + scores: optional gradient / rainbow / wave / pulse /
+             outline / shadow (Settings > Leaderboard ...). Plain colour keeps
+             the original igTextColored path. */
+          const lb_text_fx* rfx =
+              is_my_snake ? &usrs->lb_own_fx : &usrs->lb_names_fx;
+          char score_txt[16];
+          snprintf(score_txt, sizeof score_txt, "%d",
+                   gdata->data.lb.entries[row].score);
           igTableSetColumnIndex(1);
-          igTextColored(itcolor, "%s", gdata->data.lb.entries[row].nickname);
-          igTableSetColumnIndex(2);
-          igTextColored(itcolor, "%d", gdata->data.lb.entries[row].score);
+          if (lb_fx_active(rfx)) {
+            /* "Down the list" gives each row one colour of the effect, so it
+               runs from rank 1 to rank 10; otherwise it runs along the text. */
+            float fx_t0 = 0.0f, fx_t1 = 1.0f;
+            if (!is_my_snake && usrs->lb_names_fx_down) {
+              fx_t0 = fx_t1 =
+                  (float)row / (float)(NUM_LEADERBOARD_ENTRIES - 1);
+            }
+            /* Skin-coloured rows are drawn dimmer; keep colour 2 in step. */
+            ImVec4 fx_c2 = lb_fx_color2(
+                rfx, (!is_my_snake && !lb_custom_col) ? 0.6f : 1.0f);
+            lb_fx_text(rfx, itcolor, fx_c2, fx_t0, fx_t1,
+                       gdata->data.lb.entries[row].nickname);
+            igTableSetColumnIndex(2);
+            lb_fx_text(rfx, itcolor, fx_c2, fx_t0, fx_t1, score_txt);
+          } else {
+            igTextColored(itcolor, "%s", gdata->data.lb.entries[row].nickname);
+            igTableSetColumnIndex(2);
+            igTextColored(itcolor, "%s", score_txt);
+          }
 
           igPopFont();
         }

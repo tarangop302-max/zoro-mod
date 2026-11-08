@@ -8,6 +8,8 @@
 #include "crystal_theme.h"
 #include "lobby_bg.h"
 #include "../game/ntl_tags.h"
+#include "../game/skin_io.h"
+
 
 int skin_code_filter(ImGuiInputTextCallbackData* data) {
   return !((data->EventChar >= 'a' && data->EventChar <= 'z') ||
@@ -158,9 +160,9 @@ void ui_skin_editor(tenv* env) {
        not editing: [Default skins] [<>] [Saved skins] [<>]
                     [Custom] [OK]                                   -> 6 */
   int picker_rows = gdata->skin_editing ? 4 : 6;
-  /* The NTL tag block (label + sliding picker + buttons) sits between the
-     "Saved skins" arrows and the Custom button; editing a custom skin needs
-     the room for its colour grid instead, so it only shows when not editing. */
+  /* The NTL tag block (label + sliding picker + buttons) sits at the bottom,
+     between the Custom button and OK; editing a custom skin needs the room
+     for its colour grid instead, so it only shows when not editing. */
   float tag_h = gdata->skin_editing ? 0.0f : ntl_tags_block_height();
   float stack_h = (style->ItemSpacing.y + frame_height) * picker_rows + tag_h;
   float reserved_h = stack_h + (scale + style->ItemSpacing.y) * 2.0f;
@@ -232,6 +234,35 @@ void ui_skin_editor(tenv* env) {
                                4.5f, se_col(0.800f, 0.700f, 1.0f, 1.0f), 16);
     ImDrawList_AddText_Vec2(hdl, tp, se_col(0.850f, 0.780f, 1.0f, 1.0f),
                             "SKIN EDITOR", NULL);
+    /* Import / Export, immediately left of the close button. */
+    {
+      float bh = d * 0.85f;
+      ImVec2 t1, t2;
+      igCalcTextSize(&t1, "Import", NULL, false, -1.0f);
+      igCalcTextSize(&t2, "Export", NULL, false, -1.0f);
+      float padx = style->FramePadding.x;
+      float w_imp = t1.x + padx * 2.0f, w_exp = t2.x + padx * 2.0f;
+      float gap = 6.0f;
+      float y = pop_y + (header_h - bh) * 0.5f;
+      float x_exp = pop_x + pop_w - hpad - d - gap - w_exp;
+      float x_imp = x_exp - gap - w_imp;
+      igSetCursorScreenPos((ImVec2){x_imp, y});
+      if (igButton("Import##skin_imp", (ImVec2){w_imp, bh})) skin_io_request_import(env);
+      crystal_sheen();
+      igSetCursorScreenPos((ImVec2){x_exp, y});
+      if (igButton("Export##skin_exp", (ImVec2){w_exp, bh})) skin_io_request_export(env);
+      crystal_sheen();
+
+      /* Result message, centred just under the header line. */
+      const char* st = skin_io_status();
+      if (st[0]) {
+        ImVec2 ts;
+        igCalcTextSize(&ts, st, NULL, false, -1.0f);
+        ImDrawList_AddText_Vec2(hdl,
+                                (ImVec2){pop_x + (pop_w - ts.x) * 0.5f, pop_y + header_h + 6.0f},
+                                se_col(0.760f, 0.700f, 0.920f, 0.95f), st, NULL);
+      }
+    }
     if (crystal_close_button("##skin_close",
                              (ImVec2){pop_x + pop_w - hpad - d,
                                       pop_y + (header_h - d) * 0.5f},
@@ -437,23 +468,19 @@ void ui_skin_editor(tenv* env) {
 
     igSetCursorPosX(picker_x);
     igSetCursorPosY((grid_y) - row_h * 3);
-    bool can_save =
-        usrs->skin_code[0] != 0 && usrs->saved_skin_count < MAX_SAVED_SKINS;
+    bool can_save = usrs->skin_code[0] != 0 &&
+                    skin_saved_total(usrs) < MAX_SAVED_SKINS + SKIN_LIB_MAX;
     igBeginDisabled(!can_save);
     if (igButton("Save", (ImVec2){tot_size[0]})) {
-      int idx = usrs->saved_skin_count++;
-      snprintf(usrs->saved_skins[idx].name, MAX_SAVED_SKIN_NAME + 1, "Skin %d",
-               idx + 1);
-      strncpy(usrs->saved_skins[idx].skin_code, usrs->skin_code,
-              MAX_SKIN_CODE_LEN + 1);
-      usrs->saved_skins[idx].skin_code[MAX_SKIN_CODE_LEN] = 0;
-      usrs->saved_skins[idx].accessory = usrs->accessory;
-      usrs->active_saved_skin = idx;
+      if (skin_saved_add(usrs, usrs->skin_code, usrs->accessory))
+        usrs->active_saved_skin = skin_saved_total(usrs) - 1;
     }
     crystal_sheen();
     igEndDisabled();
   } else {
-    /* Row 6-5: "Default skins" label + arrows (image 1, unchanged). */
+    /* Rows (bottom to top): OK, NTL tags, Custom, Saved skins, Default skins.
+       Everything above OK is shifted up by the tag block's height. */
+    /* "Default skins" label + arrows. */
     igSetCursorPosX(picker_x);
     igSetCursorPosY((grid_y) - tag_h - row_h * 6);
     igTextDisabled("Default skins");
@@ -473,58 +500,66 @@ void ui_skin_editor(tenv* env) {
     }
     crystal_sheen();
 
-    /* Row 4-3: "Saved skins" label + arrows (NEW). Cycles usrs->saved_skins
-       and, on change, loads that entry's code/accessory as the active skin
-       -- exactly like picking a default, just sourced from your own saved
-       list instead of the built-ins. Disabled until you've saved at least
-       one (via Custom > Save). */
+    /* "Saved skins" label + arrows. Cycles the whole saved list (the stored
+       slots plus every imported skin) and loads that entry's code/accessory
+       as the active skin. */
+    int total = skin_saved_total(usrs);
+    if (usrs->active_saved_skin >= total) usrs->active_saved_skin = -1;
     igSetCursorPosX(picker_x);
     igSetCursorPosY((grid_y) - tag_h - row_h * 4);
-    igTextDisabled("Saved skins");
+    if (total > 0 && usrs->active_saved_skin >= 0)
+      igTextDisabled("Saved skins  %d/%d", usrs->active_saved_skin + 1, total);
+    else
+      igTextDisabled("Saved skins  (%d)", total);
 
     igSetCursorPosX(picker_x);
     igSetCursorPosY((grid_y) - tag_h - row_h * 3);
-    bool has_saved = usrs->saved_skin_count > 0;
-    int base = usrs->active_saved_skin < 0 ? 0 : usrs->active_saved_skin;
-    igBeginDisabled(!has_saved);
-    if (igButton("\uea38##saved_prev", (ImVec2){half_w, 0}) && has_saved) {
-      usrs->active_saved_skin =
-          (base + usrs->saved_skin_count - 1) % usrs->saved_skin_count;
-      saved_skin* s = &usrs->saved_skins[usrs->active_saved_skin];
-      strncpy(usrs->skin_code, s->skin_code, MAX_SKIN_CODE_LEN + 1);
-      usrs->accessory = s->accessory;
-      usrs->custom_skin = true;
-    }
+    int cur = usrs->active_saved_skin;
+    int pick = -1;
+    igBeginDisabled(total == 0);
+    if (igButton("\uea38##saved_prev", (ImVec2){half_w, 0}) && total > 0)
+      pick = cur <= 0 ? total - 1 : cur - 1;
     crystal_sheen();
     igSameLine(0, -1);
-    if (igButton("\uea34##saved_next", (ImVec2){half_w, 0}) && has_saved) {
-      usrs->active_saved_skin = (base + 1) % usrs->saved_skin_count;
-      saved_skin* s = &usrs->saved_skins[usrs->active_saved_skin];
-      strncpy(usrs->skin_code, s->skin_code, MAX_SKIN_CODE_LEN + 1);
-      usrs->accessory = s->accessory;
-      usrs->custom_skin = true;
-    }
+    if (igButton("\uea34##saved_next", (ImVec2){half_w, 0}) && total > 0)
+      pick = (cur + 1) % total;
     crystal_sheen();
     igEndDisabled();
-
-    /* NTL tags: label + show toggle, sliding picker, Upload/Add ID/Sync/Remove. */
-    ntl_tags_skin_editor_ui(env, picker_x, grid_y - row_h * 2 - tag_h, tot_size[0]);
-  }
-
-  igSetCursorPosX(picker_x);
-  igSetCursorPosY((grid_y) - row_h * 2);
-  if (gdata->skin_editing) {
-    if (igButton("\uea40 Default", (ImVec2){tot_size[0]})) {
-      gdata->skin_editing = false;
-      usrs->custom_skin = false;
+    if (pick >= 0) {
+      char code[MAX_SKIN_CODE_LEN + 1];
+      uint8_t acc = 0;
+      if (skin_saved_get(usrs, pick, code, &acc)) {
+        strncpy(usrs->skin_code, code, MAX_SKIN_CODE_LEN + 1);
+        usrs->skin_code[MAX_SKIN_CODE_LEN] = 0;
+        usrs->accessory = acc;
+        usrs->active_saved_skin = pick;
+        usrs->custom_skin = true;
+      }
     }
-  } else {
+
+    /* Custom button, directly below Saved skins. */
+    igSetCursorPosX(picker_x);
+    igSetCursorPosY((grid_y) - tag_h - row_h * 2);
     if (igButton("\ue905 Custom", (ImVec2){tot_size[0]})) {
       gdata->skin_editing = true;
       usrs->custom_skin = true;
     }
+    crystal_sheen();
+
+    /* NTL tags at the bottom: label + show toggle, sliding picker,
+       Upload/Add ID/Sync/Remove. */
+    ntl_tags_skin_editor_ui(env, picker_x, grid_y - row_h * 1 - tag_h, tot_size[0]);
   }
-  crystal_sheen();
+
+  if (gdata->skin_editing) {
+    igSetCursorPosX(picker_x);
+    igSetCursorPosY((grid_y) - row_h * 2);
+    if (igButton("\uea40 Default", (ImVec2){tot_size[0]})) {
+      gdata->skin_editing = false;
+      usrs->custom_skin = false;
+    }
+    crystal_sheen();
+  }
 
   igSetCursorPosX(picker_x);
   igSetCursorPosY((grid_y) - row_h * 1);

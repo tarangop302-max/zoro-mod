@@ -818,6 +818,79 @@ open class GameActivity : NativeActivity() {
             }.start()
         }
 
+        /* ---- Skin file import/export (called from C via JNI, game/skin_io.c) ----
+           Import: picker -> file copied to filesDir/skin_import.tmp.
+           Export: C wrote filesDir/skin_export.tmp -> copied to the chosen
+           "save as" location. Events: 1 import ready, 2 exported,
+           3 cancelled, 4 error. */
+        private const val REQUEST_CODE_SKIN_EXPORT = 4206
+        private const val REQUEST_CODE_SKIN_IMPORT = 4207
+        private val skinIoEvents = ConcurrentLinkedQueue<Int>()
+
+        @JvmStatic
+        fun requestSkinImport(activity: Activity) {
+            try {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                }
+                activity.startActivityForResult(intent, REQUEST_CODE_SKIN_IMPORT)
+            } catch (e: Exception) {
+                Log.e(TAG, "requestSkinImport error: ${e.message}")
+                skinIoEvents.add(4)
+            }
+        }
+
+        @JvmStatic
+        fun requestSkinExport(activity: Activity) {
+            try {
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/octet-stream"
+                    putExtra(Intent.EXTRA_TITLE, "slither-skins-$stamp.ntlmod")
+                }
+                activity.startActivityForResult(intent, REQUEST_CODE_SKIN_EXPORT)
+            } catch (e: Exception) {
+                Log.e(TAG, "requestSkinExport error: ${e.message}")
+                skinIoEvents.add(4)
+            }
+        }
+
+        @JvmStatic
+        fun pollSkinIoEvent(activity: Activity): Int {
+            return skinIoEvents.poll() ?: 0
+        }
+
+        internal fun copySkinFile(activity: Activity, uri: Uri, export: Boolean) {
+            Thread {
+                try {
+                    if (export) {
+                        val src = File(activity.filesDir, "skin_export.tmp")
+                        val out = activity.contentResolver.openOutputStream(uri, "wt")
+                        if (out == null || !src.isFile) {
+                            skinIoEvents.add(4)
+                            return@Thread
+                        }
+                        out.use { o -> src.inputStream().use { it.copyTo(o) } }
+                        skinIoEvents.add(2)
+                    } else {
+                        val input = activity.contentResolver.openInputStream(uri)
+                        if (input == null) {
+                            skinIoEvents.add(4)
+                            return@Thread
+                        }
+                        val dest = File(activity.filesDir, "skin_import.tmp")
+                        input.use { i -> FileOutputStream(dest).use { i.copyTo(it) } }
+                        skinIoEvents.add(1)
+                    }
+                } catch (e: Throwable) {
+                    Log.e(TAG, "copySkinFile error: ${e.message}")
+                    skinIoEvents.add(4)
+                }
+            }.start()
+        }
+
         /** Called from C via JNI when the player taps "Save" on a clip in
          * the in-app Clips gallery -- copies the already-saved app-private
          * clip (filename, bare name, must already exist under
@@ -1415,6 +1488,14 @@ open class GameActivity : NativeActivity() {
                 exportBackup(this, uri)
             } else {
                 importBackup(this, uri)
+            }
+        } else if (requestCode == REQUEST_CODE_SKIN_EXPORT ||
+                   requestCode == REQUEST_CODE_SKIN_IMPORT) {
+            val uri = data?.data
+            if (resultCode != Activity.RESULT_OK || uri == null) {
+                skinIoEvents.add(3)
+            } else {
+                copySkinFile(this, uri, requestCode == REQUEST_CODE_SKIN_EXPORT)
             }
         }
     }

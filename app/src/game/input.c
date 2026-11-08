@@ -9,6 +9,7 @@
     
 #include "../user.h"    
 #include "../ui/key_buttons.h"    
+#include "global_chat.h"
     
 /*
  * Steering prediction (server-true). The server only starts turning the snake
@@ -398,6 +399,7 @@ void input(tenv* env) {
   for (int i = 0; i < NUM_HOTKEYS; i++) {    
     if (i == HOTKEY_OPEN_SETTINGS) continue; /* see input_settings_hotkey() */    
     if (i == HOTKEY_KEY_EDITOR) continue;    /* see input_key_editor_hotkey() */    
+    if (i == HOTKEY_TEAM_CHAT) continue;     /* see input_team_chat_hotkey() */    
     hotkey* hk = usr_hotkey(usrs, i);    
     if (i == HOTKEY_EYES_BACK) {    
       /* Typing in the team chat must not toggle Eyes back. */    
@@ -491,4 +493,25 @@ void input_key_editor_hotkey(tenv* env) {
 
   hk->active = false;
   if (real_pressed || fake_pressed) ui_key_buttons_open_editor(env);
+}
+
+void input_team_chat_hotkey(tenv* env) {
+  tuser_data* usr = env->usr;
+  game_data* gdata = &usr->gdata;
+  user_settings* usrs = &usr->usrs;
+  hotkey* hk = &usrs->hotkey_team_chat;
+
+  /* Mid-match only, and never while typing: letters typed into the chat box
+     (or nickname etc.) must not toggle the window. */
+  if (gdata->curr_screen != PLAYING || gdata->settings_popup) return;
+  ImGuiIO* io = igGetIO_Nil();
+  bool typing = io && io->WantTextInput;
+
+  bool in_range = hk->key >= 0 && hk->key < 512;
+  bool real_pressed = !typing && tkeyboard_key_pressed(env->kb, hk->key);
+  bool fake_pressed = !typing && in_range && gdata->data.fake_key_pressed[hk->key];
+  if (in_range) gdata->data.fake_key_pressed[hk->key] = false;
+
+  hk->active = false;
+  if (real_pressed || fake_pressed) global_chat_toggle_open();
 }

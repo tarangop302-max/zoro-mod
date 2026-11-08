@@ -7,6 +7,10 @@
 /* Initialize the ZORO Public Chat system. */
 void global_chat_init(tenv* env);
 
+/* Opens the TEAM CHAT window if it is closed, closes it if it is open
+ * (used by the Team chat hotkey). */
+void global_chat_toggle_open(void);
+
 /* Update the chat system every frame. */
 void global_chat_update(tenv* env);
 

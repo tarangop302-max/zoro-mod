@@ -1,4 +1,5 @@
 #include "user_settings.h"
+#include "backgrounds.h"
 #include "ntl_emoji.h"
 #include "profile_emoji.h"
 
@@ -155,6 +156,39 @@ void user_settings_default(user_settings* usr_settings) {
          sizeof(usr_settings->key_editor_reserved));
   usr_settings->hotkey_key_editor =
       (hotkey){GLFW_KEY_L, false, 0, "Keyboard layout"};
+  memset(usr_settings->team_chat_reserved, 0,
+         sizeof(usr_settings->team_chat_reserved));
+  usr_settings->hotkey_team_chat =
+      (hotkey){GLFW_KEY_C, false, 0, "Team chat"};
+  memset(usr_settings->game_bg_reserved, 0,
+         sizeof(usr_settings->game_bg_reserved));
+  usr_settings->game_bg_style = 0;
+  memset(usr_settings->lb_fx_reserved, 0, sizeof(usr_settings->lb_fx_reserved));
+  {
+    lb_text_fx* fxs[3] = {&usr_settings->lb_title_fx, &usr_settings->lb_names_fx,
+                          &usr_settings->lb_own_fx};
+    /* second colours: cool blue for heading/names, warm gold for your line */
+    const float c2[3][4] = {{0.40f, 0.80f, 1.0f, 1.0f},
+                            {0.40f, 0.80f, 1.0f, 1.0f},
+                            {1.0f, 0.85f, 0.20f, 1.0f}};
+    for (int k = 0; k < 3; ++k) {
+      fxs[k]->mode = LB_FX_SOLID;
+      fxs[k]->outline = LB_OUTLINE_NONE;
+      fxs[k]->shadow = false;
+      fxs[k]->speed = 1.0f;
+      for (int c = 0; c < 4; ++c) fxs[k]->color2[c] = c2[k][c];
+      fxs[k]->outline_color[0] = 0.0f;
+      fxs[k]->outline_color[1] = 0.0f;
+      fxs[k]->outline_color[2] = 0.0f;
+      fxs[k]->outline_color[3] = 0.9f;
+    }
+  }
+  usr_settings->lb_names_fx_down = false;
+  usr_settings->lb_own_bg_enabled = false;
+  usr_settings->lb_own_bg_color[0] = 1.0f;
+  usr_settings->lb_own_bg_color[1] = 1.0f;
+  usr_settings->lb_own_bg_color[2] = 1.0f;
+  usr_settings->lb_own_bg_color[3] = 0.14f;
   memset(usr_settings->lobby_bg_reserved, 0,
          sizeof(usr_settings->lobby_bg_reserved));
   usr_settings->lobby_bg_index = -1;
@@ -403,9 +437,27 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v226_prefix = offsetof(user_settings, key_editor_reserved);
   size_t v227_prefix = offsetof(user_settings, lobby_bg_reserved);
   size_t v228_prefix = offsetof(user_settings, lb_style_reserved);
+  size_t v229_prefix = offsetof(user_settings, team_chat_reserved);
+  size_t v230_prefix = offsetof(user_settings, game_bg_reserved);
+  size_t v231_prefix = offsetof(user_settings, lb_fx_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v231_prefix)
+    /* A file saved before the leaderboard text effects existed ends at
+       v231_prefix, possibly followed only by compiler tail padding. Keep every
+       saved value; the effects keep their defaults (plain colour). */
+    bytes_to_read = v231_prefix;
+  else if ((size_t)file_size >= v230_prefix)
+    /* A file saved before the in-game background style existed ends at
+       v230_prefix, possibly followed only by compiler tail padding. Keep every
+       saved value; the style keeps its default (classic). */
+    bytes_to_read = v230_prefix;
+  else if ((size_t)file_size >= v229_prefix)
+    /* A file saved before the Team chat hotkey existed ends at v229_prefix,
+       possibly followed only by compiler tail padding. Keep every saved
+       value; the new hotkey keeps its default. */
+    bytes_to_read = v229_prefix;
   else if ((size_t)file_size >= v228_prefix)
     /* A file saved before the centre line width / leaderboard style options
        existed ends at v228_prefix (it already contains the lobby background),
@@ -869,11 +921,30 @@ void read_user_settings(user_settings* usr_settings) {
     strcpy(ke->description, "Keyboard layout");
   }
 
+  {
+    /* Team chat: same key rules and de-duplication as Keyboard layout. */
+    hotkey* tc = &loaded.hotkey_team_chat;
+    bool ok = (tc->key >= 48 && tc->key < 58) || (tc->key >= 65 && tc->key < 91);
+    if (!ok || tc->key == GLFW_KEY_M || tc->key == GLFW_KEY_N)
+      tc->key = GLFW_KEY_C;
+    for (int tries = 0; tries < 36; ++tries) {
+      bool taken = false;
+      for (int d = 0; d < HOTKEY_TEAM_CHAT; ++d)
+        if (usr_hotkey(&loaded, d)->key == tc->key) taken = true;
+      if (!taken && tc->key != GLFW_KEY_M && tc->key != GLFW_KEY_N) break;
+      tc->key = (tc->key >= 65 && tc->key < 90) ? tc->key + 1 : 65;
+    }
+    if (tc->mode < 0 || tc->mode > 1) tc->mode = 0;
+    tc->active = false;
+    strcpy(tc->description, "Team chat");
+  }
+
   if (!(loaded.lobby_bg_index == -1 ||
         (loaded.lobby_bg_index >= 0 &&
          loaded.lobby_bg_index < LOBBY_BG_PRESET_COUNT) ||
         loaded.lobby_bg_index == LOBBY_BG_CUSTOM))
     loaded.lobby_bg_index = -1;
+  loaded.game_bg_style = background_clamp(loaded.game_bg_style);
   if (!(loaded.lobby_bg_dim >= 0.0f && loaded.lobby_bg_dim <= 0.85f))
     loaded.lobby_bg_dim = 0.25f;
 
@@ -897,6 +968,34 @@ void read_user_settings(user_settings* usr_settings) {
   loaded.lb_names_color_enabled = loaded.lb_names_color_enabled ? true : false;
   loaded.lb_own_color_enabled = loaded.lb_own_color_enabled ? true : false;
   loaded.lb_title[sizeof loaded.lb_title - 1] = 0;
+  {
+    lb_text_fx* fxs[3] = {&loaded.lb_title_fx, &loaded.lb_names_fx,
+                          &loaded.lb_own_fx};
+    for (int k = 0; k < 3; ++k) {
+      lb_text_fx* fx = fxs[k];
+      if (fx->mode < 0 || fx->mode >= LB_FX_COUNT) fx->mode = LB_FX_SOLID;
+      if (fx->outline < 0 || fx->outline >= LB_OUTLINE_COUNT)
+        fx->outline = LB_OUTLINE_NONE;
+      fx->shadow = fx->shadow ? true : false;
+      if (!isfinite(fx->speed)) fx->speed = 1.0f;
+      if (fx->speed < LB_FX_SPEED_MIN) fx->speed = LB_FX_SPEED_MIN;
+      if (fx->speed > LB_FX_SPEED_MAX) fx->speed = LB_FX_SPEED_MAX;
+      for (int c = 0; c < 4; ++c) {
+        if (!isfinite(fx->color2[c]) || fx->color2[c] < 0.0f ||
+            fx->color2[c] > 1.0f)
+          fx->color2[c] = 1.0f;
+        if (!isfinite(fx->outline_color[c]) || fx->outline_color[c] < 0.0f ||
+            fx->outline_color[c] > 1.0f)
+          fx->outline_color[c] = (c == 3) ? 0.9f : 0.0f;
+      }
+    }
+    loaded.lb_names_fx_down = loaded.lb_names_fx_down ? true : false;
+    loaded.lb_own_bg_enabled = loaded.lb_own_bg_enabled ? true : false;
+    for (int c = 0; c < 4; ++c)
+      if (!isfinite(loaded.lb_own_bg_color[c]) || loaded.lb_own_bg_color[c] < 0.0f ||
+          loaded.lb_own_bg_color[c] > 1.0f)
+        loaded.lb_own_bg_color[c] = (c == 3) ? 0.14f : 1.0f;
+  }
 
   *usr_settings = loaded;
 }

@@ -399,11 +399,16 @@ static void decode_some(void) {
     t->webp_n = 0;
     if (ok && atlas_place(t, rgba, w, h)) {
       t->state = CT_READY;
-      if (t->meta_default) { /* only the id was known: centre the picture */
-        t->def.w = (short)w;
-        t->def.h = (short)h;
+      if (t->meta_default) {
+        /* Only the id was known. Every bundled NTL tag follows one rule: the
+         * draw size is the picture plus 42 px each way, the anchor is the
+         * middle of its left side (by = -h/2, bx = -32) -- the same anchor
+         * NTL's upload page asks for. Do the same for a picture without
+         * metadata. */
+        t->def.w = (short)(w + 42);
+        t->def.h = (short)(h + 42);
         t->def.bx = -32;
-        t->def.by = (short)(-h / 2 - 20);
+        t->def.by = (short)(-(h + 42) / 2);
       }
       s_catlas_dirty = true;
       s_disp_dirty = true;
@@ -969,6 +974,24 @@ static void comm_ensure_loaded(void) {
   auth_load();
   cache_load();
   fcache_load();
+  /* The free-tag list names only some of the free tags (e.g. 304, 305); the
+   * rest of 304..367 exist on the server but are only served by id
+   * (newtag.php?id=N). Queue every one we do not have yet; ids the server does
+   * not know simply fail and stay hidden. */
+  for (int id = NT_FST_BASE + (NTL_TAG_COUNT - NT_BUILTIN_COUNT); id < 368; ++id) {
+    if (!free_id_ok(id) || ct_find(id) >= 0) continue;
+    int ti = ct_add(id);
+    if (ti < 0) continue;
+    ctag_t *t = &s_ct[ti];
+    t->meta_default = 1; /* only the id is known: centre the picture */
+    t->def.w = 140;
+    t->def.h = 140;
+    t->def.bx = -32;
+    t->def.by = -70;
+    t->def.c1 = 0xFFFFFF;
+    t->def.c2 = 0x92EFFE;
+    t->state = CT_NEED_IMG;
+  }
   s_list_want = true;
   s_list_next = 0.0;
   s_flist_want = true;

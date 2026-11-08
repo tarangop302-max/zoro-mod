@@ -558,6 +558,7 @@ static int parse_list(const char *body, size_t n, bool from_cache) {
  * fst_blbx,fst_blby,fst_src},...]}. Entry k of "d" is entry (bundled + k) of
  * the NTL mod's fstags array (the mod concatenates the two). */
 static bool s_flist_want = false, s_flist_busy = false;
+static char s_fdiag[100] = "free list: not synced yet"; /* last result, always shown */
 static double s_flist_next = 0.0;
 static int s_flist_ver = 0;
 
@@ -686,6 +687,8 @@ static void rq_on_response(int status, const char *body, size_t bn) {
       snprintf(m, sizeof m, "Free tags: HTTP %d, %u bytes, %d tags (v%d)", status, (unsigned)bn,
                cnt < 0 ? 0 : cnt, s_flist_ver);
       status_set(m);
+      snprintf(s_fdiag, sizeof s_fdiag, "free list: HTTP %d, %u bytes, %d tags", status,
+               (unsigned)bn, cnt < 0 ? 0 : cnt);
     } else if (s_rq.kind == RQ_IMG) {
       int i = ct_find(s_rq.id);
       if (i >= 0) {
@@ -739,6 +742,7 @@ static void rq_on_failure(const char *why) {
     } else if (k == RQ_FLIST) {
       s_flist_busy = false;
       s_flist_next = now_s() + 60.0;
+      snprintf(s_fdiag, sizeof s_fdiag, "free list failed: %.70s", why[0] ? why : "no answer");
     } else if (k == RQ_IMG) {
       int i = ct_find(id);
       if (i >= 0) {
@@ -1769,6 +1773,10 @@ static void tag_modals(tenv *env) {
         igTextDisabled("Your tag: #%d", s_sel);
       else
         igTextDisabled("Tap a tag to use it");
+      if (!is_status) {
+        igSameLine(0, bst->ItemSpacing.x * 2);
+        igTextDisabled("| %s", s_fdiag);
+      }
     }
     ImVec2 av;
     igGetContentRegionAvail(&av);

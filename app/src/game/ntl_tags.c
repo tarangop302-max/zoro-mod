@@ -117,6 +117,8 @@ static double s_auth_retry_at = 0.0;
 static int s_auth_id = 0;
 static char s_auth_md5[33];
 static char s_status[112];
+static char s_idiag[100] = "";                         /* last picture problem   */
+static double s_img_next = 0.0;                         /* pace picture downloads */
 static double s_status_until = 0.0;
 static double s_last_ui = 0.0;
 static int s_user_req = -1; /* tag id the user just asked for (Add ID) */
@@ -405,15 +407,22 @@ static void decode_some(void) {
          * middle of its left side (by = -h/2, bx = -32) -- the same anchor
          * NTL's upload page asks for. Do the same for a picture without
          * metadata. */
-        t->def.w = (short)(w + 42);
-        t->def.h = (short)(h + 42);
+        float ww = (float)(w + 42), hh = (float)(h + 42);
+        if (hh < 143.0f) { /* NTL draws tags up to a height cap; keep small pictures from looking tiny */
+          ww *= 143.0f / hh;
+          hh = 143.0f;
+        }
+        t->def.w = (short)ww;
+        t->def.h = (short)hh;
         t->def.bx = -32;
-        t->def.by = (short)(-(h + 42) / 2);
+        t->def.by = (short)(-hh / 2);
       }
       s_catlas_dirty = true;
       s_disp_dirty = true;
     } else {
       t->state = CT_FAILED;
+      snprintf(s_idiag, sizeof s_idiag, ok ? "tag #%d: picture %dx%d does not fit" : "tag #%d: picture not readable",
+               t->def.id, w, h);
     }
     free(rgba);
   }
@@ -709,8 +718,19 @@ static void rq_on_response(int status, const char *body, size_t bn) {
           t->state = CT_HAVE_WEBP;
         } else {
           t->state = CT_FAILED;
-          t->tries = 3; /* the server answered: it really has no such tag */
-          t->retry_at = now + NT_IMG_RETRY_S;
+          char peek[28];
+          size_t pk = bn < sizeof peek - 1 ? bn : sizeof peek - 1;
+          for (size_t q = 0; q < pk; ++q) peek[q] = (body[q] >= 32 && body[q] < 127) ? body[q] : '.';
+          peek[pk] = 0;
+          snprintf(s_idiag, sizeof s_idiag, "tag #%d: HTTP %d, %u bytes '%s'", t->def.id, status,
+                   (unsigned)bn, peek);
+          if (status == 200 || status == 404) {
+            t->tries = 3; /* the server answered: it really has no such tag */
+            t->retry_at = now + NT_IMG_RETRY_S;
+          } else { /* busy / refused: try again later */
+            t->tries++;
+            t->retry_at = now + 15.0;
+          }
           if (t->def.id == s_user_req) {
             char m[64];
             snprintf(m, sizeof m, "Tag #%d was not found on the server", t->def.id);
@@ -754,6 +774,7 @@ static void rq_on_failure(const char *why) {
         s_ct[i].state = CT_FAILED;
         s_ct[i].tries++;
         s_ct[i].retry_at = now_s() + 15.0; /* retried automatically */
+        snprintf(s_idiag, sizeof s_idiag, "tag #%d: %.70s", id, why[0] ? why : "no answer");
       }
     } else if (k == RQ_AUTH) {
       if (++s_auth_tries < 3) { /* transient network trouble: try again */
@@ -941,9 +962,10 @@ static void net_pump(void) {
       t->retry_at = 0.0; /* retry a picture whose download failed */
       t->state = CT_NEED_IMG;
     }
-    if (t->state == CT_NEED_IMG) {
+    if (t->state == CT_NEED_IMG && now >= s_img_next) {
       char path[80];
       snprintf(path, sizeof path, "/newtag.php?id=%d", t->def.id);
+      s_img_next = now + 0.6; /* one picture at a time, spaced out (a burst gets refused) */
       rq_start(RQ_IMG, t->def.id, path);
       return;
     }
@@ -1000,6 +1022,12 @@ static void comm_ensure_loaded(void) {
 
 static void comm_request_refresh(void) {
   if (s_list_busy || s_flist_busy) return;
+  for (int i = 0; i < s_nct; ++i) /* a failed free tag gets another go */
+    if (s_ct[i].state == CT_FAILED && free_id_ok(s_ct[i].def.id)) {
+      s_ct[i].tries = 0;
+      s_ct[i].retry_at = 0.0;
+      s_ct[i].state = CT_NEED_IMG;
+    }
   s_list_want = true;
   s_list_next = 0.0;
   s_flist_want = true;
@@ -1799,6 +1827,10 @@ static void tag_modals(tenv *env) {
       if (!is_status) {
         igSameLine(0, bst->ItemSpacing.x * 2);
         igTextDisabled("| %s", s_fdiag);
+        if (s_idiag[0]) {
+          igSameLine(0, bst->ItemSpacing.x * 2);
+          igTextDisabled("| %s", s_idiag);
+        }
       }
     }
     ImVec2 av;

@@ -163,6 +163,32 @@ void user_settings_default(user_settings* usr_settings) {
   memset(usr_settings->game_bg_reserved, 0,
          sizeof(usr_settings->game_bg_reserved));
   usr_settings->game_bg_style = 0;
+  memset(usr_settings->lb_fx_reserved, 0, sizeof(usr_settings->lb_fx_reserved));
+  {
+    lb_text_fx* fxs[3] = {&usr_settings->lb_title_fx, &usr_settings->lb_names_fx,
+                          &usr_settings->lb_own_fx};
+    /* second colours: cool blue for heading/names, warm gold for your line */
+    const float c2[3][4] = {{0.40f, 0.80f, 1.0f, 1.0f},
+                            {0.40f, 0.80f, 1.0f, 1.0f},
+                            {1.0f, 0.85f, 0.20f, 1.0f}};
+    for (int k = 0; k < 3; ++k) {
+      fxs[k]->mode = LB_FX_SOLID;
+      fxs[k]->outline = LB_OUTLINE_NONE;
+      fxs[k]->shadow = false;
+      fxs[k]->speed = 1.0f;
+      for (int c = 0; c < 4; ++c) fxs[k]->color2[c] = c2[k][c];
+      fxs[k]->outline_color[0] = 0.0f;
+      fxs[k]->outline_color[1] = 0.0f;
+      fxs[k]->outline_color[2] = 0.0f;
+      fxs[k]->outline_color[3] = 0.9f;
+    }
+  }
+  usr_settings->lb_names_fx_down = false;
+  usr_settings->lb_own_bg_enabled = false;
+  usr_settings->lb_own_bg_color[0] = 1.0f;
+  usr_settings->lb_own_bg_color[1] = 1.0f;
+  usr_settings->lb_own_bg_color[2] = 1.0f;
+  usr_settings->lb_own_bg_color[3] = 0.14f;
   memset(usr_settings->lobby_bg_reserved, 0,
          sizeof(usr_settings->lobby_bg_reserved));
   usr_settings->lobby_bg_index = -1;
@@ -413,9 +439,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v228_prefix = offsetof(user_settings, lb_style_reserved);
   size_t v229_prefix = offsetof(user_settings, team_chat_reserved);
   size_t v230_prefix = offsetof(user_settings, game_bg_reserved);
+  size_t v231_prefix = offsetof(user_settings, lb_fx_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v231_prefix)
+    /* A file saved before the leaderboard text effects existed ends at
+       v231_prefix, possibly followed only by compiler tail padding. Keep every
+       saved value; the effects keep their defaults (plain colour). */
+    bytes_to_read = v231_prefix;
   else if ((size_t)file_size >= v230_prefix)
     /* A file saved before the in-game background style existed ends at
        v230_prefix, possibly followed only by compiler tail padding. Keep every
@@ -936,6 +968,34 @@ void read_user_settings(user_settings* usr_settings) {
   loaded.lb_names_color_enabled = loaded.lb_names_color_enabled ? true : false;
   loaded.lb_own_color_enabled = loaded.lb_own_color_enabled ? true : false;
   loaded.lb_title[sizeof loaded.lb_title - 1] = 0;
+  {
+    lb_text_fx* fxs[3] = {&loaded.lb_title_fx, &loaded.lb_names_fx,
+                          &loaded.lb_own_fx};
+    for (int k = 0; k < 3; ++k) {
+      lb_text_fx* fx = fxs[k];
+      if (fx->mode < 0 || fx->mode >= LB_FX_COUNT) fx->mode = LB_FX_SOLID;
+      if (fx->outline < 0 || fx->outline >= LB_OUTLINE_COUNT)
+        fx->outline = LB_OUTLINE_NONE;
+      fx->shadow = fx->shadow ? true : false;
+      if (!isfinite(fx->speed)) fx->speed = 1.0f;
+      if (fx->speed < LB_FX_SPEED_MIN) fx->speed = LB_FX_SPEED_MIN;
+      if (fx->speed > LB_FX_SPEED_MAX) fx->speed = LB_FX_SPEED_MAX;
+      for (int c = 0; c < 4; ++c) {
+        if (!isfinite(fx->color2[c]) || fx->color2[c] < 0.0f ||
+            fx->color2[c] > 1.0f)
+          fx->color2[c] = 1.0f;
+        if (!isfinite(fx->outline_color[c]) || fx->outline_color[c] < 0.0f ||
+            fx->outline_color[c] > 1.0f)
+          fx->outline_color[c] = (c == 3) ? 0.9f : 0.0f;
+      }
+    }
+    loaded.lb_names_fx_down = loaded.lb_names_fx_down ? true : false;
+    loaded.lb_own_bg_enabled = loaded.lb_own_bg_enabled ? true : false;
+    for (int c = 0; c < 4; ++c)
+      if (!isfinite(loaded.lb_own_bg_color[c]) || loaded.lb_own_bg_color[c] < 0.0f ||
+          loaded.lb_own_bg_color[c] > 1.0f)
+        loaded.lb_own_bg_color[c] = (c == 3) ? 0.14f : 1.0f;
+  }
 
   *usr_settings = loaded;
 }

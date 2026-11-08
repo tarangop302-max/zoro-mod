@@ -67,6 +67,8 @@ static unsigned long long s_tex = 0;      /* atlas descriptor set            */
 
 static bool s_show_normal = true;         /* "Show NTL tags", Normal mode    */
 static bool s_show_assist = false;        /* "Show NTL tags", Assist mode (off by default) */
+static float s_tag_size = 1.0f;          /* "NTL tag size" slider (1 = NTL size) */
+static bool s_small_tags = false;         /* "Small tags": cap the tag height (NTL: off by default) */
 static int s_sel = NTL_TAG_NONE;          /* our own tag id                  */
 
 /* community tag store */
@@ -407,15 +409,10 @@ static void decode_some(void) {
          * middle of its left side (by = -h/2, bx = -32) -- the same anchor
          * NTL's upload page asks for. Do the same for a picture without
          * metadata. */
-        float ww = (float)(w + 42), hh = (float)(h + 42);
-        if (hh < 143.0f) { /* NTL draws tags up to a height cap; keep small pictures from looking tiny */
-          ww *= 143.0f / hh;
-          hh = 143.0f;
-        }
-        t->def.w = (short)ww;
-        t->def.h = (short)hh;
+        t->def.w = (short)(w + 42);
+        t->def.h = (short)(h + 42);
         t->def.bx = -32;
-        t->def.by = (short)(-hh / 2);
+        t->def.by = (short)(-(h + 42) / 2);
       }
       s_catlas_dirty = true;
       s_disp_dirty = true;
@@ -716,6 +713,7 @@ static void rq_on_response(int status, const char *body, size_t bn) {
           t->webp = bytes;
           t->webp_n = wn;
           t->state = CT_HAVE_WEBP;
+          if (free_id_ok(t->def.id) && t->meta_default) fimg_save(t->def.id, bytes, wn);
         } else {
           t->state = CT_FAILED;
           char peek[28];
@@ -990,12 +988,72 @@ static void net_pump(void) {
 }
 
 /* Make sure the cached list is loaded and a sync is scheduled. */
+/* Pictures of free tags that were fetched by id, kept on disk so they are there
+ * the next time the game starts (only the list was cached before). File: "NFI1",
+ * then records {int32 id, uint32 n, n bytes of webp}. */
+#define NT_FIMG_FILE "ntl_fimg_cache.bin"
+static void fimg_save(int id, const uint8_t *webp, size_t n) {
+  FILE *f = open_named(NT_FIMG_FILE, "rb");
+  bool fresh = (f == NULL);
+  if (f) fclose(f);
+  f = open_named(NT_FIMG_FILE, "ab");
+  if (!f) return;
+  if (fresh) fwrite("NFI1", 1, 4, f);
+  int32_t i32 = id;
+  uint32_t n32 = (uint32_t)n;
+  fwrite(&i32, 4, 1, f);
+  fwrite(&n32, 4, 1, f);
+  fwrite(webp, 1, n, f);
+  fclose(f);
+}
+
+static void fimg_load(void) {
+  FILE *f = open_named(NT_FIMG_FILE, "rb");
+  if (!f) return;
+  char mg[4];
+  if (fread(mg, 1, 4, f) == 4 && !memcmp(mg, "NFI1", 4)) {
+    for (;;) {
+      int32_t id;
+      uint32_t n;
+      if (fread(&id, 4, 1, f) != 1 || fread(&n, 4, 1, f) != 1) break;
+      if (n < 16 || n > 400000) break;
+      uint8_t *buf = (uint8_t *)malloc(n);
+      if (!buf) break;
+      if (fread(buf, 1, n, f) != n) {
+        free(buf);
+        break;
+      }
+      if (!free_id_ok(id) || ct_find(id) >= 0) {
+        free(buf);
+        continue;
+      }
+      int ti = ct_add(id);
+      if (ti < 0) {
+        free(buf);
+        continue;
+      }
+      ctag_t *t = &s_ct[ti];
+      t->meta_default = 1;
+      t->def.w = t->def.h = 140;
+      t->def.bx = -32;
+      t->def.by = -70;
+      t->def.c1 = 0xFFFFFF;
+      t->def.c2 = 0x92EFFE;
+      t->webp = buf;
+      t->webp_n = n;
+      t->state = CT_HAVE_WEBP;
+    }
+  }
+  fclose(f);
+}
+
 static void comm_ensure_loaded(void) {
   if (s_loaded) return;
   s_loaded = true;
   auth_load();
   cache_load();
   fcache_load();
+  fimg_load();
   /* The free-tag list names only some of the free tags (e.g. 304, 305); the
    * rest of 304..367 exist on the server but are only served by id
    * (newtag.php?id=N). Queue every one we do not have yet; ids the server does
@@ -1223,6 +1281,8 @@ static void cfg_load(void) {
   /* New file: the byte is "show in Assist". An old (NTG1) file never had that
      choice, so Assist starts OFF for it as well. */
   s_show_assist = c.magic == NT_CFG_MAGIC ? c.assist_hide != 0 : false;
+  s_small_tags = c.magic == NT_CFG_MAGIC && c.pad[0] != 0;
+  s_tag_size = (c.magic == NT_CFG_MAGIC && c.pad[1] >= 10 && c.pad[1] <= 200) ? c.pad[1] / 50.0f : 1.0f;
   s_sel = (tag_open(c.selected) || (comm_id_ok(c.selected) && auth_find(c.selected)))
               ? c.selected
               : NTL_TAG_NONE;
@@ -1232,12 +1292,22 @@ static void cfg_save(void) {
   FILE *f = open_cfg("wb");
   if (!f) return;
   cfg_file c = {NT_CFG_MAGIC, s_sel, (uint8_t)(s_show_normal ? 1 : 0),
-                (uint8_t)(s_show_assist ? 1 : 0), {0, 0}};
+                (uint8_t)(s_show_assist ? 1 : 0), {(uint8_t)(s_small_tags ? 1 : 0), (uint8_t)(s_tag_size * 50.0f + 0.5f)}};
   fwrite(&c, 1, sizeof c, f);
   fclose(f);
 }
 
 bool ntl_tags_show_enabled(void) { return s_show_normal; }
+float ntl_tags_size_get(void) { return s_tag_size; }
+void ntl_tags_size_set(float v) {
+  s_tag_size = v < 0.25f ? 0.25f : v > 4.0f ? 4.0f : v;
+  cfg_save();
+}
+bool ntl_tags_small_get(void) { return s_small_tags; }
+void ntl_tags_small_set(bool on) {
+  s_small_tags = on;
+  cfg_save();
+}
 bool ntl_tags_show_get(int mode) { return mode ? s_show_assist : s_show_normal; }
 void ntl_tags_show_set(int mode, bool on) {
   if (mode)
@@ -1412,6 +1482,7 @@ void ntl_tags_init(tenv *env) {
   build_index();
   auth_load();
   cfg_load();
+  comm_ensure_loaded(); /* tags 304+ and uploaded tags must be ready in a match, not only after the editor was opened */
   memset(s_ants, 0, sizeof s_ants);
   memset(s_map_gen, 0, sizeof s_map_gen);
   s_cur_gen = 0;
@@ -1655,9 +1726,11 @@ static void draw_tag_chain(int tid, int owner, float ang, float sc, float gsc, f
   ImDrawList_AddPolyline(dl, path, pn, inner, 0, 2.0f * A);
 
   /* tag picture at the tip, rotated with the antenna */
-  float k = NT_TAG_SCALE * A;
+  float k = NT_TAG_SCALE * A * s_tag_size;
   float V = def->h * k, cap = 40.6f * A;
-  float Z = V > cap ? cap / V : 1.0f;
+  /* NTL only shrinks big tags when its "Small tags" option is on, and never in
+     the Skin Editor. */
+  float Z = (s_small_tags && owner != -4242 && V > cap) ? cap / V : 1.0f;
   float rx = def->bx * k * Z, ry = def->by * k * Z;
   float rw = def->w * k * Z, rh = def->h * k * Z;
   float c = cosf(a->atba), s = sinf(a->atba);

@@ -38,7 +38,7 @@
 #define NT_FCACHE_FILE "ntl_fstags_cache.json" /* last free-tag list         */
 #define NT_HOST "https://ntl-slither.com"
 #define NT_UPLOAD_URL "https://ntl-slither.com/uploadtag.php?ntlmod=wbst"
-#define NT_MOD_VERSION "9.78"                  /* modv the NTL server expects */
+#define NT_MOD_VERSION "9.79"                  /* modv the NTL server expects */
 
 /* ---- community ("custom") tags: uploaded through NTL's site -------------
  * Ids 368..666 and >= 756 (NTL main-mt.js). Their pictures are not bundled:
@@ -560,7 +560,7 @@ static int parse_list(const char *body, size_t n, bool from_cache) {
 static bool s_flist_want = false, s_flist_busy = false;
 static char s_fdiag[100] = "free list: not synced yet"; /* last result, always shown */
 static double s_flist_next = 0.0;
-static int s_flist_ver = 0;
+static int s_flist_ver = 1; /* the NTL mod starts at 1, not 0 */
 
 static int parse_fst_list(const char *body, size_t n) {
   struct mg_str json = mg_str_n(body, n);

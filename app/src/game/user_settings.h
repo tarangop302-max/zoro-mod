@@ -501,6 +501,13 @@ typedef struct user_settings {
      usr_hotkey(usrs, HOTKEY_TEAM_CHAT). */
   uint8_t team_chat_reserved[8];
   hotkey  hotkey_team_chat;
+
+  /* v2.30 extension: in-game background style (index into BACKGROUNDS in game/backgrounds.h,
+     0 = classic slither.io). "Show background" per mode still turns it off
+     (black). Appended after hotkey_team_chat so every earlier file stays a
+     compatible prefix (see v230_prefix in read_user_settings). */
+  uint8_t game_bg_reserved[8];
+  int     game_bg_style;
 } user_settings;
 
 #define CENTER_LINE_WIDTH_MIN 1.0f

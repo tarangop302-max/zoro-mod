@@ -4,6 +4,7 @@
 #include <math.h>
 #include <string.h>
 
+#include "bg_picker.h"
 #include "hud_layout_editor.h"
 #include "key_buttons.h"
 #include "../game/backup.h"
@@ -264,6 +265,10 @@ static void sec_general(tenv* env) {
   section_begin(env, "General");
   igIndent(igGetStyle()->WindowPadding.x);
 
+  if (opt_begin("Background", "Pick the game's floor from a gallery of backgrounds, including the Slither ones.")) {
+    ui_bg_picker_button(env);
+    opt_end();
+  }
   if (opt_begin("VSync", "Waits for the screen's refresh to avoid tearing. Can also cap your FPS.")) {
     if (igCheckbox("##vsync", &usrs->vsync)) {
       env->config.vsync = usrs->vsync;
@@ -514,7 +519,7 @@ static void sec_mode(tenv* env, int i) {
     igCheckbox("##crosshair", &mode->show_crosshair);
     opt_end();
   }
-  if (opt_begin("Show background", "Draws the game's background pattern.")) {
+  if (opt_begin("Show background", "Draws the game's background. Off gives plain black. Pick which one in General > Background.")) {
     igCheckbox("##bg", &mode->show_background);
     opt_end();
   }

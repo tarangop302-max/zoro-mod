@@ -143,6 +143,12 @@ renderer* renderer_create(tenv* env) {
 
   DLOG("renderer: loading bg texture (4K)");
   r->bg_tex = create_mipmap_texture(ctx, "app/res/textures/background_4k.png");
+  r->bg_tex_default = r->bg_tex;
+  r->bg_tex_extra = NULL;
+  r->bg_extra_style = -1;
+  for (int i = 0; i < NUM_BACKGROUNDS; ++i) r->bg_failed[i] = false;
+  r->bg_style_applied = BACKGROUND_VLITHER;
+  r->bg_style_requested = BACKGROUND_VLITHER;
   DLOG("renderer: bg_tex=%p", (void*)r->bg_tex);
 
   DLOG("renderer: loading atlas texture (8K) - needs ~256MB staging RAM");
@@ -205,6 +211,16 @@ renderer* renderer_create(tenv* env) {
     ntl_tags_set_texture((unsigned long long)(uintptr_t)r->ntl_tags_ds);
   }
   DLOG("renderer: ntl_tags_tex=%p", (void*)r->ntl_tags_tex);
+
+  /* Background picker preview sheet (non-fatal; picker falls back to plain
+     colour tiles without it). */
+  r->bg_thumbs_tex = create_mipmap_texture(ctx, BACKGROUND_THUMBS_PATH);
+  r->bg_thumbs_ds = VK_NULL_HANDLE;
+  if (r->bg_thumbs_tex)
+    r->bg_thumbs_ds = igImplVulkan_AddTexture(
+        r->linear_sampler, r->bg_thumbs_tex->view,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  DLOG("renderer: bg_thumbs_tex=%p", (void*)r->bg_thumbs_tex);
 
   vkCreateRenderPass(
       ctx->device,
@@ -308,8 +324,8 @@ renderer* renderer_create(tenv* env) {
 
   r->global.viewport[0] = r->size[0];
   r->global.viewport[1] = r->size[1];
-  r->global.bg_size[0] = r->bg_tex->size[0];
-  r->global.bg_size[1] = r->bg_tex->size[1];
+  r->global.bg_size[0] = BACKGROUNDS[BACKGROUND_VLITHER].tile_w;
+  r->global.bg_size[1] = BACKGROUNDS[BACKGROUND_VLITHER].tile_h;
   r->global.bg_color[0] = 1;
   r->global.bg_color[1] = 1;
   r->global.bg_scale = 1;
@@ -408,6 +424,11 @@ renderer* renderer_create(tenv* env) {
 void renderer_render(renderer* r, tcontext* ctx, vec4 clear_color) {
   tcontext_frame* fr = ctx->frames + ctx->current_frame;
 
+  /* Apply a pending background change first: the descriptor rewrite is only
+     legal before this frame binds the global set below. */
+  if (r->bg_style_requested != r->bg_style_applied)
+    renderer_set_background(r, ctx, r->bg_style_requested);
+
   r->global.viewport[0] = r->size[0];
   r->global.viewport[1] = r->size[1];
   memcpy(r->global_buffer[ctx->current_frame].data, &r->global,
@@ -480,6 +501,99 @@ void renderer_render_cursor(renderer* r, tcontext* ctx) {
   spr_renderer_render(r->cr, ctx);
 }
 
+/* ---- In-game background (arena floor) ----------------------------------- */
+bool renderer_background_available(renderer* r, int style) {
+  if (style < 0 || style >= NUM_BACKGROUNDS) return false;
+  return !r->bg_failed[style];
+}
+
+int renderer_set_background(renderer* r, tcontext* ctx, int style) {
+  style = background_clamp(style);
+  const background_def* def = &BACKGROUNDS[style];
+
+  /* None / Black draw no image. Keep whatever texture is bound (a descriptor
+     must never point at nothing) and leave the tile size alone: redraw.c turns
+     the pass off / black by opacity and colour. */
+  if (!def->path) {
+    r->bg_style_applied = style;
+    r->bg_style_requested = style;
+    return style;
+  }
+
+  texture* want = NULL;
+  texture* new_extra = r->bg_tex_extra;
+  int new_extra_style = r->bg_extra_style;
+
+  if (style == BACKGROUND_VLITHER) {
+    want = r->bg_tex_default;
+    new_extra = NULL; /* back on the resident floor: free the other one */
+    new_extra_style = -1;
+  } else if (r->bg_tex_extra && r->bg_extra_style == style) {
+    want = r->bg_tex_extra;
+  } else if (r->bg_failed[style]) {
+    style = BACKGROUND_VLITHER;
+    def = &BACKGROUNDS[style];
+    want = r->bg_tex_default;
+    new_extra = NULL;
+    new_extra_style = -1;
+  } else {
+    texture* t = create_mipmap_texture(ctx, def->path);
+    if (!t) {
+      DLOG("renderer: background texture missing: %s", def->path);
+      r->bg_failed[style] = true;
+      style = BACKGROUND_VLITHER;
+      def = &BACKGROUNDS[style];
+      want = r->bg_tex_default;
+      new_extra = NULL;
+      new_extra_style = -1;
+    } else {
+      want = t;
+      new_extra = t;
+      new_extra_style = style;
+    }
+  }
+
+  if (want != r->bg_tex) {
+    /* Descriptor sets may still be referenced by frames in flight, so drain the
+       GPU before rewriting binding 2 (and before freeing the old floor). This
+       only happens when the player actually picks a different floor. */
+    vkDeviceWaitIdle(ctx->device);
+    r->bg_tex = want;
+    for (int i = 0; i < ctx->fif; i++)
+      vkUpdateDescriptorSets(
+          ctx->device, 1,
+          &(VkWriteDescriptorSet){
+              .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+              .pNext = NULL,
+              .dstSet = r->global_set[i],
+              .dstBinding = 2,
+              .dstArrayElement = 0,
+              .descriptorCount = 1,
+              .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+              .pImageInfo =
+                  &(VkDescriptorImageInfo){
+                      r->linear_sampler, want->view,
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}},
+          0, NULL);
+  }
+  if (r->bg_tex_extra && r->bg_tex_extra != new_extra) {
+    /* Nothing is bound to it any more (and the GPU was drained above if it
+       ever was), so it is safe to free the floor we just left. */
+    vkDeviceWaitIdle(ctx->device);
+    destroy_texture(ctx, r->bg_tex_extra);
+  }
+  r->bg_tex_extra = new_extra;
+  r->bg_extra_style = new_extra_style;
+
+  /* The tile size belongs to the floor, not the texture: two floors can share a
+     texture and still tile differently. */
+  r->global.bg_size[0] = def->tile_w;
+  r->global.bg_size[1] = def->tile_h;
+  r->bg_style_applied = style;
+  r->bg_style_requested = style;
+  return style;
+}
+
 void renderer_destroy(renderer* r, tcontext* ctx) {
   spr_renderer_destroy(r->cr, ctx);
   bd_renderer_destroy(r->bdr, ctx);
@@ -509,7 +623,10 @@ void renderer_destroy(renderer* r, tcontext* ctx) {
   if (r->arrow_atlas_ds) igImplVulkan_RemoveTexture(r->arrow_atlas_ds);
   if (r->arrow_atlas_tex) destroy_texture(ctx, r->arrow_atlas_tex);
   destroy_texture(ctx, r->tex_atlas);
-  destroy_texture(ctx, r->bg_tex);
+  if (r->bg_thumbs_ds) igImplVulkan_RemoveTexture(r->bg_thumbs_ds);
+  if (r->bg_thumbs_tex) destroy_texture(ctx, r->bg_thumbs_tex);
+  if (r->bg_tex_extra) destroy_texture(ctx, r->bg_tex_extra);
+  destroy_texture(ctx, r->bg_tex_default);
   vkDestroySampler(ctx->device, r->nearest_sampler, NULL);
   vkDestroySampler(ctx->device, r->linear_sampler, NULL);
   free(r);

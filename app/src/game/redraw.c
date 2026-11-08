@@ -2,6 +2,7 @@
 #include "redraw.h"
 
 #include "../user.h"
+#include "backgrounds.h"
 #include "global_chat.h"
 #include "ntl_tags.h"
 
@@ -1899,8 +1900,27 @@ void redraw(tenv* env) {
                                       gdata->CURSOR_UV,
                                       {2, 2, 2, 1}});
 
-  usr->r->global.bg_color[0] = usr->r->global.bg_color[1] =
-      usr->r->global.bg_color[2] = mode->show_background;
+  /* Arena floor: the picker's choice (usrs->game_bg_style) is handed to the
+     renderer, which swaps the texture at the top of its next frame (the only
+     place a descriptor may be rewritten). A floor whose file failed to load
+     leaves the choice on what is actually showing instead of retrying forever. */
+  if (usrs->game_bg_style != usr->r->bg_style_applied &&
+      !renderer_background_available(usr->r, usrs->game_bg_style))
+    usrs->game_bg_style = usr->r->bg_style_applied;
+  else
+    usr->r->bg_style_requested = usrs->game_bg_style;
+  {
+    /* "Show background" off = plain black. None draws no floor at all (the
+       clear colour shows); Black and every image draw it at full opacity, so
+       Black is true black. */
+    const background_def* floor_def = &BACKGROUNDS[usr->r->bg_style_applied];
+    float on = (mode->show_background && floor_def->path) ? 1.0f : 0.0f;
+    usr->r->global.bg_color[0] = on;
+    usr->r->global.bg_color[1] = on;
+    usr->r->global.bg_color[2] = on;
+    usr->r->global.bg_opacity =
+        usr->r->bg_style_applied == BACKGROUND_NONE ? 0.0f : 1.0f;
+  }
   usr->r->fdr->pipeline_idx = mode->food_type;
   usr->r->fdr->glow = usrs->food_glow[mode_index] ? 1 : 0;
 

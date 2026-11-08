@@ -1,4 +1,5 @@
 #include "user_settings.h"
+#include "backgrounds.h"
 #include "ntl_emoji.h"
 #include "profile_emoji.h"
 
@@ -159,6 +160,9 @@ void user_settings_default(user_settings* usr_settings) {
          sizeof(usr_settings->team_chat_reserved));
   usr_settings->hotkey_team_chat =
       (hotkey){GLFW_KEY_C, false, 0, "Team chat"};
+  memset(usr_settings->game_bg_reserved, 0,
+         sizeof(usr_settings->game_bg_reserved));
+  usr_settings->game_bg_style = 0;
   memset(usr_settings->lobby_bg_reserved, 0,
          sizeof(usr_settings->lobby_bg_reserved));
   usr_settings->lobby_bg_index = -1;
@@ -408,9 +412,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v227_prefix = offsetof(user_settings, lobby_bg_reserved);
   size_t v228_prefix = offsetof(user_settings, lb_style_reserved);
   size_t v229_prefix = offsetof(user_settings, team_chat_reserved);
+  size_t v230_prefix = offsetof(user_settings, game_bg_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v230_prefix)
+    /* A file saved before the in-game background style existed ends at
+       v230_prefix, possibly followed only by compiler tail padding. Keep every
+       saved value; the style keeps its default (classic). */
+    bytes_to_read = v230_prefix;
   else if ((size_t)file_size >= v229_prefix)
     /* A file saved before the Team chat hotkey existed ends at v229_prefix,
        possibly followed only by compiler tail padding. Keep every saved
@@ -902,6 +912,7 @@ void read_user_settings(user_settings* usr_settings) {
          loaded.lobby_bg_index < LOBBY_BG_PRESET_COUNT) ||
         loaded.lobby_bg_index == LOBBY_BG_CUSTOM))
     loaded.lobby_bg_index = -1;
+  loaded.game_bg_style = background_clamp(loaded.game_bg_style);
   if (!(loaded.lobby_bg_dim >= 0.0f && loaded.lobby_bg_dim <= 0.85f))
     loaded.lobby_bg_dim = 0.25f;
 

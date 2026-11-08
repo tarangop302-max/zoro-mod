@@ -68,6 +68,12 @@ void ntl_tags_draw_snake(tenv *env, snake *o, float hx, float hy,
  * On by default in Normal mode, OFF by default in Assist mode; shown in the
  * Normal / Assist pages of the Settings window. */
 bool ntl_tags_show_get(int mode);
+/* "Small tags": shrink tall tags to a height cap (NTL default: off = full size). */
+/* "NTL tag size": multiplier on the drawn tag size (1.0 = NTL size). */
+float ntl_tags_size_get(void);
+void ntl_tags_size_set(float v);
+bool ntl_tags_small_get(void);
+void ntl_tags_small_set(bool on);
 void ntl_tags_show_set(int mode, bool on);
 
 /* Is `tag_id` drawable right now: bundled, or an uploaded tag whose picture

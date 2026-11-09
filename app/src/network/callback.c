@@ -1598,6 +1598,10 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
   }
 }
 
+/* How far the current join attempt got: 0 = TCP only, 1 = WebSocket open,
+   2 = server has sent us data. Used only to explain a failed join. */
+static int s_join_stage = 0;
+
 void server_callback(struct mg_connection* c, int ev, void* ev_data) {
   tenv* env = c->fn_data;
   tuser_data* usr = env->usr;
@@ -1619,9 +1623,11 @@ void server_callback(struct mg_connection* c, int ev, void* ev_data) {
   if (ev == MG_EV_CONNECT) {
     set_tcp_nodelay(c);
   } else if (ev == MG_EV_OPEN) {
+    s_join_stage = 0;
     DLOG("conn: TCP connected");
     printf("Connection opened\n");
   } else if (ev == MG_EV_WS_OPEN) {
+    s_join_stage = 1;
     DLOG("conn: WebSocket opened!");
     printf("Connection established\n");
     set_tcp_nodelay(c);
@@ -1632,6 +1638,7 @@ void server_callback(struct mg_connection* c, int ev, void* ev_data) {
     struct mg_ws_message* msg = (struct mg_ws_message*)ev_data;
     uint8_t* a = (uint8_t*)msg->data.buf;
     int m = 0;
+    if (s_join_stage < 2) s_join_stage = 2;
     if (a[m] < 32) {
       int l = msg->data.len;
       while (m < l) {
@@ -1665,7 +1672,11 @@ void server_callback(struct mg_connection* c, int ev, void* ev_data) {
     if (!gdata->preview_active && gdata->conn != CONNECTED &&
         !gdata->conn_fail[0])
       snprintf(gdata->conn_fail, sizeof gdata->conn_fail,
-               "Server closed the connection before you joined");
+               s_join_stage == 0
+                   ? "Server refused the connection (no WebSocket handshake)"
+               : s_join_stage == 1
+                   ? "Server closed right after connecting (sent nothing)"
+                   : "Server dropped you after the handshake (spawn rejected)");
     gdata->closed = true;
   }
 }

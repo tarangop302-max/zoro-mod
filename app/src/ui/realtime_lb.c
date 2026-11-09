@@ -27,9 +27,9 @@ void decode_secret(const uint8_t *packet, size_t packet_len, uint8_t *result);
 #define RT_MAX_SERVERS 200
 #define RT_TOP 10
 #define RT_NAME_LEN 28
-#define RT_WORKERS 10          /* servers visited at the same time        */
+#define RT_WORKERS 6           /* servers visited at the same time        */
 #define RT_VISIT_TIMEOUT 9.0   /* seconds before a visit is given up      */
-#define RT_ROUND_MIN 45.0      /* minimum seconds between full rounds     */
+#define RT_ROUND_MIN 60.0      /* minimum seconds between full rounds     */
 #define RT_STALE 240.0         /* hide a server not refreshed for this long */
 #define RT_MAX_MSCPS 2040
 #define RT_BOT_NICK "lb"
@@ -48,6 +48,9 @@ typedef struct {
   struct mg_connection *c;
   bool active;
   char ip[32];
+  int ti;        /* index into s_targets */
+  int stage;     /* 0 TCP, 1 WebSocket open, 2 got data, 3 got leaderboard */
+  bool timed_out;
   double start;
   bool have_tables;
   int mscps;
@@ -66,6 +69,20 @@ static int s_next_target = 0;
 static double s_round_start = 0.0;
 static int s_round_ok = 0;
 static int s_round_done = 0;
+
+/* why a server gave no data this round */
+enum { T_PENDING = 0, T_OK, T_NO_HANDSHAKE, T_SILENT, T_DROPPED, T_TIMEOUT, T_NO_LB };
+static unsigned char s_tstat[RT_MAX_SERVERS];
+static const char *tstat_text(int t) {
+  switch (t) {
+    case T_NO_HANDSHAKE: return "refused (no WebSocket handshake)";
+    case T_SILENT: return "closed right after connecting";
+    case T_DROPPED: return "dropped after handshake";
+    case T_TIMEOUT: return "no answer (timeout)";
+    case T_NO_LB: return "joined but no leaderboard";
+    default: return "waiting";
+  }
+}
 
 static rt_server s_srv[RT_MAX_SERVERS];
 static int s_srv_count = 0;
@@ -210,6 +227,18 @@ static void store_result(rt_worker *w, int players, int n,
   s->updated = igGetTime();
 }
 
+/* Names of our own collector bots ("lb", "lb 2", ...) and the server's
+   "Spectators:" pseudo row are not real players. */
+static bool is_noise_name(const char *n) {
+  if (strcmp(n, "Spectators:") == 0) return true;
+  if (strncmp(n, "lb", 2) != 0) return false;
+  if (n[2] == 0) return true;
+  if (n[2] != ' ') return false;
+  for (const char *p = n + 3; *p; ++p)
+    if (!isdigit((unsigned char)*p)) return false;
+  return n[3] != 0;
+}
+
 /* ----------------------------------------------------------- packet logic */
 static void worker_finish(rt_worker *w) {
   if (w->c) w->c->is_closing = 1;
@@ -220,6 +249,7 @@ static void on_packet(rt_worker *w, const uint8_t *a, int len) {
   struct mg_connection *c = w->c;
   char cmd = (char)a[0];
 
+  if (w->stage < 2) w->stage = 2;
   if (cmd == '6') {
     uint8_t secret[27] = {0};
     decode_secret(a, (size_t)len, secret);
@@ -279,13 +309,19 @@ static void on_packet(rt_worker *w, const uint8_t *a, int len) {
         int cp = nl < RT_NAME_LEN - 1 ? nl : RT_NAME_LEN - 1;
         memcpy(names[n], a + m, (size_t)cp);
         names[n][cp] = 0;
+        if (is_noise_name(names[n])) {
+          m += nl;
+          continue;
+        }
         n++;
       }
       m += nl;
     }
+    w->stage = 3;
     if (n > 0) {
       store_result(w, players, n, names, scores);
       s_round_ok++;
+      s_tstat[w->ti] = T_OK;
       worker_finish(w);
     }
   }
@@ -295,6 +331,7 @@ static void ws_cb(struct mg_connection *c, int ev, void *ev_data) {
   rt_worker *w = (rt_worker *)c->fn_data;
   if (!w) return;
   if (ev == MG_EV_WS_OPEN) {
+    if (w->stage < 1) w->stage = 1;
     mg_ws_send(c, (uint8_t[]){1}, 1, WEBSOCKET_OP_BINARY);
     mg_ws_send(c, (uint8_t[]){'c', 0}, 2, WEBSOCKET_OP_BINARY);
   } else if (ev == MG_EV_WS_MSG) {
@@ -323,6 +360,12 @@ static void ws_cb(struct mg_connection *c, int ev, void *ev_data) {
     }
   } else if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE) {
     if (ev == MG_EV_CLOSE) {
+      if (s_tstat[w->ti] != T_OK)
+        s_tstat[w->ti] = w->timed_out        ? T_TIMEOUT
+                         : w->stage == 0     ? T_NO_HANDSHAKE
+                         : w->stage == 1     ? T_SILENT
+                         : w->stage == 2     ? T_DROPPED
+                                             : T_NO_LB;
       w->c = NULL;
       w->active = false;
       s_round_done++;
@@ -332,13 +375,17 @@ static void ws_cb(struct mg_connection *c, int ev, void *ev_data) {
   }
 }
 
-static void start_visit(rt_worker *w, const char *ip) {
+static void start_visit(rt_worker *w, int ti) {
+  const char *ip = s_targets[ti];
   memset(w, 0, offsetof(rt_worker, mscps) + sizeof(int));
   snprintf(w->ip, sizeof(w->ip), "%s", ip);
+  w->ti = ti;
+  s_tstat[ti] = T_PENDING;
   char url[96];
   snprintf(url, sizeof(url), "ws://%s/slither", ip);
   w->c = mg_ws_connect(&s_mgr, url, ws_cb, w, "Origin: https://slither.com\r\n");
   if (!w->c) {
+    s_tstat[ti] = T_NO_HANDSHAKE;
     s_round_done++;
     return;
   }
@@ -350,7 +397,14 @@ static void start_visit(rt_worker *w, const char *ip) {
 static void collect_targets(tenv *env) {
   game_data *g = &env->usr->gdata;
   s_target_count = 0;
+  memset(s_tstat, 0, sizeof(s_tstat));
+  /* the server typed in the lobby (e.g. your own) is always included */
+  if (env->usr->usrs.ipv4[0])
+    snprintf(s_targets[s_target_count++], sizeof(s_targets[0]), "%s",
+             env->usr->usrs.ipv4);
   for (int i = 0; i < g->server_list.count && s_target_count < RT_MAX_SERVERS; i++) {
+    if (strcmp(g->server_list.ips[i], s_targets[0]) == 0 && env->usr->usrs.ipv4[0])
+      continue;
     if (!g->server_list.ips[i][0]) continue;
     snprintf(s_targets[s_target_count++], sizeof(s_targets[0]), "%s",
              g->server_list.ips[i]);
@@ -366,8 +420,10 @@ static void tick(tenv *env) {
 
   /* give up on visits that take too long */
   for (int i = 0; i < RT_WORKERS; i++)
-    if (s_w[i].active && s_w[i].c && now - s_w[i].start > RT_VISIT_TIMEOUT)
+    if (s_w[i].active && s_w[i].c && now - s_w[i].start > RT_VISIT_TIMEOUT) {
+      s_w[i].timed_out = true;
       s_w[i].c->is_closing = 1;
+    }
 
   int active = 0;
   for (int i = 0; i < RT_WORKERS; i++)
@@ -397,7 +453,7 @@ static void tick(tenv *env) {
 
   for (int i = 0; i < RT_WORKERS && s_next_target < s_target_count; i++) {
     if (s_w[i].active) continue;
-    start_visit(&s_w[i], s_targets[s_next_target++]);
+    start_visit(&s_w[i], s_next_target++);
   }
 }
 
@@ -566,9 +622,16 @@ void ui_realtime_lb(tenv *env) {
     if (s_target_count == 0)
       snprintf(st, sizeof(st), "Loading server list...");
     else
-      snprintf(st, sizeof(st), "Running on this device  -  %d/%d servers this round",
-               s_round_done > s_target_count ? s_target_count : s_round_done,
-               s_target_count);
+    {
+      int ok = 0, bad = 0;
+      for (int i = 0; i < s_target_count; i++) {
+        if (s_tstat[i] == T_OK) ok++;
+        else if (s_tstat[i] != T_PENDING) bad++;
+      }
+      snprintf(st, sizeof(st),
+               "Running on this device  -  %d with data, %d no response, %d total",
+               ok, bad, s_target_count);
+    }
     ImVec2 ss;
     igCalcTextSize(&ss, st, NULL, false, -1.0f);
     ImDrawList_AddText_Vec2(bg, (ImVec2){sw * 0.5f - ss.x * 0.5f, 18.0f + ts.y + 4.0f},
@@ -622,16 +685,41 @@ void ui_realtime_lb(tenv *env) {
     col_y[col] += lh * 1.6f + (lh + 4.0f) * (float)s->n + pad + gap;
   }
 
+  float total_h = col_y[0] > col_y[1] ? col_y[0] : col_y[1];
   if (visible == 0) {
     igTextWrapped(s_srv_count == 0
                       ? "Collecting... servers appear here as they answer. This "
                         "uses your internet (Wi-Fi recommended)."
                       : "No server matches the filter.");
-  } else {
-    float total_h = col_y[0] > col_y[1] ? col_y[0] : col_y[1];
-    igSetCursorPosY(total_h + 4.0f);
-    igDummy((ImVec2){1.0f, 1.0f});
+    igGetCursorScreenPos(&origin);
+    total_h = 40.0f;
   }
+
+  /* servers that gave no data, with the reason */
+  {
+    float y = origin.y + total_h + 6.0f;
+    int shown_bad = 0;
+    for (int i = 0; i < s_target_count; i++) {
+      if (s_tstat[i] == T_OK || s_tstat[i] == T_PENDING) continue;
+      if (s_filter[0] && !ci_contains(s_targets[i], s_filter)) continue;
+      if (shown_bad == 0) {
+        ImDrawList_AddText_Vec2(dl, (ImVec2){origin.x + 4.0f, y},
+                                IM_COL32(200, 170, 120, 255),
+                                "No response from:", NULL);
+        y += lh * 1.5f;
+      }
+      char line[96];
+      snprintf(line, sizeof(line), "%s  -  %s", s_targets[i],
+               tstat_text(s_tstat[i]));
+      ImDrawList_AddText_Vec2(dl, (ImVec2){origin.x + 12.0f, y},
+                              IM_COL32(170, 165, 195, 220), line, NULL);
+      y += lh * 1.25f;
+      shown_bad++;
+    }
+    total_h = y - origin.y;
+  }
+  igSetCursorPosY(total_h + 10.0f);
+  igDummy((ImVec2){1.0f, 1.0f});
   igEndChild();
 
   float btn_w = 220.0f;

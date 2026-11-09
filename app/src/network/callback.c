@@ -495,6 +495,10 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
         gdata->conn = CONNECTED;
         if (gdata->data.protocol_version != PROTOCOL_VERSION) {
           printf("Protocol version %d is not supported.\n", gdata->data.protocol_version);
+          if (!gdata->preview_active)
+            snprintf(gdata->conn_fail, sizeof gdata->conn_fail,
+                     "Server uses protocol %d - this mod only supports %d",
+                     gdata->data.protocol_version, PROTOCOL_VERSION);
           c->is_closing = true;
         }
         glfwSetTime(0);
@@ -1605,10 +1609,17 @@ void server_callback(struct mg_connection* c, int ev, void* ev_data) {
   } else if (ev == MG_EV_ERROR) {
     DLOG("conn error: %s", (char*)ev_data);
     printf("Connection error: %s, closing connection...\n", (char*)ev_data);
+    if (!gdata->preview_active && !gdata->conn_fail[0])
+      snprintf(gdata->conn_fail, sizeof gdata->conn_fail,
+               "Connection error: %s", (char*)ev_data);
     c->is_closing = true;
   } else if (ev == MG_EV_CLOSE) {
     DLOG("conn closed");
     printf("Connection closed\n");
+    if (!gdata->preview_active && gdata->conn != CONNECTED &&
+        !gdata->conn_fail[0])
+      snprintf(gdata->conn_fail, sizeof gdata->conn_fail,
+               "Server closed the connection before you joined");
     gdata->closed = true;
   }
 }

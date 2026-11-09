@@ -3,4 +3,9 @@
     <!-- Matches getExternalFilesDir(Environment.DIRECTORY_MOVIES) + "clips"
          in GameActivity.kt's recording code. -->
     <external-files-path name="clips" path="Movies/clips/" />
+
+    <!-- In-game updater (MainActivity.kt): downloaded update APKs. Lives in
+         getExternalFilesDir(null)/updates, or cacheDir/updates as fallback. -->
+    <external-files-path name="updates" path="updates/" />
+    <cache-path name="updates_cache" path="updates/" />
 </paths>

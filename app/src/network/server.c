@@ -99,12 +99,12 @@ void server_connect(tenv* env) {
                    strncmp(usrs->ipv4, "localhost", 9) == 0 ||
                    strncmp(usrs->ipv4, "192.168.", 8) == 0 ||
                    strncmp(usrs->ipv4, "10.", 3) == 0);
-  sprintf(url, "%s://%s/slither", is_local ? "ws" : "wss", usrs->ipv4);
+  (void)is_local;
+  /* Plain ws:// for every server, same as the NTL browser mod. */
+  sprintf(url, "ws://%s/slither", usrs->ipv4);
   gdata->connection =
     mg_ws_connect(&gdata->network_manager, url, server_callback, env,
-                  "%s:%s\r\n%s:%s\r\n",
-                  "Origin", "https://slither.com",
-                  "Host", "slither.com");
+                  "Origin: https://slither.com\r\n");
 #ifdef ANDROID
 
   mg_mgr_poll(&gdata->network_manager, 5);

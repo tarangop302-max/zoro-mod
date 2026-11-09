@@ -584,6 +584,9 @@ void game_data_reset(tenv* env) {
   gdata->death_pending = false;
   gdata->data.mmgad = false;
   gdata->data.gotlb = false;
+  for (int i = 0; i < NUM_LEADERBOARD_ENTRIES; ++i)
+    gdata->data.lb_old_idx[i] = -1;
+  gdata->data.lb_serial++;
   gdata->data.lsxm = 0;
   gdata->data.lsym = 0;
   gdata->data.fvx = 0;

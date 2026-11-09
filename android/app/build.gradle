@@ -3,6 +3,19 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// ---------------------------------------------------------------------------
+// Single place to bump the app version. It must MATCH the tag of the release
+// you upload (tag v1.3  ->  appVersion = "1.3"), otherwise the app would keep
+// showing NEW UPDATE after updating.
+//   - versionName / BuildConfig.VERSION_NAME: shown on the first screen and
+//     compared against the newest GitHub Release tag
+//   - APP_VERSION in the native code (passed to CMake below)
+// versionCode is minutes-since-1970, so every build is always accepted by
+// Android as an upgrade, even over test builds with a bigger number.
+// ---------------------------------------------------------------------------
+def appVersion = "1.2"
+def appVersionCode = (int) (System.currentTimeMillis() / 60000L)
+
 android {
     namespace 'com.vlither'
     compileSdk 34
@@ -11,8 +24,14 @@ android {
         applicationId "com.vlither"
         minSdk 26
         targetSdk 34
-        versionCode 13
-        versionName "1.1"
+        versionCode appVersionCode
+        versionName appVersion
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DAPP_VERSION_NAME=${appVersion}"
+            }
+        }
     }
 
     signingConfigs {

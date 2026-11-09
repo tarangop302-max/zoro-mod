@@ -38,6 +38,9 @@ void game_loop(tenv* env) {
         gdata->connection->is_closing = true;
         DLOG("TIMEOUT: glfwGetTime()=%.2f > %d", glfwGetTime(), TIMEOUT);
         printf("Connection timed out.");
+        if (!gdata->preview_active && !gdata->conn_fail[0])
+          snprintf(gdata->conn_fail, sizeof gdata->conn_fail,
+                   "Connection timed out - server did not answer");
       }
 
       server_poll(env);

@@ -548,7 +548,38 @@ typedef struct user_settings {
   bool       lb_names_fx_down;
   bool       lb_own_bg_enabled;
   vec4       lb_own_bg_color;
+
+  /* v2.32 extension: HUD themes + leaderboard rank-change animation/arrows.
+     hud_theme_id is the last preset applied in Settings (0 = Default). The
+     three hud_*_color fields restyle the stats lines (icons / values) and the
+     Teammates list; the preset also rewrites the leaderboard colours/effects
+     and the centre ring / turn path colours (see hud_theme_apply()).
+     lb_anim_*: slide + fade of rows that changed rank. lb_arrows_*: the
+     up / down marker next to a row that just moved. Appended after
+     lb_own_bg_color so every earlier file stays a compatible prefix (see
+     v232_prefix in read_user_settings). */
+  uint8_t    hud_theme_reserved[8];
+  int        hud_theme_id;
+  vec4       hud_icon_color;
+  vec4       hud_value_color;
+  vec4       hud_team_color;
+  bool       lb_anim_enabled;
+  bool       lb_arrows_enabled;
+  float      lb_anim_speed;  /* 0.5 .. 3.0, 1.0 = default (0.3 s slide)   */
+  float      lb_arrow_hold;  /* seconds the arrow stays, 1 .. 10          */
 } user_settings;
+
+#define LB_ANIM_SPEED_MIN 0.5f
+#define LB_ANIM_SPEED_MAX 3.0f
+#define LB_ARROW_HOLD_MIN 1.0f
+#define LB_ARROW_HOLD_MAX 10.0f
+#define LB_ARROW_HOLD_DEFAULT 3.0f
+
+/* HUD theme presets. Index 0 restores the original look. */
+#define HUD_THEME_COUNT 8
+const char* hud_theme_name(int idx);
+/* Applies preset `idx` to `s` (does not save). */
+void hud_theme_apply(user_settings* s, int idx);
 
 #define CENTER_LINE_WIDTH_MIN 1.0f
 #define CENTER_LINE_WIDTH_MAX 12.0f

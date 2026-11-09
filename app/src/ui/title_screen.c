@@ -538,6 +538,29 @@ void ui_title_screen_init(tenv* env) {}
 
 /* Snakey Rain: small ON/OFF button under Quit (top-right) that opens a
    settings popup. Every change is saved and applied live -- no restart. */
+#ifdef ANDROID
+/* Realtime leaderboards button: third row of the right-hand column, under
+   Snakey Rain and Background (same x / width / row spacing as those). */
+static void draw_realtime_lb_homepage(tenv* env, float frame_height) {
+  tcontext* ctx = env->ctx;
+  ImGuiStyle* style = igGetStyle();
+
+  const float btn_w = 190.0f;
+  float btn_x = ctx->size[0] - btn_w - style->WindowPadding.x * 4;
+  float row = frame_height + style->ItemSpacing.y * 2;
+  float btn_y = style->WindowPadding.y * 4 + row * 3;
+
+  crystal_push_theme();
+  igSetCursorPosX(btn_x);
+  igSetCursorPosY(btn_y);
+  if (igButton("Realtime LB##rtlb_home", (ImVec2){btn_w, frame_height}))
+    android_jni_show_realtime_lb(0);
+  if (igIsItemHovered(0)) igSetTooltip("Live top players of every server");
+  crystal_sheen();
+  crystal_pop_theme();
+}
+#endif
+
 static void draw_snakey_rain_homepage(tenv* env, float frame_height) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -786,6 +809,7 @@ void ui_title_screen(tenv* env) {
                         (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
   if (igButton("\uea1c Play", (ImVec2){logo_size})) {
     user_settings_add_saved_name(usrs, usrs->nickname);
+    usr->gdata.conn_fail[0] = '\0';
     usr->gdata.conn = CONNECTING;
     usr->gdata.curr_screen = PLAYING;
     glfwSetTime(0);
@@ -887,8 +911,21 @@ void ui_title_screen(tenv* env) {
     igPopStyleColor(5);
   }
 
+  /* Why the last join attempt failed (see gdata->conn_fail). */
+  if (usr->gdata.conn_fail[0]) {
+    ImVec2 ts;
+    igCalcTextSize(&ts, usr->gdata.conn_fail, NULL, false, -1.0f);
+    igSetCursorPosX((ctx->size[0] - ts.x) * 0.5f);
+    igSetCursorPosY(style->WindowPadding.y * 4);
+    igTextColored((ImVec4){1.0f, 0.42f, 0.42f, 1.0f}, "%s",
+                  usr->gdata.conn_fail);
+  }
+
   draw_snakey_rain_homepage(env, frame_height);
   ui_lobby_bg_button(env, frame_height);
+#ifdef ANDROID
+  draw_realtime_lb_homepage(env, frame_height);
+#endif
 
   igPopFont();
 }

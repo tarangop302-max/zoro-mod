@@ -157,7 +157,8 @@ typedef enum screen {
   KEYBOARD_EDITOR = 7,
   KILLS_GALLERY = 8,
   KILL_SHOTS_REVIEW = 9,
-  CLIPS_GALLERY = 10
+  CLIPS_GALLERY = 10,
+  REALTIME_LB = 11
 } screen;
 
 typedef enum font_size {

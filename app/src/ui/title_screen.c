@@ -14,6 +14,7 @@
 #include "lobby_bg.h"
 #include "kills_gallery.h"
 #include "clips_gallery.h"
+#include "realtime_lb.h"
 #include "settings.h" /* ui_touch_scroll */
 #include <ctype.h>
 #include <stdio.h>
@@ -554,7 +555,7 @@ static void draw_realtime_lb_homepage(tenv* env, float frame_height) {
   igSetCursorPosX(btn_x);
   igSetCursorPosY(btn_y);
   if (igButton("Realtime LB##rtlb_home", (ImVec2){btn_w, frame_height}))
-    android_jni_show_realtime_lb(0);
+    ui_realtime_lb_open(env);
   if (igIsItemHovered(0)) igSetTooltip("Live top players of every server");
   crystal_sheen();
   crystal_pop_theme();

@@ -1,0 +1,47 @@
+JSR Vlither mod (zoro-mod)
+Copyright (c) 2026 [YOUR NAME / JSR]
+
+AUTHOR
+
+The JSR-specific parts of this mod are designed, written and maintained by
+[YOUR NAME / JSR]. The following original work in this repository is their
+work and their copyright:
+
+- the JSR team chat system (tchat, jsr_network) and its documentation
+  (JSR_DOCS.md, JSR_QUICKSTART.md)
+- the changes and additions made by the JSR authors to the engine and the
+  Android app
+- the JSR name and the JSR logo (logo.png)
+
+LICENSE
+
+This mod grew out of the open-source Vlither client by for-loop9, which is
+licensed under the GNU General Public License v3. This repository is therefore
+distributed under the GNU GPL v3 (see LICENSE). The original Vlither code
+remains the copyright of its authors. The JSR changes and additions are
+copyright of the JSR authors and are shared under the same license.
+
+ENFORCEMENT
+
+The JSR authors' work is protected by copyright. Anyone may use it only on the
+terms of its license: keep this copyright notice, credit the JSR authors, and
+share the full source of anything built from it under GPL v3. Copying, reusing
+or passing off the JSR authors' work as your own without following those terms
+is copyright infringement, and the JSR authors may take action against it,
+including takedown notices.
+
+The JSR name and logo may not be used for other projects without permission.
+
+NOT COVERED BY THIS NOTICE
+
+- The Vlither engine and other code that originates from for-loop9.
+- Work by OM Rajput (Wyrm for Android / Vlither Enhanced) that is included
+  here, including the Eyes Back feature and the vlither_* background artwork.
+  It remains his copyright and is used under GPL v3.
+- NTL mod and NTL VANCED behaviour and artwork, which belong to their authors.
+- Third-party libraries (GLFW, Dear ImGui and cimgui, cglm, stb, Vulkan Memory
+  Allocator, Mongoose, bundled fonts), which keep their own licenses.
+- Slither.io names, artwork and trademarks, which belong to their owners. Their
+  presence does not imply endorsement or affiliation.
+
+See NOTICE for the full list of credits.

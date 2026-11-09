@@ -1,0 +1,51 @@
+NOTICE AND ATTRIBUTION
+======================
+
+This project (JSR Vlither mod / zoro-mod) is distributed under the GNU General
+Public License v3 (see LICENSE). It is a derivative work. It builds on the
+projects and authors listed below, and their copyright notices and licenses
+remain in force for their parts.
+
+1. Vlither (for-loop9)
+   The game engine and client this mod is based on is the open-source Vlither
+   client by for-loop9, licensed under GPL v3. Rendering, networking, build
+   scripts and much of the core code originate there.
+
+2. Wyrm for Android / Vlither Enhanced (OM Rajput)
+   Parts of this mod were taken from or derived from the work of OM Rajput,
+   Copyright (c) 2026 OM Rajput, published under GPL v3 at
+   https://github.com/disis-om/wyrm-android :
+     - the Eyes Back steering feature (src/game/eyes_back.c and related code)
+     - the background artwork in app/res/textures/backgrounds/ named vlither_*
+     - ideas and code adapted from Vlither Enhanced (for example arrow
+       steering)
+   These parts remain the copyright of OM Rajput. The Wyrm name and W logo are
+   not part of this project and are not licensed for use here.
+
+3. NTL MOD for Slither.io ("[NTL] Nothing To Lose") and NTL VANCED
+   Eyes Back and the NTL tag and team features follow the behaviour and values
+   of the NTL mod and its NTL VANCED fork. NTL tag artwork (ntl_tags.png)
+   belongs to the authors of the NTL mod.
+
+4. Third-party libraries (each keeps its own license, see its folder)
+   - GLFW (glfw/)
+   - Dear ImGui and cimgui (app/src/cimgui/)
+   - cglm, Recep Aslantas (thermite/include/cglm/)
+   - stb libraries (thermite/src/external/stb/)
+   - Vulkan Memory Allocator (thermite/src/external/vma/)
+   - Mongoose (app/src/external/, see LICENSE.txt there)
+   - bundled fonts (app/res/fonts/, see LICENSE.txt and OFL.txt there)
+
+5. Slither.io
+   Slither.io names, artwork and trademarks belong to their owners. This mod
+   is independent and is not affiliated with or endorsed by the game's
+   developer.
+
+Original work in this repository
+   The JSR team chat system (tchat, jsr_network, JSR_DOCS.md,
+   JSR_QUICKSTART.md) and the JSR-specific changes are the work of the JSR
+   mod authors and are also released under GPL v3.
+
+Source code
+   The complete source of this mod is this repository. Anyone who receives the
+   APK may obtain the corresponding source from it.

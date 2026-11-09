@@ -14,7 +14,6 @@
 #include "lobby_bg.h"
 #include "kills_gallery.h"
 #include "clips_gallery.h"
-#include "realtime_lb.h"
 #include "settings.h" /* ui_touch_scroll */
 #include <ctype.h>
 #include <stdio.h>
@@ -539,28 +538,6 @@ void ui_title_screen_init(tenv* env) {}
 
 /* Snakey Rain: small ON/OFF button under Quit (top-right) that opens a
    settings popup. Every change is saved and applied live -- no restart. */
-#ifdef ANDROID
-/* Realtime leaderboards button: third row of the right-hand column, under
-   Snakey Rain and Background (same x / width / row spacing as those). */
-static void draw_realtime_lb_homepage(tenv* env, float frame_height) {
-  tcontext* ctx = env->ctx;
-  ImGuiStyle* style = igGetStyle();
-
-  const float btn_w = 190.0f;
-  float btn_x = ctx->size[0] - btn_w - style->WindowPadding.x * 4;
-  float row = frame_height + style->ItemSpacing.y * 2;
-  float btn_y = style->WindowPadding.y * 4 + row * 3;
-
-  crystal_push_theme();
-  igSetCursorPosX(btn_x);
-  igSetCursorPosY(btn_y);
-  if (igButton("Realtime LB##rtlb_home", (ImVec2){btn_w, frame_height}))
-    ui_realtime_lb_open(env);
-  if (igIsItemHovered(0)) igSetTooltip("Live top players of every server");
-  crystal_sheen();
-  crystal_pop_theme();
-}
-#endif
 
 static void draw_snakey_rain_homepage(tenv* env, float frame_height) {
   tuser_data* usr = env->usr;
@@ -924,9 +901,6 @@ void ui_title_screen(tenv* env) {
 
   draw_snakey_rain_homepage(env, frame_height);
   ui_lobby_bg_button(env, frame_height);
-#ifdef ANDROID
-  draw_realtime_lb_homepage(env, frame_height);
-#endif
 
   igPopFont();
 }

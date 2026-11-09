@@ -20,7 +20,6 @@
 #include "ui/kills_gallery.h"
 #include "ui/kill_review.h"
 #include "ui/clips_gallery.h"
-#include "ui/realtime_lb.h"
 #include "ui/viewport.h"
 
 #include "user.h"
@@ -740,9 +739,6 @@ void trender(tenv* env) {
             gdata->curr_screen ==
                 CLIPS_GALLERY ||
 
-            gdata->curr_screen ==
-                REALTIME_LB ||
-
             igGetIO_Nil()
                 ->WantTextInput
         );
@@ -1139,13 +1135,6 @@ void trender(tenv* env) {
 
         break;
 
-      case REALTIME_LB:
-
-        ui_realtime_lb(
-            env
-        );
-
-        break;
     }
 
 

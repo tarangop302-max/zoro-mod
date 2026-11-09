@@ -1,5 +1,4 @@
 #include "settings.h"
-#include "realtime_lb.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -622,18 +621,6 @@ static void sec_general(tenv* env) {
   }
   igIndent(-igGetStyle()->WindowPadding.x);
 
-#ifdef ANDROID
-  /* Realtime leaderboards */
-  section_begin(env, "Realtime Leaderboards");
-  igIndent(igGetStyle()->WindowPadding.x);
-  if (opt_begin("Realtime leaderboards",
-                "Live top players of every server (top 10 + country + IP). Tap Back to return.")) {
-    if (igButton("Open##rtlb_open", (ImVec2){-1, 0})) ui_realtime_lb_open(env);
-    opt_end();
-  }
-  igIndent(-igGetStyle()->WindowPadding.x);
-
-#endif
   /* Backup */
   section_begin(env, "Backup");
   igIndent(igGetStyle()->WindowPadding.x);

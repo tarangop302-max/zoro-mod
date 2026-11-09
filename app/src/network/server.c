@@ -1,5 +1,4 @@
 #include "server.h"
-#include "../ui/realtime_lb.h"
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
 #endif
@@ -90,7 +89,6 @@ void server_init(tenv* env) {
 }
 
 void server_connect(tenv* env) {
-  ui_realtime_lb_close(env); /* leaderboard collector stops when you play */
   tuser_data* usr = env->usr;
   game_data* gdata = &usr->gdata;
   user_settings* usrs = &usr->usrs;

@@ -91,12 +91,6 @@ void android_jni_save_clip_to_gallery(const char* filename);
    the in-app Clips gallery. */
 void android_jni_play_clip(const char* filename);
 
-/* Realtime leaderboards: opens the NTL "RealTime Status" page (live top
-   players of every server) in a WebView over the game, with Reload and
-   Close buttons. in_game = 1 makes it slightly see-through (opened during
-   play); 0 is the full-screen version used on the title screen. */
-void android_jni_show_realtime_lb(int in_game);
-
 /* Lobby background picker. android_jni_request_pick_lobby_bg() opens the
    system photo picker; when the player chooses a picture Kotlin shrinks it and
    saves it as "lobby_bg.jpg" in the app files folder, then queues an event.

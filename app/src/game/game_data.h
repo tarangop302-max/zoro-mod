@@ -119,6 +119,11 @@ typedef struct game_data {
   bool restart_req;
   bool closed;
 
+  /* Why the last attempt to join a server failed (empty = no failure). Set
+   * in network/callback.c / game/loop.c, shown at the top of the title
+   * screen, cleared when Play is pressed. */
+  char conn_fail[128];
+
   /* Set the instant the player's own death is detected (see the 'v'
    * command in network/callback.c). The connection is deliberately kept
    * open and gameplay keeps rendering normally behind the scenes for a

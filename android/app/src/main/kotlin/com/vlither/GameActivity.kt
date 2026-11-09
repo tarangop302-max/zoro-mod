@@ -1287,9 +1287,9 @@ open class GameActivity : NativeActivity() {
             ).also { it.bottomMargin = dp(6f) }
         }
 
-        /* Line 2 – "Mobile Vlither by Lucky" */
+        /* Line 2 – "Mobile Vlither by zoro" */
         val line2 = TextView(this).apply {
-            text    = "Mobile Vlither by Lucky"
+            text    = "Mobile Vlither by zoro"
             setTextColor(Color.parseColor("#2BFF88"))   // bright neon green
             setTextSize(TypedValue.COMPLEX_UNIT_PX, sp(22f))
             typeface = Typeface.create("monospace", Typeface.BOLD)

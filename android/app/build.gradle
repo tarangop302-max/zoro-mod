@@ -13,7 +13,7 @@ plugins {
 // versionCode is minutes-since-1970, so every build is always accepted by
 // Android as an upgrade, even over test builds with a bigger number.
 // ---------------------------------------------------------------------------
-def appVersion = "1.2"
+def appVersion = "1.3"
 def appVersionCode = (int) (System.currentTimeMillis() / 60000L)
 
 android {

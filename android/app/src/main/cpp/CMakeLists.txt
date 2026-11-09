@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 17)
 # Version comes from `appVersion` in android/app/build.gradle (passed in by
 # Gradle). The fallback only matters if CMake is run by hand.
 if(NOT DEFINED APP_VERSION_NAME)
-    set(APP_VERSION_NAME "1.2")
+    set(APP_VERSION_NAME "1.3")
 endif()
 
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../)

@@ -20,6 +20,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -279,44 +280,188 @@ class MainActivity : Activity() {
     // Changelog
     // ─────────────────────────────────────────────────────────────
 
+    /** One block in the What's New window: a coloured heading + bullet lines. */
+    private class ChangeSection(val icon: String, val title: String, val color: Int, val items: List<String>)
+
     private fun showChangelog() {
+        // A newer release is available -> show its GitHub release notes.
         val info = update
         if (info != null && info.notes.isNotEmpty()) {
-            android.app.AlertDialog.Builder(this)
-                .setTitle("What's New in v${info.version}")
-                .setMessage(info.notes)
-                .setPositiveButton("Got it") { d, _ -> d.dismiss() }
-                .show()
+            showChangelogDialog(
+                "v${info.version}",
+                "Latest release",
+                listOf(ChangeSection("✦", "Release notes", COLOR_ORANGE,
+                    info.notes.lines().map { it.trim().trimStart('-', '*', '•', ' ') }.filter { it.isNotEmpty() }))
+            )
             return
         }
 
-        val message = """
-Update 4.2
+        val sections = listOf(
+            ChangeSection("🎨", "Backgrounds", COLOR_PURPLE, listOf(
+                "New Backgrounds gallery: pick the game floor from 47 backgrounds, including the classic Slither ones, with live previews.",
+                "Settings > General > Background lets you switch any time."
+            )),
+            ChangeSection("🌌", "Lobby", COLOR_BLUE, listOf(
+                "New animated lobby themes: Stars, Waves, Slash and more.",
+                "30 colour palettes to mix with every theme.",
+                "Animations can be frozen to save battery."
+            )),
+            ChangeSection("🏆", "Leaderboard", COLOR_ORANGE, listOf(
+                "Text effects: Rainbow, moving Rainbow, Wave and Pulse, with a second gradient colour, speed and direction.",
+                "Outline and drop shadow so names stay readable on any background.",
+                "Highlight bar behind your own line.",
+                "Green / red rank arrows when a player moves up or down.",
+                "Smooth slide animation when ranks change."
+            )),
+            ChangeSection("✨", "HUD themes", COLOR_GREEN, listOf(
+                "One-tap HUD presets (Forest, Royal, Rainbow and more) that style the leaderboard, stats, Teammates list, centre ring and turn path.",
+                "Every option can still be tweaked afterwards."
+            )),
+            ChangeSection("🐍", "Skins & NTL tags", COLOR_PURPLE, listOf(
+                "Import and Export your saved skins as a .ntlmod file.",
+                "NTL tag size slider and a Small NTL tags option.",
+                "Free NTL tags are now loaded and shown."
+            )),
+            ChangeSection("🎮", "Controls & gameplay", COLOR_BLUE, listOf(
+                "Team chat can be opened and closed with a hotkey (C by default).",
+                "Zoom slider: swap sides and set the zoom speed.",
+                "Improved steering model for smoother turns at high ping.",
+                "NTL-style bot mode (grow, to-circle, coil).",
+                "New Heart pattern for Snakey Rain."
+            )),
+            ChangeSection("📡", "Connection", COLOR_RED, listOf(
+                "Clear messages when the server times out, uses a different protocol, refuses the connection or rejects your spawn."
+            ))
+        )
 
-  • Added separate Transparent Skin opacity and Center Line options.
-  • Added responsive UI scaling for different phone resolutions.
-  • Added a scrollable Custom Skin panel.
-  • Added Android clipboard paste support for nickname, IP, NTL and chat fields.
-  • Added draggable and resizable minimap controls.
-  • Added custom minimap marker shapes, sizes and colours.
-  • Added teammate positions and names on the minimap.
-  • Added saved NTL team profiles for Team ID and Auth Key.
-  • Added minimizable in-game NTL chat and a separate player list.
-  • Added 60/90/120/144 FPS caps and Performance Mode.
-  • Improved mobile multitouch so UI buttons work while using the Arrow.
-  • Fixed boost so it activates only from the Boost button.
-  • Now NTL Chat also available enter your NTL keys to join.
-  • Replaced the on-screen Boost button with the new custom image button.
-  • Various stability and interface fixes.
+        showChangelogDialog("v$CURRENT_VERSION", "Changes made by zoro", sections)
+    }
 
-Changes made by Lucky
-        """.trimIndent()
+    private fun showChangelogDialog(version: String, subtitle: String, sections: List<ChangeSection>) {
+        val dialog = android.app.Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
 
-        android.app.AlertDialog.Builder(this)
-            .setTitle("What's New in v$CURRENT_VERSION")
-            .setMessage(message)
-            .setPositiveButton("Got it") { d, _ -> d.dismiss() }
-            .show()
+        val dm = resources.displayMetrics
+        val panelW = minOf((dm.widthPixels * 0.78f).toInt(), dp(560))
+        val bodyMaxH = (dm.heightPixels * 0.55f).toInt()
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(14))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(22).toFloat()
+                setColor(0xFF141620.toInt())
+                setStroke(dp(1), 0xFF2A2D40.toInt())
+            }
+        }
+
+        // Header: title + version pill, subtitle underneath.
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply {
+            text = "What's New"
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        })
+        header.addView(TextView(this).apply {
+            text = version
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(COLOR_PURPLE)
+            setPadding(dp(10), dp(3), dp(10), dp(3))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(20).toFloat()
+                setColor(0x26B388FF)
+                setStroke(dp(1), 0x66B388FF)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.leftMargin = dp(10) }
+        })
+        panel.addView(header)
+        panel.addView(TextView(this).apply {
+            text = subtitle
+            textSize = 12f
+            setTextColor(COLOR_GREY)
+            setPadding(0, dp(2), 0, dp(10))
+        })
+
+        // Scrollable body: one card per section.
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        for (sec in sections) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(14).toFloat()
+                    setColor(0xFF1B1E2C.toInt())
+                    setStroke(dp(1), (sec.color and 0x00FFFFFF) or 0x40000000)
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.bottomMargin = dp(8) }
+            }
+            card.addView(TextView(this).apply {
+                text = "${sec.icon}  ${sec.title}"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(sec.color)
+                setPadding(0, 0, 0, dp(4))
+            })
+            for (line in sec.items) {
+                card.addView(TextView(this).apply {
+                    text = "•  $line"
+                    textSize = 12.5f
+                    setTextColor(0xFFD5D8E4.toInt())
+                    setLineSpacing(0f, 1.15f)
+                    setPadding(0, dp(2), 0, dp(2))
+                })
+            }
+            body.addView(card)
+        }
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            addView(body)
+        }
+        panel.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        // Cap the body height so the button always stays on screen.
+        scroll.viewTreeObserver.addOnGlobalLayoutListener {
+            if (scroll.layoutParams.height != bodyMaxH && body.height > bodyMaxH) {
+                scroll.layoutParams.height = bodyMaxH
+                scroll.requestLayout()
+            }
+        }
+
+        panel.addView(
+            styledButton(
+                "Got it", 15f,
+                0xFF7C4DFF.toInt(), 0xFF5B2DDB.toInt(), Color.WHITE, 14
+            ).apply { setOnClickListener { dialog.dismiss() } }
+        )
+
+        dialog.setContentView(panel, ViewGroup.LayoutParams(panelW, ViewGroup.LayoutParams.WRAP_CONTENT))
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            setLayout(panelW, ViewGroup.LayoutParams.WRAP_CONTENT)
+            @Suppress("DEPRECATION")
+            decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            )
+        }
+        dialog.show()
     }
 
     // ─────────────────────────────────────────────────────────────

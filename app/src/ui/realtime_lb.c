@@ -49,6 +49,7 @@ typedef struct {
   bool active;
   char ip[32];
   int ti;        /* index into s_targets */
+  int mode;      /* 0 = mod/custom-server protocol, 1 = official protocol */
   int stage;     /* 0 TCP, 1 WebSocket open, 2 got data, 3 got leaderboard */
   bool timed_out;
   double start;
@@ -73,6 +74,7 @@ static int s_round_done = 0;
 /* why a server gave no data this round */
 enum { T_PENDING = 0, T_OK, T_NO_HANDSHAKE, T_SILENT, T_DROPPED, T_TIMEOUT, T_NO_LB };
 static unsigned char s_tstat[RT_MAX_SERVERS];
+static unsigned char s_tmode[RT_MAX_SERVERS]; /* protocol that works for this server */
 static const char *tstat_text(int t) {
   switch (t) {
     case T_NO_HANDSHAKE: return "refused (no WebSocket handshake)";
@@ -239,6 +241,46 @@ static bool is_noise_name(const char *n) {
   return n[3] != 0;
 }
 
+/* Official slither.io servers use the current handshake (same one the NTL
+   browser mod performs): the pre-init packet hides a quoted 24-letter word
+   that must be scrambled and sent back as exactly 24 bytes. */
+static bool official_secret(const uint8_t *p, int len, uint8_t out[24]) {
+  int dec[256];
+  int di = 0, e = 23, b = 0, d = 0;
+  for (int g = 1; g < len && di < 250; g++) {
+    int z = p[g];
+    if (z <= 96) z += 32;
+    z = (z - 97 - e) % 26;
+    if (z < 0) z += 26;
+    d = d * 16 + z;
+    e += 17;
+    if (b == 1) {
+      dec[di++] = d;
+      b = d = 0;
+    } else {
+      b++;
+    }
+  }
+  int q1 = -1, q2 = -1;
+  for (int i = 0; i < di; i++) {
+    if (dec[i] != 39) continue;
+    if (q1 < 0) q1 = i + 1;
+    else { q2 = i; break; }
+  }
+  if (q1 < 0 || q2 < 0 || q2 - q1 < 24) return false;
+  int z = 0;
+  for (int i = 0; i < 24; i++) {
+    int a = dec[q1 + i], dd = 65;
+    if (a >= 97) { dd += 32; a -= 32; }
+    a -= 65;
+    if (i == 0) z = 2 + a;
+    int ee = (a + z) % 26;
+    z += 3 + a;
+    out[i] = (uint8_t)(ee + dd);
+  }
+  return true;
+}
+
 /* ----------------------------------------------------------- packet logic */
 static void worker_finish(rt_worker *w) {
   if (w->c) w->c->is_closing = 1;
@@ -250,7 +292,31 @@ static void on_packet(rt_worker *w, const uint8_t *a, int len) {
   char cmd = (char)a[0];
 
   if (w->stage < 2) w->stage = 2;
-  if (cmd == '6') {
+  if (cmd == '6' && w->mode == 1) {
+    uint8_t secret[24];
+    if (!official_secret(a, len, secret)) return; /* unknown pre-init format */
+    mg_ws_send(c, secret, 24, WEBSOCKET_OP_BINARY);
+    int skin = rand() % 9;
+    const char *nick = RT_BOT_NICK;
+    int nl = (int)strlen(nick);
+    uint8_t ba[40];
+    int m = 0;
+    ba[m++] = 115;
+    ba[m++] = 12;
+    ba[m++] = (uint8_t)skin;
+    ba[m++] = (uint8_t)nl;
+    memcpy(ba + m, nick, (size_t)nl);
+    m += nl;
+    ba[m++] = 0;
+    ba[m++] = 255; /* no accessory */
+    static const uint8_t hdr[8] = {255, 255, 0, 0, 0, 0, 0, 0};
+    memcpy(ba + m, hdr, 8);
+    ba[m + 2] = (uint8_t)skin;
+    m += 8;
+    ba[m++] = 1;
+    ba[m++] = (uint8_t)skin;
+    mg_ws_send(c, ba, (size_t)m, WEBSOCKET_OP_BINARY);
+  } else if (cmd == '6') {
     uint8_t secret[27] = {0};
     decode_secret(a, (size_t)len, secret);
     mg_ws_send(c, secret, 27, WEBSOCKET_OP_BINARY);
@@ -332,8 +398,13 @@ static void ws_cb(struct mg_connection *c, int ev, void *ev_data) {
   if (!w) return;
   if (ev == MG_EV_WS_OPEN) {
     if (w->stage < 1) w->stage = 1;
-    mg_ws_send(c, (uint8_t[]){1}, 1, WEBSOCKET_OP_BINARY);
-    mg_ws_send(c, (uint8_t[]){'c', 0}, 2, WEBSOCKET_OP_BINARY);
+    if (w->mode == 1) {
+      mg_ws_send(c, (uint8_t[]){4}, 1, WEBSOCKET_OP_BINARY);
+      mg_ws_send(c, (uint8_t[]){'c', 3}, 2, WEBSOCKET_OP_BINARY);
+    } else {
+      mg_ws_send(c, (uint8_t[]){1}, 1, WEBSOCKET_OP_BINARY);
+      mg_ws_send(c, (uint8_t[]){'c', 0}, 2, WEBSOCKET_OP_BINARY);
+    }
   } else if (ev == MG_EV_WS_MSG) {
     struct mg_ws_message *msg = (struct mg_ws_message *)ev_data;
     const uint8_t *a = (const uint8_t *)msg->data.buf;
@@ -360,6 +431,7 @@ static void ws_cb(struct mg_connection *c, int ev, void *ev_data) {
     }
   } else if (ev == MG_EV_ERROR || ev == MG_EV_CLOSE) {
     if (ev == MG_EV_CLOSE) {
+      if (s_tstat[w->ti] != T_OK) s_tmode[w->ti] ^= 1; /* try the other protocol next */
       if (s_tstat[w->ti] != T_OK)
         s_tstat[w->ti] = w->timed_out        ? T_TIMEOUT
                          : w->stage == 0     ? T_NO_HANDSHAKE
@@ -380,6 +452,7 @@ static void start_visit(rt_worker *w, int ti) {
   memset(w, 0, offsetof(rt_worker, mscps) + sizeof(int));
   snprintf(w->ip, sizeof(w->ip), "%s", ip);
   w->ti = ti;
+  w->mode = s_tmode[ti];
   s_tstat[ti] = T_PENDING;
   char url[96];
   snprintf(url, sizeof(url), "ws://%s/slither", ip);
@@ -398,6 +471,8 @@ static void collect_targets(tenv *env) {
   game_data *g = &env->usr->gdata;
   s_target_count = 0;
   memset(s_tstat, 0, sizeof(s_tstat));
+  memset(s_tmode, 0, sizeof(s_tmode));
+  int own = env->usr->usrs.ipv4[0] ? 1 : 0;
   /* the server typed in the lobby (e.g. your own) is always included */
   if (env->usr->usrs.ipv4[0])
     snprintf(s_targets[s_target_count++], sizeof(s_targets[0]), "%s",
@@ -406,9 +481,11 @@ static void collect_targets(tenv *env) {
     if (strcmp(g->server_list.ips[i], s_targets[0]) == 0 && env->usr->usrs.ipv4[0])
       continue;
     if (!g->server_list.ips[i][0]) continue;
+    s_tmode[s_target_count] = (i < g->server_list.custom_count) ? 0 : 1;
     snprintf(s_targets[s_target_count++], sizeof(s_targets[0]), "%s",
              g->server_list.ips[i]);
   }
+  (void)own;
 }
 
 static void tick(tenv *env) {
@@ -709,8 +786,8 @@ void ui_realtime_lb(tenv *env) {
         y += lh * 1.5f;
       }
       char line[96];
-      snprintf(line, sizeof(line), "%s  -  %s", s_targets[i],
-               tstat_text(s_tstat[i]));
+      snprintf(line, sizeof(line), "%s  -  %s  [%s]", s_targets[i],
+               tstat_text(s_tstat[i]), s_tmode[i] ? "tried: mod" : "tried: official");
       ImDrawList_AddText_Vec2(dl, (ImVec2){origin.x + 12.0f, y},
                               IM_COL32(170, 165, 195, 220), line, NULL);
       y += lh * 1.25f;

@@ -187,8 +187,19 @@ jobs:
         run: |
           cd android
 
-          gradle wrapper \
-            --gradle-version=8.6
+          # services.gradle.org sometimes times out; skip the URL pre-check
+          # and retry a few times.
+          for i in 1 2 3 4; do
+            if gradle wrapper --gradle-version=8.6 --no-validate-url; then
+              break
+            fi
+            if [ "$i" = 4 ]; then
+              echo "::error::Could not generate Gradle wrapper"
+              exit 1
+            fi
+            echo "Wrapper generation failed, retrying in 15s..."
+            sleep 15
+          done
 
           chmod +x gradlew
 

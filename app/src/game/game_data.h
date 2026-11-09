@@ -298,6 +298,15 @@ typedef struct game_data {
     bool gotlb;
 
     leaderboard lb;
+
+    /* Leaderboard rank-change tracking. network/callback.c ('l' packet)
+       fills lb_old_idx[i] with the previous 0-based position of the snake now
+       in row i (matched by nickname + skin colour, only when that pair is
+       unique in both the old and new list), or -1 when unknown / new. It also
+       bumps lb_serial so ui_overlay.c knows a fresh list arrived. The overlay
+       owns all timing (arrows, slide, fade) -- see ui_overlay.c. */
+    int lb_old_idx[NUM_LEADERBOARD_ENTRIES];
+    unsigned lb_serial;
   } data;
 } game_data;
 

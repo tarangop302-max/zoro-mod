@@ -1482,6 +1482,20 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
         }
     }
   } else if (cmd == 'l') {
+    /* Snapshot of the previous list, used below to work out which snakes
+       moved up / down (rank arrows + slide animation in ui_overlay.c). */
+    const bool lb_had_prev = gdata->data.gotlb;
+    const int lb_old_pos = gdata->data.lb_pos;
+    struct {
+      char nick[MAX_NICKNAME_LEN + 1];
+      int cv;
+    } lb_old[NUM_LEADERBOARD_ENTRIES];
+    for (int i = 0; i < NUM_LEADERBOARD_ENTRIES; ++i) {
+      memcpy(lb_old[i].nick, gdata->data.lb.entries[i].nickname,
+             sizeof lb_old[i].nick);
+      lb_old[i].cv = gdata->data.lb.entries[i].cv;
+    }
+
     gdata->data.gotlb = true;
 
     gdata->data.lb_pos = a[m];
@@ -1513,6 +1527,38 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
       }
       m += nl;
     }
+
+    /* Rank-change tracking. A snake is matched between the old and new list
+       by nickname + skin colour, but only when that pair is unique in both
+       (empty / duplicate names would give wrong arrows, so those rows are
+       left as "unknown"). Our own row is matched by our rank instead. */
+    for (int i = 0; i < NUM_LEADERBOARD_ENTRIES; ++i)
+      gdata->data.lb_old_idx[i] = -1;
+    if (lb_had_prev) {
+      const int cnt = pos < NUM_LEADERBOARD_ENTRIES ? pos : NUM_LEADERBOARD_ENTRIES;
+      for (int i = 0; i < cnt; ++i) {
+        if (gdata->data.lb_pos == i + 1) {
+          if (lb_old_pos > 0 && lb_old_pos <= NUM_LEADERBOARD_ENTRIES)
+            gdata->data.lb_old_idx[i] = lb_old_pos - 1;
+          continue;
+        }
+        const char* nk = gdata->data.lb.entries[i].nickname;
+        const int cv = gdata->data.lb.entries[i].cv;
+        if (!nk[0]) continue;
+        int new_cnt = 0, old_cnt = 0, old_j = -1;
+        for (int k = 0; k < cnt; ++k)
+          if (gdata->data.lb.entries[k].cv == cv &&
+              strcmp(gdata->data.lb.entries[k].nickname, nk) == 0)
+            new_cnt++;
+        for (int k = 0; k < NUM_LEADERBOARD_ENTRIES; ++k)
+          if (lb_old[k].cv == cv && strcmp(lb_old[k].nick, nk) == 0) {
+            old_cnt++;
+            old_j = k;
+          }
+        if (new_cnt == 1 && old_cnt == 1) gdata->data.lb_old_idx[i] = old_j;
+      }
+    }
+    gdata->data.lb_serial++;
   } else if (cmd == 'k') {
     gdata->data.kills++;
     if (!gdata->preview_active) {

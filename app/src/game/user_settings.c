@@ -189,6 +189,21 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->lb_own_bg_color[1] = 1.0f;
   usr_settings->lb_own_bg_color[2] = 1.0f;
   usr_settings->lb_own_bg_color[3] = 0.14f;
+  memset(usr_settings->hud_theme_reserved, 0,
+         sizeof(usr_settings->hud_theme_reserved));
+  usr_settings->hud_theme_id = 0;
+  for (int c = 0; c < 4; ++c) {
+    usr_settings->hud_icon_color[c] = 1.0f;
+    usr_settings->hud_value_color[c] = 1.0f;
+  }
+  usr_settings->hud_team_color[0] = 0.25f;
+  usr_settings->hud_team_color[1] = 1.0f;
+  usr_settings->hud_team_color[2] = 0.35f;
+  usr_settings->hud_team_color[3] = 1.0f;
+  usr_settings->lb_anim_enabled = true;
+  usr_settings->lb_arrows_enabled = true;
+  usr_settings->lb_anim_speed = 1.0f;
+  usr_settings->lb_arrow_hold = LB_ARROW_HOLD_DEFAULT;
   memset(usr_settings->lobby_bg_reserved, 0,
          sizeof(usr_settings->lobby_bg_reserved));
   usr_settings->lobby_bg_index = -1;
@@ -440,9 +455,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v229_prefix = offsetof(user_settings, team_chat_reserved);
   size_t v230_prefix = offsetof(user_settings, game_bg_reserved);
   size_t v231_prefix = offsetof(user_settings, lb_fx_reserved);
+  size_t v232_prefix = offsetof(user_settings, hud_theme_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v232_prefix)
+    /* A file saved before HUD themes / leaderboard rank animation existed
+       ends at v232_prefix, possibly followed only by compiler tail padding.
+       Keep every saved value; the new options keep their defaults. */
+    bytes_to_read = v232_prefix;
   else if ((size_t)file_size >= v231_prefix)
     /* A file saved before the leaderboard text effects existed ends at
        v231_prefix, possibly followed only by compiler tail padding. Keep every
@@ -997,7 +1018,139 @@ void read_user_settings(user_settings* usr_settings) {
         loaded.lb_own_bg_color[c] = (c == 3) ? 0.14f : 1.0f;
   }
 
+  /* v2.32: HUD theme + leaderboard animation options. */
+  if (loaded.hud_theme_id < 0 || loaded.hud_theme_id >= HUD_THEME_COUNT)
+    loaded.hud_theme_id = 0;
+  {
+    float* hc[3] = {loaded.hud_icon_color, loaded.hud_value_color,
+                    loaded.hud_team_color};
+    for (int k = 0; k < 3; ++k)
+      for (int c = 0; c < 4; ++c)
+        if (!isfinite(hc[k][c]) || hc[k][c] < 0.0f || hc[k][c] > 1.0f)
+          hc[k][c] = 1.0f;
+  }
+  loaded.lb_anim_enabled = loaded.lb_anim_enabled ? true : false;
+  loaded.lb_arrows_enabled = loaded.lb_arrows_enabled ? true : false;
+  if (!isfinite(loaded.lb_anim_speed)) loaded.lb_anim_speed = 1.0f;
+  if (loaded.lb_anim_speed < LB_ANIM_SPEED_MIN)
+    loaded.lb_anim_speed = LB_ANIM_SPEED_MIN;
+  if (loaded.lb_anim_speed > LB_ANIM_SPEED_MAX)
+    loaded.lb_anim_speed = LB_ANIM_SPEED_MAX;
+  if (!isfinite(loaded.lb_arrow_hold)) loaded.lb_arrow_hold = LB_ARROW_HOLD_DEFAULT;
+  if (loaded.lb_arrow_hold < LB_ARROW_HOLD_MIN)
+    loaded.lb_arrow_hold = LB_ARROW_HOLD_MIN;
+  if (loaded.lb_arrow_hold > LB_ARROW_HOLD_MAX)
+    loaded.lb_arrow_hold = LB_ARROW_HOLD_MAX;
+
   *usr_settings = loaded;
+}
+
+/* ---- HUD theme presets ---------------------------------------------------
+ * Each preset is a small palette (accent A, accent B, text colour) plus which
+ * leaderboard text effect to use. hud_theme_apply() turns it into the same
+ * settings the player can edit by hand afterwards, so a preset is only a
+ * starting point. Index 0 = Default restores the original look. */
+typedef struct hud_theme_def {
+  const char* name;
+  float a[3], b[3], text[3];
+  int title_fx, names_fx, own_fx;
+  int outline;
+  bool shadow;
+  float own_bg; /* alpha of the highlight bar behind your own line, 0 = off */
+} hud_theme_def;
+
+static const hud_theme_def kHudThemes[HUD_THEME_COUNT] = {
+    {"Default (original)", {0}, {0}, {0}, 0, 0, 0, 0, false, 0.0f},
+    {"Neon", {0.10f, 1.00f, 0.85f}, {1.00f, 0.20f, 0.80f}, {0.90f, 1.00f, 1.00f},
+     LB_FX_GRADIENT, LB_FX_SOLID, LB_FX_WAVE, LB_OUTLINE_THIN, false, 0.16f},
+    {"Ice", {0.55f, 0.85f, 1.00f}, {0.85f, 0.95f, 1.00f}, {0.85f, 0.93f, 1.00f},
+     LB_FX_GRADIENT, LB_FX_SOLID, LB_FX_SOLID, LB_OUTLINE_NONE, true, 0.14f},
+    {"Fire", {1.00f, 0.55f, 0.10f}, {1.00f, 0.15f, 0.10f}, {1.00f, 0.90f, 0.75f},
+     LB_FX_GRADIENT, LB_FX_GRADIENT, LB_FX_PULSE, LB_OUTLINE_THIN, false, 0.16f},
+    {"Forest", {0.45f, 1.00f, 0.50f}, {0.95f, 0.90f, 0.40f}, {0.88f, 1.00f, 0.88f},
+     LB_FX_GRADIENT, LB_FX_SOLID, LB_FX_SOLID, LB_OUTLINE_NONE, true, 0.14f},
+    {"Royal", {0.75f, 0.55f, 1.00f}, {1.00f, 0.85f, 0.30f}, {0.93f, 0.90f, 1.00f},
+     LB_FX_GRADIENT, LB_FX_GRADIENT, LB_FX_WAVE, LB_OUTLINE_NONE, true, 0.16f},
+    {"Rainbow", {1.00f, 1.00f, 1.00f}, {1.00f, 1.00f, 1.00f}, {1.00f, 1.00f, 1.00f},
+     LB_FX_RAINBOW_ANIM, LB_FX_RAINBOW, LB_FX_RAINBOW_ANIM, LB_OUTLINE_THIN,
+     false, 0.12f},
+    {"Mono", {1.00f, 1.00f, 1.00f}, {0.70f, 0.70f, 0.70f}, {0.85f, 0.85f, 0.85f},
+     LB_FX_SOLID, LB_FX_SOLID, LB_FX_SOLID, LB_OUTLINE_NONE, true, 0.18f},
+};
+
+const char* hud_theme_name(int idx) {
+  if (idx < 0 || idx >= HUD_THEME_COUNT) idx = 0;
+  return kHudThemes[idx].name;
+}
+
+void hud_theme_apply(user_settings* s, int idx) {
+  if (idx < 0 || idx >= HUD_THEME_COUNT) idx = 0;
+
+  if (idx == 0) {
+    /* Restore the original look from the built-in defaults. */
+    user_settings d;
+    user_settings_default(&d);
+    memcpy(s->lb_title_color, d.lb_title_color, sizeof s->lb_title_color);
+    memcpy(s->lb_names_color, d.lb_names_color, sizeof s->lb_names_color);
+    memcpy(s->lb_own_color, d.lb_own_color, sizeof s->lb_own_color);
+    s->lb_names_color_enabled = d.lb_names_color_enabled;
+    s->lb_own_color_enabled = d.lb_own_color_enabled;
+    s->lb_title_fx = d.lb_title_fx;
+    s->lb_names_fx = d.lb_names_fx;
+    s->lb_own_fx = d.lb_own_fx;
+    s->lb_names_fx_down = d.lb_names_fx_down;
+    s->lb_own_bg_enabled = d.lb_own_bg_enabled;
+    memcpy(s->lb_own_bg_color, d.lb_own_bg_color, sizeof s->lb_own_bg_color);
+    memcpy(s->hud_icon_color, d.hud_icon_color, sizeof s->hud_icon_color);
+    memcpy(s->hud_value_color, d.hud_value_color, sizeof s->hud_value_color);
+    memcpy(s->hud_team_color, d.hud_team_color, sizeof s->hud_team_color);
+    memcpy(s->center_ring_color, d.center_ring_color,
+           sizeof s->center_ring_color);
+    memcpy(s->turn_path_color, d.turn_path_color, sizeof s->turn_path_color);
+    s->hud_theme_id = 0;
+    return;
+  }
+
+  const hud_theme_def* t = &kHudThemes[idx];
+  lb_text_fx* fxs[3] = {&s->lb_title_fx, &s->lb_names_fx, &s->lb_own_fx};
+  const int modes[3] = {t->title_fx, t->names_fx, t->own_fx};
+  for (int k = 0; k < 3; ++k) {
+    fxs[k]->mode = modes[k];
+    fxs[k]->outline = t->outline;
+    fxs[k]->shadow = t->shadow;
+    fxs[k]->speed = 1.0f;
+    for (int c = 0; c < 3; ++c) fxs[k]->color2[c] = t->b[c];
+    fxs[k]->color2[3] = 1.0f;
+    fxs[k]->outline_color[0] = 0.0f;
+    fxs[k]->outline_color[1] = 0.0f;
+    fxs[k]->outline_color[2] = 0.0f;
+    fxs[k]->outline_color[3] = 0.9f;
+  }
+  for (int c = 0; c < 3; ++c) {
+    s->lb_title_color[c] = t->a[c];
+    s->lb_names_color[c] = t->text[c];
+    s->lb_own_color[c] = t->a[c];
+    s->lb_own_bg_color[c] = t->a[c];
+    s->hud_icon_color[c] = t->a[c];
+    s->hud_value_color[c] = t->text[c];
+    s->hud_team_color[c] = t->b[c];
+    s->center_ring_color[c] = t->a[c];
+    s->turn_path_color[c] = t->b[c];
+  }
+  s->lb_title_color[3] = 0.95f;
+  s->lb_names_color[3] = 1.0f;
+  s->lb_own_color[3] = 1.0f;
+  s->hud_icon_color[3] = 1.0f;
+  s->hud_value_color[3] = 1.0f;
+  s->hud_team_color[3] = 1.0f;
+  s->turn_path_color[3] = 1.0f;
+  s->lb_names_color_enabled = true;
+  s->lb_own_color_enabled = true;
+  s->lb_names_fx_down = (t->names_fx != LB_FX_SOLID);
+  s->lb_own_bg_enabled = t->own_bg > 0.0f;
+  s->lb_own_bg_color[3] = t->own_bg > 0.0f ? t->own_bg : 0.14f;
+  s->center_ring_reserved[0] = 1; /* colours are initialised */
+  s->hud_theme_id = idx;
 }
 
 void save_user_settings(user_settings* usr_settings) {

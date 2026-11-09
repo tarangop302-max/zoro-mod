@@ -424,6 +424,16 @@ static void sec_general(tenv* env) {
     igCombo_Str_arr("##stats font size", (int*)&usrs->stats_font_size, kSizeNames, 3, -1);
     opt_end();
   }
+  if (opt_begin("HUD theme", "One-click look for the whole HUD: leaderboard, stats lines, Teammates list, centre ring and turn path. You can still change any single option afterwards.")) {
+    static const char* theme_names[HUD_THEME_COUNT];
+    if (!theme_names[0])
+      for (int t = 0; t < HUD_THEME_COUNT; ++t) theme_names[t] = hud_theme_name(t);
+    int theme = usrs->hud_theme_id;
+    igSetNextItemWidth(-1);
+    if (igCombo_Str_arr("##hud theme", &theme, theme_names, HUD_THEME_COUNT, -1))
+      hud_theme_apply(usrs, theme);
+    opt_end();
+  }
   if (opt_begin("Leaderboard font size", "Size of the text in the leaderboard.")) {
     igSetNextItemWidth(-1);
     igCombo_Str_arr("##leaderboard font size", (int*)&usrs->lb_font_size, kSizeNames, 3, -1);
@@ -468,6 +478,30 @@ static void sec_general(tenv* env) {
     igSetNextItemWidth(-1);
     igColorEdit4("##leaderboard own bg", usrs->lb_own_bg_color, ImGuiColorEditFlags_AlphaBar);
     igEndDisabled();
+    opt_end();
+  }
+  if (opt_begin("Leaderboard rank arrows", "Shows a green up arrow or red down arrow beside a player who just moved up or down the leaderboard.")) {
+    igCheckbox("##leaderboard arrows on", &usrs->lb_arrows_enabled);
+    opt_end();
+  }
+  if (usrs->lb_arrows_enabled &&
+      opt_begin("Leaderboard arrow time", "How long the arrow stays before fading out.")) {
+    igSetNextItemWidth(-1);
+    igSliderFloat("##leaderboard arrow time", &usrs->lb_arrow_hold,
+                  LB_ARROW_HOLD_MIN, LB_ARROW_HOLD_MAX, "%.1f s",
+                  ImGuiSliderFlags_AlwaysClamp);
+    opt_end();
+  }
+  if (opt_begin("Leaderboard rank animation", "Rows slide and fade into their new place when a player changes rank.")) {
+    igCheckbox("##leaderboard anim on", &usrs->lb_anim_enabled);
+    opt_end();
+  }
+  if (usrs->lb_anim_enabled &&
+      opt_begin("Leaderboard animation speed", "How fast rows slide to their new rank.")) {
+    igSetNextItemWidth(-1);
+    igSliderFloat("##leaderboard anim speed", &usrs->lb_anim_speed,
+                  LB_ANIM_SPEED_MIN, LB_ANIM_SPEED_MAX, "%.1fx",
+                  ImGuiSliderFlags_AlwaysClamp);
     opt_end();
   }
   if (opt_begin("Names font size", "Size of the player names shown above snakes.")) {

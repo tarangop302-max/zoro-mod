@@ -10,6 +10,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include "../user.h"
 #include "../ui/crystal_theme.h"
 #include "../arrow_styles.h"
@@ -344,6 +345,37 @@ static void draw_turn_path(ImDrawList* dl, game_data* gdata,
   }
 }
 
+/* HUD theme tint: keeps the text's own alpha, takes the colour from the
+ * theme colour chosen in Settings > HUD theme (see hud_theme_apply()). */
+static inline ImVec4 hud_tint(const float* c, float a) {
+  return (ImVec4){c[0], c[1], c[2], a * c[3]};
+}
+
+/* Per-row state of the leaderboard rank-change effects. Filled whenever a new
+ * leaderboard list arrives (see game_data.h, lb_old_idx). */
+typedef struct lb_row_anim {
+  int dir;          /* +1 moved up, -1 moved down, 0 none */
+  double arrow_t;   /* when the arrow started */
+  float slide_from; /* start offset in rows (+ = drawn lower), 0 = no slide */
+  double slide_t;   /* when the slide started */
+} lb_row_anim;
+
+/* Moves the vertices added since `v0` down by `dy` pixels and scales their
+ * alpha by `a`. Used to slide / fade one leaderboard row without touching the
+ * table layout (the vertex buffer is shared by all table columns). */
+static void lb_shift_alpha(ImDrawList* dl, int v0, int v1, float dy, float a) {
+  if (v1 > dl->VtxBuffer.Size) v1 = dl->VtxBuffer.Size;
+  for (int i = v0; i < v1; ++i) {
+    ImDrawVert* v = &dl->VtxBuffer.Data[i];
+    v->pos.y += dy;
+    if (a < 1.0f) {
+      ImU32 al = (v->col >> 24) & 0xFFu;
+      al = (ImU32)((float)al * a + 0.5f);
+      v->col = (v->col & 0x00FFFFFFu) | (al << 24);
+    }
+  }
+}
+
 void ui_overlay(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -505,15 +537,15 @@ void ui_overlay(tenv* env) {
     igPushFont(usr->imgui_data.mono_font[usrs->stats_font_size],
                usr->imgui_data.mono_font[usrs->stats_font_size]->LegacySize);
     float line_height = igGetCursorPosY();
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue971");
+    igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ue971");
     igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->nickname);
+    igTextColored(hud_tint(usrs->hud_value_color, 0.5f), usrs->nickname);
     line_height = igGetCursorPosY() - line_height;
 
     igSetCursorPosX(mm_x);
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ueaec");
+    igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ueaec");
     igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.5}, usrs->ipv4);
+    igTextColored(hud_tint(usrs->hud_value_color, 0.5f), usrs->ipv4);
 
     float ping_norm =
         (gdata->data.ping_follow - GOOD_PING) / (BAD_PING - GOOD_PING);
@@ -535,12 +567,12 @@ void ui_overlay(tenv* env) {
         "%d ms", gdata->data.ping);
 
     igSetCursorPosX(mm_x);
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue99c");
+    igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ue99c");
     igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.5}, "%d FPS", gdata->data.fps);
+    igTextColored(hud_tint(usrs->hud_value_color, 0.5f), "%d FPS", gdata->data.fps);
 
     igSetCursorPosX(mm_x);
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue952");
+    igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ue952");
     igSameLine(0, -1);
 
     int tot_sec = (int)gdata->data.play_etm;
@@ -548,7 +580,7 @@ void ui_overlay(tenv* env) {
     int minutes = (tot_sec % 3600) / 60;
     int seconds = tot_sec % 60;
 
-    igTextColored((ImVec4){1, 1, 1, 0.7}, "%02d:%02d:%02d", hours, minutes,
+    igTextColored(hud_tint(usrs->hud_value_color, 0.7f), "%02d:%02d:%02d", hours, minutes,
                   seconds);
     igText("");
 
@@ -562,24 +594,24 @@ void ui_overlay(tenv* env) {
 
     igSetCursorPosY(ctx->size[1] - (line_height * 3) - style->WindowPadding.y);
 
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ueaeb");
+    igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ueaeb");
     igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.7}, "%d", gdata->data.kills);
+    igTextColored(hud_tint(usrs->hud_value_color, 0.7f), "%d", gdata->data.kills);
 
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue9d9");
+    igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ue9d9");
     igSameLine(0, -1);
 
-    igTextColored((ImVec4){1, 1, 1, 0.7}, "%d", gdata->data.rank);
+    igTextColored(hud_tint(usrs->hud_value_color, 0.7f), "%d", gdata->data.rank);
 
     igSameLine(0, 0);
-    igTextColored((ImVec4){1, 1, 1, 0.5}, " / %d", gdata->data.slither_count);
+    igTextColored(hud_tint(usrs->hud_value_color, 0.5f), " / %d", gdata->data.slither_count);
 
-    igTextColored((ImVec4){1, 1, 1, 0.3}, "\ue99e");
+    igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ue99e");
     igSameLine(0, -1);
     igPushFont(
         usr->imgui_data.mono_font_bold[usrs->stats_font_size],
         usr->imgui_data.mono_font_bold[usrs->stats_font_size]->LegacySize);
-    igTextColored((ImVec4){1, 1, 1, 0.7}, "%d", gdata->data.cur_length);
+    igTextColored(hud_tint(usrs->hud_value_color, 0.7f), "%d", gdata->data.cur_length);
     igPopFont();
 
     igPopFont();
@@ -714,6 +746,34 @@ void ui_overlay(tenv* env) {
       igPopFont();
       igSetCursorPosX(lb_x + lb_table_dx);
 
+      /* Rank-change arrows + slide/fade: work out which rows just moved. */
+      static lb_row_anim s_lb_rows[NUM_LEADERBOARD_ENTRIES];
+      static unsigned s_lb_serial_seen = 0;
+      static bool s_lb_seen = false;
+      const double lb_now = igGetTime();
+      if (!s_lb_seen || s_lb_serial_seen != gdata->data.lb_serial) {
+        lb_row_anim prev[NUM_LEADERBOARD_ENTRIES];
+        memcpy(prev, s_lb_rows, sizeof prev);
+        for (int i = 0; i < NUM_LEADERBOARD_ENTRIES; ++i) {
+          const int j = gdata->data.lb_old_idx[i];
+          lb_row_anim n;
+          memset(&n, 0, sizeof n);
+          if (s_lb_seen && j >= 0 && j < NUM_LEADERBOARD_ENTRIES) {
+            if (j == i) {
+              n = prev[i]; /* same snake, same place: keep its arrow */
+            } else {
+              n.dir = j > i ? 1 : -1;
+              n.arrow_t = lb_now;
+              n.slide_from = (float)(j - i);
+              n.slide_t = lb_now;
+            }
+          }
+          s_lb_rows[i] = n;
+        }
+        s_lb_serial_seen = gdata->data.lb_serial;
+        s_lb_seen = true;
+      }
+
       if (igBeginTable("leaderboard_table", 3, ImGuiTableFlags_NoHostExtendX,
                        (ImVec2){}, 0)) {
         igTableSetupColumn("##position", ImGuiTableColumnFlags_WidthFixed,
@@ -750,15 +810,46 @@ void ui_overlay(tenv* env) {
           }
 
           igTableNextRow(ImGuiTableRowFlags_None, 0);
-          if (is_my_snake && usrs->lb_own_bg_enabled)
-            igTableSetBgColor(
-                ImGuiTableBgTarget_RowBg0,
-                igColorConvertFloat4ToU32((ImVec4){usrs->lb_own_bg_color[0],
-                                                   usrs->lb_own_bg_color[1],
-                                                   usrs->lb_own_bg_color[2],
-                                                   usrs->lb_own_bg_color[3]}),
-                -1);
+
+          /* Slide + fade for a row that just changed rank. */
+          float lb_dy = 0.0f, lb_fade = 1.0f;
+          if (usrs->lb_anim_enabled && s_lb_rows[row].slide_from != 0.0f) {
+            const float dur = 0.30f / usrs->lb_anim_speed;
+            float p = (float)((lb_now - s_lb_rows[row].slide_t) / dur);
+            if (p < 0.0f) p = 0.0f;
+            if (p < 1.0f) {
+              const float e = 1.0f - (1.0f - p) * (1.0f - p) * (1.0f - p);
+              lb_dy = s_lb_rows[row].slide_from * (1.0f - e) *
+                      (igGetTextLineHeight() + style->CellPadding.y * 2.0f);
+              lb_fade = 0.35f + 0.65f * e;
+            }
+          }
+          const bool lb_moving = lb_dy != 0.0f || lb_fade < 1.0f;
+          const ImU32 lb_own_bg_u32 =
+              igColorConvertFloat4ToU32((ImVec4){usrs->lb_own_bg_color[0],
+                                                 usrs->lb_own_bg_color[1],
+                                                 usrs->lb_own_bg_color[2],
+                                                 usrs->lb_own_bg_color[3]});
+
+          if (is_my_snake && usrs->lb_own_bg_enabled && !lb_moving)
+            igTableSetBgColor(ImGuiTableBgTarget_RowBg0, lb_own_bg_u32, -1);
           igTableSetColumnIndex(0);
+          ImVec2 lb_row_pos;
+          igGetCursorScreenPos(&lb_row_pos);
+          ImDrawList* lb_dl = igGetWindowDrawList();
+          const int lb_vtx0 = lb_dl->VtxBuffer.Size;
+          if (is_my_snake && usrs->lb_own_bg_enabled && lb_moving) {
+            /* The table's own row background can't slide, so while this row
+               is moving the highlight is drawn by hand (and slides with it). */
+            const float bx = lb_row_pos.x - style->CellPadding.x;
+            ImDrawList_PushClipRectFullScreen(lb_dl);
+            ImDrawList_AddRectFilled(
+                lb_dl, (ImVec2){bx, lb_row_pos.y - style->CellPadding.y},
+                (ImVec2){bx + tb_width, lb_row_pos.y + igGetTextLineHeight() +
+                                            style->CellPadding.y},
+                lb_own_bg_u32, 0.0f, 0);
+            ImDrawList_PopClipRect(lb_dl);
+          }
           igTextColored((ImVec4){1, 1, 1, itcolor.w}, "%2d.", row + 1);
 
           /* Names + scores: optional gradient / rainbow / wave / pulse /
@@ -789,6 +880,48 @@ void ui_overlay(tenv* env) {
             igTextColored(itcolor, "%s", gdata->data.lb.entries[row].nickname);
             igTableSetColumnIndex(2);
             igTextColored(itcolor, "%s", score_txt);
+          }
+
+          if (lb_moving)
+            lb_shift_alpha(lb_dl, lb_vtx0, lb_dl->VtxBuffer.Size, lb_dy,
+                           lb_fade);
+
+          /* Rank-change arrow: a small triangle in the gutter beside the row
+             (or on the right when there is no room on the left). */
+          if (usrs->lb_arrows_enabled && s_lb_rows[row].dir != 0) {
+            const float age = (float)(lb_now - s_lb_rows[row].arrow_t);
+            const float hold = usrs->lb_arrow_hold;
+            if (age >= 0.0f && age < hold) {
+              const float aa = fminf(1.0f, age / 0.12f) *
+                               fminf(1.0f, (hold - age) / 0.6f) * lb_fade;
+              const float aw = lb_size * 0.55f, ah = lb_size * 0.50f;
+              const float gap = lb_size * 0.25f;
+              const float tl = lb_row_pos.x - style->CellPadding.x;
+              float cx = tl - gap - aw * 0.5f;
+              if (cx - aw * 0.5f < 2.0f) cx = tl + tb_width + gap + aw * 0.5f;
+              const float cy =
+                  lb_row_pos.y + igGetTextLineHeight() * 0.5f + lb_dy;
+              const bool up = s_lb_rows[row].dir > 0;
+              ImVec2 q1, q2, q3;
+              if (up) {
+                q1 = (ImVec2){cx, cy - ah * 0.5f};
+                q2 = (ImVec2){cx - aw * 0.5f, cy + ah * 0.5f};
+                q3 = (ImVec2){cx + aw * 0.5f, cy + ah * 0.5f};
+              } else {
+                q1 = (ImVec2){cx, cy + ah * 0.5f};
+                q2 = (ImVec2){cx + aw * 0.5f, cy - ah * 0.5f};
+                q3 = (ImVec2){cx - aw * 0.5f, cy - ah * 0.5f};
+              }
+              const ImU32 fill = igColorConvertFloat4ToU32(
+                  up ? (ImVec4){0.30f, 1.00f, 0.40f, aa}
+                     : (ImVec4){1.00f, 0.35f, 0.35f, aa});
+              const ImU32 edge =
+                  igColorConvertFloat4ToU32((ImVec4){0.0f, 0.0f, 0.0f, 0.55f * aa});
+              ImDrawList_PushClipRectFullScreen(lb_dl);
+              ImDrawList_AddTriangleFilled(lb_dl, q1, q2, q3, fill);
+              ImDrawList_AddTriangle(lb_dl, q1, q2, q3, edge, 1.0f);
+              ImDrawList_PopClipRect(lb_dl);
+            }
           }
 
           igPopFont();
@@ -883,7 +1016,7 @@ void ui_overlay(tenv* env) {
 
         igSetCursorPosX(tm_x);
         igSetCursorPosY(tm_y);
-        igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 0.85f}, "Teammates");
+        igTextColored(hud_tint(usrs->hud_team_color, 0.85f), "Teammates");
 
         igSetCursorPosX(tm_x);
 
@@ -914,7 +1047,7 @@ void ui_overlay(tenv* env) {
                             teammates[row].shape, dot_col);
 
             igTableSetColumnIndex(1);
-            igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%s",
+            igTextColored(hud_tint(usrs->hud_team_color, 1.0f), "%s",
                           teammates[row].nickname);
             igTableSetColumnIndex(2);
             /* score is -1 when this teammate's broadcast didn't
@@ -922,9 +1055,9 @@ void ui_overlay(tenv* env) {
              * relay hop that dropped the trailing bytes) --
              * show "--" instead of a misleading "0". */
             if (teammates[row].score < 0) {
-              igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 0.6f}, "--");
+              igTextColored(hud_tint(usrs->hud_team_color, 0.6f), "--");
             } else {
-              igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 1.0f}, "%d",
+              igTextColored(hud_tint(usrs->hud_team_color, 1.0f), "%d",
                             teammates[row].score);
             }
 
@@ -934,7 +1067,7 @@ void ui_overlay(tenv* env) {
              * list popup (title_screen.c), so a teammate's connection
              * quality reads the same way everywhere in the app. */
             if (teammates[row].ping < 0) {
-              igTextColored((ImVec4){0.25f, 1.0f, 0.35f, 0.6f}, "--");
+              igTextColored(hud_tint(usrs->hud_team_color, 0.6f), "--");
             } else {
               ImVec4 ping_col;
               int ping = teammates[row].ping;
@@ -1074,9 +1207,9 @@ void ui_overlay(tenv* env) {
     igSetCursorPosX(label_x);
     igSetCursorPosY(label_y);
 
-    igTextColored((ImVec4){1, 1, 1, 0.3f}, "\ue947");
+    igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ue947");
     igSameLine(0, -1);
-    igTextColored((ImVec4){1, 1, 1, 0.7f}, "%d° %d%%", pang, dst);
+    igTextColored(hud_tint(usrs->hud_value_color, 0.7f), "%d° %d%%", pang, dst);
     igPopFont();
   }
 

@@ -809,6 +809,7 @@ void ui_title_screen(tenv* env) {
                         (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
   if (igButton("\uea1c Play", (ImVec2){logo_size})) {
     user_settings_add_saved_name(usrs, usrs->nickname);
+    usr->gdata.conn_fail[0] = '\0';
     usr->gdata.conn = CONNECTING;
     usr->gdata.curr_screen = PLAYING;
     glfwSetTime(0);
@@ -908,6 +909,16 @@ void ui_title_screen(tenv* env) {
 
     igPopStyleVar(1);
     igPopStyleColor(5);
+  }
+
+  /* Why the last join attempt failed (see gdata->conn_fail). */
+  if (usr->gdata.conn_fail[0]) {
+    ImVec2 ts;
+    igCalcTextSize(&ts, usr->gdata.conn_fail, NULL, false, -1.0f);
+    igSetCursorPosX((ctx->size[0] - ts.x) * 0.5f);
+    igSetCursorPosY(style->WindowPadding.y * 4);
+    igTextColored((ImVec4){1.0f, 0.42f, 0.42f, 1.0f}, "%s",
+                  usr->gdata.conn_fail);
   }
 
   draw_snakey_rain_homepage(env, frame_height);

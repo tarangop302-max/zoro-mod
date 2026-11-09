@@ -319,6 +319,10 @@ void android_jni_play_quick_sound(int id) {
     ajni_call_activity_int("playQuickSound", id);
 }
 
+void android_jni_show_realtime_lb(int in_game) {
+    ajni_call_activity_int("showRealtimeLeaderboard", in_game ? 1 : 0);
+}
+
 void android_jni_play_sos_beep(int kind) {
     ajni_call_activity_int("playSosBeep", kind);
 }

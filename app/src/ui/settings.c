@@ -13,6 +13,9 @@
 
 #include "../user.h"
 #include "../android_glfw_shim.h"
+#ifdef ANDROID
+#include "../android_jni.h"
+#endif
 #include "crystal_theme.h"
 
 void ui_settings_init(tenv* env) {}
@@ -584,6 +587,18 @@ static void sec_general(tenv* env) {
   }
   igIndent(-igGetStyle()->WindowPadding.x);
 
+#ifdef ANDROID
+  /* Realtime leaderboards */
+  section_begin(env, "Realtime Leaderboards");
+  igIndent(igGetStyle()->WindowPadding.x);
+  if (opt_begin("Realtime leaderboards",
+                "Live top players of every server (NTL RealTime Status). Opens over the game; tap Close to come back.")) {
+    if (igButton("Open##rtlb_open", (ImVec2){-1, 0})) android_jni_show_realtime_lb(1);
+    opt_end();
+  }
+  igIndent(-igGetStyle()->WindowPadding.x);
+
+#endif
   /* Backup */
   section_begin(env, "Backup");
   igIndent(igGetStyle()->WindowPadding.x);

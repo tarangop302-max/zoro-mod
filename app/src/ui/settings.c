@@ -10,6 +10,7 @@
 #include "key_buttons.h"
 #include "../game/backup.h"
 #include "../game/ntl_tags.h"
+#include "../game/quick_graphics.h"
 
 #include "../user.h"
 #include "../android_glfw_shim.h"
@@ -346,6 +347,36 @@ static void lb_fx_rows(const char* who, const char* id, lb_text_fx* fx,
 
 static void sec_general(tenv* env) {
   user_settings* usrs = &env->usr->usrs;
+
+  /* Quick graphics: one tap rewrites the normal on/off settings below. */
+  static int s_qg_last = -1; /* runtime only, just for the note */
+  section_begin(env, "Quick graphics");
+  igIndent(igGetStyle()->WindowPadding.x);
+  if (opt_begin("Quick graphics",
+                "One tap sets Normal and Assist mode: Low = everything off, Flat; Normal = only "
+                "background, accessories and tags, Vlither textured; High = everything on. You can "
+                "still change each setting afterwards.")) {
+    ImVec2 av;
+    igGetContentRegionAvail(&av);
+    float bw = (av.x - igGetStyle()->ItemSpacing.x * 2) / 3.0f;
+    static const char* labels[QG_COUNT] = {"Low##qg_low", "Normal##qg_normal", "High##qg_high"};
+    for (int q = 0; q < QG_COUNT; ++q) {
+      if (q) igSameLine(0, -1);
+      if (igButton(labels[q], (ImVec2){bw, 0})) {
+        quick_graphics_apply(usrs, q);
+        save_user_settings(usrs);
+        s_qg_last = q;
+      }
+    }
+    opt_end();
+  }
+  if (SO.section_shown && s_qg_last >= 0) {
+    char note[64];
+    snprintf(note, sizeof note, "Applied: %s.", quick_graphics_name(s_qg_last));
+    opt_note(note);
+  }
+  igIndent(-igGetStyle()->WindowPadding.x);
+
   section_begin(env, "General");
   igIndent(igGetStyle()->WindowPadding.x);
 

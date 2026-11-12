@@ -10,6 +10,7 @@
 #include "../user.h"    
 #include "../ui/key_buttons.h"    
 #include "global_chat.h"
+#include "../network/server.h"
     
 /*
  * Steering prediction (server-true). The server only starts turning the snake
@@ -334,7 +335,8 @@ void input(tenv* env) {
     /* Eyes back: send "behind the head" instead of the mouse angle (see    
        eyes_back.c). Not while the bot is driving or the snake is dead. */    
     static bool eb_was_on = false;    
-    bool eb_on = usrs->hotkey_eyes_back.active &&    
+    bool eb_on = usrs->hotkey_eyes_back.active &&
+                 !server_is_battledome(usrs->ipv4) && /* disabled on Battledome */    
                  !usrs->hotkeys[HOTKEY_BOT].active && !me->dead;    
     if (eb_was_on && !eb_on) {    
       /* Switched off: the server is still chasing the last "behind" angle,    

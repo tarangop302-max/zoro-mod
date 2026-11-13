@@ -101,6 +101,59 @@ static void se_draw_popup_bg(tenv* env, float pop_x, float pop_y, float pop_w,
                      14.0f, 0, 1.5f);
 }
 
+
+/* ---- themed preview box + looping snake ---------------------------------
+   The preview lives in a box that follows the selected background theme
+   (all colours go through crystal_tint via se_col). The box interior is a
+   flat rect drawn by the preview renderer (so the snake sits on top of it);
+   the corner brackets / hairline are drawn by ImGui on top. The snake enters
+   the box from the left wall, runs along the top lane, U-turns at the right
+   side, comes back along the bottom lane, U-turns again and then keeps
+   chasing its own tail around a rounded racetrack, always fully inside. */
+
+static void se_draw_preview_frame(ImVec2 mn, ImVec2 mx, float rs) {
+  ImDrawList* dl = igGetWindowDrawList();
+  ImU32 line = se_col(0.690f, 0.580f, 0.960f, 0.28f);
+  ImU32 acc = se_col(0.800f, 0.700f, 1.0f, 0.95f);
+  float len = 18.0f * rs, th = 2.0f;
+  ImDrawList_AddRect(dl, mn, mx, line, 0.0f, 0, 1.0f);
+  /* four corner brackets */
+  ImDrawList_AddLine(dl, (ImVec2){mn.x, mn.y}, (ImVec2){mn.x + len, mn.y}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mn.x, mn.y}, (ImVec2){mn.x, mn.y + len}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mx.x, mn.y}, (ImVec2){mx.x - len, mn.y}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mx.x, mn.y}, (ImVec2){mx.x, mn.y + len}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mn.x, mx.y}, (ImVec2){mn.x + len, mx.y}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mn.x, mx.y}, (ImVec2){mn.x, mx.y - len}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mx.x, mx.y}, (ImVec2){mx.x - len, mx.y}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mx.x, mx.y}, (ImVec2){mx.x, mx.y - len}, acc, th);
+}
+
+typedef struct {
+  float xl, xr, y1, y2, cy, r, s, p; /* racetrack geometry, p = perimeter */
+} se_track;
+
+/* Position + heading at distance u along the track. u < 0 is the straight
+   lead-in on the top lane (the snake entering the box). */
+static void se_track_at(const se_track* t, float u, float* x, float* y,
+                        float* ang) {
+  if (u < 0) { *x = t->xl + u; *y = t->y1; *ang = 0; return; }
+  u = fmodf(u, t->p);
+  float arc = (float)PI * t->r;
+  if (u < t->s) { *x = t->xl + u; *y = t->y1; *ang = 0; return; }
+  u -= t->s;
+  if (u < arc) {
+    float th = u / t->r;
+    *x = t->xr + t->r * sinf(th); *y = t->cy - t->r * cosf(th); *ang = th;
+    return;
+  }
+  u -= arc;
+  if (u < t->s) { *x = t->xr - u; *y = t->y2; *ang = (float)PI; return; }
+  u -= t->s;
+  float th = u / t->r;
+  *x = t->xl - t->r * sinf(th); *y = t->cy + t->r * cosf(th);
+  *ang = th + (float)PI;
+}
+
 void ui_skin_editor_init(tenv* env) {}
 
 void ui_skin_editor(tenv* env) {
@@ -194,9 +247,12 @@ void ui_skin_editor(tenv* env) {
   float preview_row_a_y = grid_y - (stack_h + scale + style->ItemSpacing.y);
   float preview_row_b_y = grid_y - (stack_h + 2 * (scale + style->ItemSpacing.y));
   float preview_pad = scale * 0.5f;
-  ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - sk_w * 0.5f - preview_pad,
+  /* The preview box: same vertical band as before, but a fixed, compact
+     width instead of the old 256-segment-wide strip. */
+  float box_w = pop_w * 0.90f;
+  ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - box_w * 0.5f,
                              fminf(preview_row_a_y, preview_row_b_y) - preview_pad};
-  ImVec2 preview_excl_max = {ctx->size[0] * 0.5f + sk_w * 0.5f + preview_pad,
+  ImVec2 preview_excl_max = {ctx->size[0] * 0.5f + box_w * 0.5f,
                              fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad};
 
   /* Color/accessory grid panel geometry -- identical to the child-window
@@ -222,6 +278,7 @@ void ui_skin_editor(tenv* env) {
      colors since this doesn't paint over them at all. */
   se_draw_popup_bg(env, pop_x, pop_y, pop_w, pop_h, preview_excl_min,
                    preview_excl_max, panel_excl_min, panel_excl_max);
+  se_draw_preview_frame(preview_excl_min, preview_excl_max, resolution_scale);
   crystal_push_theme();
 
   /* ---- header: title + round close (same as OK) ---- */
@@ -280,161 +337,142 @@ void ui_skin_editor(tenv* env) {
   }
 
 
-  igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
-  igSetCursorPosY((grid_y) - (stack_h + scale + style->ItemSpacing.y));
-
   for (int i = strlen(usrs->skin_code); i < MAX_SKIN_CODE_LEN + 1; i++)
     usrs->skin_code[i] = 0;
 
-  for (int i = (MAX_SKIN_CODE_LEN / 2) - 1; i >= 0; i--) {
-    bp_renderer_push(
-        usr->r->bpr,
-        &(bp_instance){
-            {(igGetCursorPosX() + i * (8 * (scale / 48))) - 10 * (scale / 48),
-             igGetCursorPosY() - 10 * (scale / 48), 68 * (scale / 48)},
-            gdata->SHADOW_UV,
-            {0, 0, 0, 0.2f}});
-  }
+  /* ---- snake preview: racetrack loop inside the themed box ---- */
+  float bx0 = preview_excl_min.x, by0 = preview_excl_min.y;
+  float bw = preview_excl_max.x - bx0, bh = preview_excl_max.y - by0;
 
-  int cbp = 0;
-  for (int i = (MAX_SKIN_CODE_LEN / 2) - 1; i >= 0; i--) {
-    int cg_id;
+  /* which segments actually exist (custom skins can be short) */
+  int cg[MAX_SKIN_CODE_LEN];
+  int n_eff = 0;
+  for (int k = 0; k < MAX_SKIN_CODE_LEN; k++) {
+    int id;
     if (usrs->custom_skin) {
-      cg_id =
-          get_cg_id(&usr->gdata, usrs->skin_code[MAX_SKIN_CODE_LEN - 1 - cbp]);
+      id = get_cg_id(&usr->gdata, usrs->skin_code[MAX_SKIN_CODE_LEN - 1 - k]);
     } else {
       int sk_len = gdata->default_skins[usrs->default_skin][0];
-      cg_id =
-          gdata->default_skins[usrs->default_skin]
-                              [1 + ((MAX_SKIN_CODE_LEN - 1 - cbp) % sk_len)];
+      id = gdata->default_skins[usrs->default_skin]
+                               [1 + ((MAX_SKIN_CODE_LEN - 1 - k) % sk_len)];
     }
+    cg[k] = id;
+    if (id != -1) n_eff++;
+  }
+  if (n_eff < 1) n_eff = 1;
 
-    if (cg_id != -1) {
-      float we =
-          gdata->worm_effect[(MAX_SKIN_CODE_LEN - 1 - cbp) % WORM_EFFECT_LEN] *
-              (!usrs->custom_skin) +
-          usrs->custom_skin;
-      bp_renderer_push(usr->r->bpr, &(bp_instance){{igGetCursorPosX() +
-                                                        i * (8 * (scale / 48)),
-                                                    igGetCursorPosY(), scale},
-                                                   gdata->cg_uvs[cg_id],
-                                                   {we, we, we, 1}});
+  /* Segment size: small enough that the whole body fits on the loop with a
+     clear gap between head and tail (spacing between segments = d / 6). */
+  float d = scale * 0.55f;
+  se_track tr;
+  for (int it = 0; it < 6; it++) {
+    float m = d * 0.71f + 4.0f;
+    float lane = bh - 2.0f * m;
+    tr.r = lane * 0.5f;
+    tr.y1 = by0 + m;
+    tr.y2 = by0 + bh - m;
+    tr.cy = (tr.y1 + tr.y2) * 0.5f;
+    tr.xl = bx0 + m + tr.r;
+    tr.xr = bx0 + bw - m - tr.r;
+    tr.s = tr.xr - tr.xl;
+    tr.p = 2.0f * tr.s + 2.0f * (float)PI * tr.r;
+    float gap = fmaxf(4.0f * d, 0.12f * tr.p);
+    float dmax = 6.0f * (tr.p - gap) / (float)n_eff;
+    if (d > dmax) d = dmax;
+    if (d < scale * 0.18f) d = scale * 0.18f;
+  }
+  float sp = d / 6.0f;
+
+  /* time: restart (snake re-enters) whenever the screen is opened again */
+  static double s_last_t = 0.0;
+  static float s_head = 0.0f;
+  double now = igGetTime();
+  float dt = (float)(now - s_last_t);
+  if (dt > 0.25f || dt < 0.0f) { s_head = 0.0f; dt = 0.0f; }
+  if (dt > 0.05f) dt = 0.05f;
+  s_last_t = now;
+  s_head += dt * 220.0f * resolution_scale;
+  if (s_head > 1e7f) s_head = fmodf(s_head, tr.p);
+
+  /* box interior (theme-tinted, flat) under the snake */
+  {
+    ImVec4 f = crystal_tint((ImVec4){0.045f, 0.028f, 0.085f, 1.0f});
+    bp_renderer_push(usr->r->bpr,
+                     &(bp_instance){{bx0, by0, bw, 0}, gdata->cg_uvs[BLANK_UV],
+                                    {f.x, f.y, f.z, 1.0f}, {bh, 2.0f}});
+  }
+
+  float lead = tr.r; /* hidden until it has crossed the left wall */
+  float ks = d / 48.0f;
+  for (int k = 0; k < MAX_SKIN_CODE_LEN; k++) {
+    if (cg[k] == -1) continue;
+    float u = s_head - (MAX_SKIN_CODE_LEN - 1 - k) * sp;
+    if (u < -lead) continue;
+    float x, y, a;
+    se_track_at(&tr, u, &x, &y, &a);
+    bp_renderer_push(usr->r->bpr,
+                     &(bp_instance){{x - d * 0.5f - 10 * ks, y - d * 0.5f - 10 * ks, 68 * ks},
+                                    gdata->SHADOW_UV, {0, 0, 0, 0.2f}});
+  }
+
+  float head_x = 0, head_y = 0, head_a = 0;
+  for (int k = 0; k < MAX_SKIN_CODE_LEN; k++) {
+    float u = s_head - (MAX_SKIN_CODE_LEN - 1 - k) * sp;
+    if (u < -lead) continue;
+    float x, y, a;
+    se_track_at(&tr, u, &x, &y, &a);
+    if (k == MAX_SKIN_CODE_LEN - 1) { head_x = x; head_y = y; head_a = a; }
+    if (cg[k] == -1) continue;
+    float we = gdata->worm_effect[(MAX_SKIN_CODE_LEN - 1 - k) % WORM_EFFECT_LEN] *
+                   (!usrs->custom_skin) + usrs->custom_skin;
+    bp_renderer_push(usr->r->bpr,
+                     &(bp_instance){{x - d * 0.5f, y - d * 0.5f, d, a + (float)PI},
+                                    gdata->cg_uvs[cg[k]], {we, we, we, 1}});
+  }
+
+  /* eyes / accessory / NTL tag follow the head (only once it is inside) */
+  if (s_head >= -lead) {
+    float ssc = d / 29;
+    float ed = 6 * ssc;
+    float esp = 6 * ssc;
+    float er = 6;
+    default_skin_data* dfs =
+        gdata->dfs + ((1 - usrs->custom_skin) * (1 + usrs->default_skin));
+    float pr = dfs->pr;
+    float iris_r = er * ssc;
+    float pupil_r = pr * ssc;
+    float ca = cosf(head_a), sa = sinf(head_a);
+    float ox, oy, px, py;
+    ox = ed; oy = -esp - .5f;
+    px = head_x + ox * ca - oy * sa; py = head_y + ox * sa + oy * ca;
+    bp_renderer_push(usr->r->bpr, &(bp_instance){{px - iris_r, py - iris_r, iris_r * 2},
+                     gdata->cg_uvs[BLANK_UV], {dfs->ec.r, dfs->ec.g, dfs->ec.b, 1}});
+    ox = ed; oy = esp + .5f;
+    px = head_x + ox * ca - oy * sa; py = head_y + ox * sa + oy * ca;
+    bp_renderer_push(usr->r->bpr, &(bp_instance){{px - iris_r, py - iris_r, iris_r * 2},
+                     gdata->cg_uvs[BLANK_UV], {dfs->ec.r, dfs->ec.g, dfs->ec.b, 1}});
+    ox = ed + .5f + 2 * ssc; oy = -esp;
+    px = head_x + ox * ca - oy * sa; py = head_y + ox * sa + oy * ca;
+    bp_renderer_push(usr->r->bpr, &(bp_instance){{px - pupil_r, py - pupil_r, pupil_r * 2},
+                     gdata->cg_uvs[BLANK_UV], {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, 1}});
+    ox = ed + .5f + 2 * ssc; oy = esp;
+    px = head_x + ox * ca - oy * sa; py = head_y + ox * sa + oy * ca;
+    bp_renderer_push(usr->r->bpr, &(bp_instance){{px - pupil_r, py - pupil_r, pupil_r * 2},
+                     gdata->cg_uvs[BLANK_UV], {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, 1}});
+    if (usrs->accessory < NUM_ACCESSORIES) {
+      accessory_data* acc = gdata->accessories + usrs->accessory;
+      float aox = acc->of * ed;
+      float m = d * 0.5f * acc->sc;
+      float acx = head_x + aox * ca;
+      float acy = head_y + aox * sa;
+      bp_renderer_push(usr->r->bpr,
+                       &(bp_instance){{acx - m, acy - m, m * 2, head_a}, acc->uv, {1, 1, 1, 1}});
     }
-
-    cbp++;
+    ntl_tags_draw_preview(head_x, head_y, d);
   }
 
   igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
   igSetCursorPosY((grid_y) - (stack_h + 2 * (scale + style->ItemSpacing.y)));
-
-  for (int i = 0; i < MAX_SKIN_CODE_LEN / 2; i++) {
-    bp_renderer_push(
-        usr->r->bpr,
-        &(bp_instance){
-            {(igGetCursorPosX() + i * (8 * (scale / 48))) - 10 * (scale / 48),
-             igGetCursorPosY() - 10 * (scale / 48), 68 * (scale / 48)},
-            gdata->SHADOW_UV,
-            {0, 0, 0, 0.2f}});
-  }
-
-  vec2 last_bp_pos;
-
-  for (int i = 0; i < MAX_SKIN_CODE_LEN / 2; i++) {
-    int cg_id;
-    if (usrs->custom_skin) {
-      cg_id =
-          get_cg_id(&usr->gdata, usrs->skin_code[MAX_SKIN_CODE_LEN - 1 - cbp]);
-    } else {
-      int sk_len = gdata->default_skins[usrs->default_skin][0];
-      cg_id =
-          gdata->default_skins[usrs->default_skin]
-                              [1 + ((MAX_SKIN_CODE_LEN - 1 - cbp) % sk_len)];
-    }
-
-    last_bp_pos[0] = igGetCursorPosX() + i * (8 * (scale / 48));
-    last_bp_pos[1] = igGetCursorPosY();
-
-    if (cg_id != -1) {
-      float we =
-          gdata->worm_effect[(MAX_SKIN_CODE_LEN - 1 - cbp) % WORM_EFFECT_LEN] *
-              (!usrs->custom_skin) +
-          usrs->custom_skin;
-      bp_renderer_push(usr->r->bpr, &(bp_instance){{last_bp_pos[0],
-                                                    last_bp_pos[1], scale, PI},
-                                                   gdata->cg_uvs[cg_id],
-                                                   {we, we, we, 1}});
-    }
-
-    cbp++;
-  }
-
-  float ssc = scale / 29;
-  float ed = 6 * ssc;
-  float esp = 6 * ssc;
-  float er = 6;
-  default_skin_data* dfs =
-      gdata->dfs + ((1 - usrs->custom_skin) * (1 + usrs->default_skin));
-  float pr = dfs->pr;
-  float iris_r = er * ssc;
-  float pupil_r = pr * ssc;
-
-  float ex = ed;
-  float ey = -esp - .5;
-
-  bp_renderer_push(
-      usr->r->bpr,
-      &(bp_instance){{((last_bp_pos[0] + scale / 2) + ex) - iris_r,
-                      ((last_bp_pos[1] + scale / 2) + ey) - iris_r, iris_r * 2},
-                     gdata->cg_uvs[BLANK_UV],
-                     {dfs->ec.r, dfs->ec.g, dfs->ec.b, 1}});
-
-  ex = ed;
-  ey = esp + .5;
-
-  bp_renderer_push(
-      usr->r->bpr,
-      &(bp_instance){{((last_bp_pos[0] + scale / 2) + ex) - iris_r,
-                      ((last_bp_pos[1] + scale / 2) + ey) - iris_r, iris_r * 2},
-                     gdata->cg_uvs[BLANK_UV],
-                     {dfs->ec.r, dfs->ec.g, dfs->ec.b, 1}});
-
-  ex = ed + .5 + 2 * ssc;
-  ey = -esp;
-
-  bp_renderer_push(
-      usr->r->bpr,
-      &(bp_instance){
-          {((last_bp_pos[0] + scale / 2) + ex) - pupil_r,
-           ((last_bp_pos[1] + scale / 2) + ey) - pupil_r, pupil_r * 2},
-          gdata->cg_uvs[BLANK_UV],
-          {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, 1}});
-
-  ex = (ed + .5) + 2 * ssc;
-  ey = esp;
-
-  bp_renderer_push(
-      usr->r->bpr,
-      &(bp_instance){
-          {((last_bp_pos[0] + scale / 2) + ex) - pupil_r,
-           ((last_bp_pos[1] + scale / 2) + ey) - pupil_r, pupil_r * 2},
-          gdata->cg_uvs[BLANK_UV],
-          {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, 1}});
-
-  if (usrs->accessory < NUM_ACCESSORIES) {
-    accessory_data* acc = gdata->accessories + usrs->accessory;
-    ex = acc->of * ed;
-    ey = 0;
-    float m = scale * 0.5f * acc->sc;
-    float acx = (ex + last_bp_pos[0] + scale / 2);
-    float acy = (ey + last_bp_pos[1] + scale / 2);
-
-    bp_renderer_push(
-        usr->r->bpr,
-        &(bp_instance){{acx - m, acy - m, m * 2, 0}, acc->uv, {1, 1, 1, 1}});
-  }
-
-  /* The chosen NTL tag, hanging off the preview snake's head like in a match. */
-  ntl_tags_draw_preview(last_bp_pos[0] + scale / 2, last_bp_pos[1] + scale / 2, scale);
 
   float row_h = style->ItemSpacing.y + frame_height;
   float picker_x = ctx->size[0] * 0.5 - tot_size[0] * 0.5f;

@@ -128,6 +128,8 @@ static void se_draw_preview_frame(ImVec2 mn, ImVec2 mx, float rs) {
   ImDrawList_AddLine(dl, (ImVec2){mx.x, mx.y}, (ImVec2){mx.x, mx.y - len}, acc, th);
 }
 
+static int s_se_tab = 0; /* Custom view: 0 = skin colours, 1 = accessories */
+
 typedef struct {
   float xl, xr, y1, y2, cy, r, s, p; /* racetrack geometry, p = perimeter */
 } se_track;
@@ -241,36 +243,24 @@ void ui_skin_editor(tenv* env) {
        editing:     [skin code input] [Save] [Default] [OK]        -> 4
        not editing: [Default skins] [<>] [Saved skins] [<>]
                     [Custom] [OK]                                   -> 6 */
-  int picker_rows = gdata->skin_editing ? 4 : 6;
-  /* The NTL tag block (label + sliding picker + buttons) sits at the bottom,
-     between the Custom button and OK; editing a custom skin needs the room
-     for its colour grid instead, so it only shows when not editing. */
-  float tag_h = gdata->skin_editing ? 0.0f : ntl_tags_block_height();
-  float stack_h = (style->ItemSpacing.y + frame_height) * picker_rows + tag_h;
-  float reserved_h = stack_h + (scale + style->ItemSpacing.y) * 2.0f;
-  float min_grid_y = pop_y + header_h + style->WindowPadding.y + reserved_h;
-  float grid_y;
-  if (gdata->skin_editing) {
-    /* The color/accessory grid (child panel) starts at grid_y and fills
-       everything down to the bottom of the screen, so grid_y only needs to
-       leave enough room above it for the preview + input rows -- it isn't
-       meant to be centered as a fixed-height block. */
-    grid_y = (pop_y + header_h + pop_bottom) * 0.5f - tot_size[1] * 0.5f;
-    if (grid_y < min_grid_y) grid_y = min_grid_y;
-  } else {
-    /* No panel below grid_y here -- the preview + picker rows are the
-       whole visible block, so center that block in the screen instead of
-       anchoring it to the top via min_grid_y. */
-    grid_y = (pop_y + header_h + pop_bottom) * 0.5f + reserved_h * 0.5f;
-    if (grid_y < min_grid_y) grid_y = min_grid_y;
-  }
+  /* Both views (main + Custom) share ONE preview box: its position and size
+     are always computed from the main SKIN EDITOR layout. */
+  float row_h = style->ItemSpacing.y + frame_height;
+  float tag_h_main = ntl_tags_block_height();
+  float stack_h_main = row_h * 6 + tag_h_main;
+  float reserved_main = stack_h_main + (scale + style->ItemSpacing.y) * 2.0f;
+  float min_grid_main = pop_y + header_h + style->WindowPadding.y + reserved_main;
+  float grid_main = (pop_y + header_h + pop_bottom) * 0.5f + reserved_main * 0.5f;
+  if (grid_main < min_grid_main) grid_main = min_grid_main;
+  float shift_y = scale * 0.8f;
+  float box_up = scale * 0.3f;
+  float box_dn = shift_y - frame_height * 0.75f;
+  grid_main += shift_y;
 
-  /* Main SKIN EDITOR view only: push the buttons down a little and give the
-     preview box a bit more height (the Custom view is left as it was). */
-  float shift_y = gdata->skin_editing ? 0.0f : scale * 0.8f;
-  float box_up = gdata->skin_editing ? 0.0f : scale * 0.3f;
-  float box_dn = gdata->skin_editing ? 0.0f : shift_y - frame_height * 0.75f;
-  grid_y += shift_y;
+  /* The NTL tag block only shows in the main view. */
+  float tag_h = gdata->skin_editing ? 0.0f : tag_h_main;
+  float stack_h = gdata->skin_editing ? row_h * 4 : stack_h_main;
+  float grid_y = grid_main;
 
   float sk_w = scale + (8 * (scale / 48)) * ((MAX_SKIN_CODE_LEN / 2.0f) - 1);
 
@@ -280,39 +270,42 @@ void ui_skin_editor(tenv* env) {
      generously for the shadow sprites (which extend 10*(scale/48) past
      each segment) and the eyes/accessory (small offsets past the last
      segment). */
-  float preview_row_a_y = grid_y - shift_y - (stack_h + scale + style->ItemSpacing.y);
-  float preview_row_b_y = grid_y - shift_y - (stack_h + 2 * (scale + style->ItemSpacing.y));
+  float preview_row_a_y = grid_main - shift_y - (stack_h_main + scale + style->ItemSpacing.y);
+  float preview_row_b_y = grid_main - shift_y - (stack_h_main + 2 * (scale + style->ItemSpacing.y));
   float preview_pad = scale * 0.5f;
   /* The preview box: same vertical band as before, but a fixed, compact
      width instead of the old 256-segment-wide strip. */
   float box_w = pop_w * 0.90f;
-  float box_extra = 0.0f;
-  if (!gdata->skin_editing) {
-    float cur_top = fminf(preview_row_a_y, preview_row_b_y) - preview_pad - box_up;
-    float cur_bot = fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad + box_dn;
-    box_extra = 0.20f * (cur_bot - cur_top);
-  }
+  float cur_top = fminf(preview_row_a_y, preview_row_b_y) - preview_pad - box_up;
+  float cur_bot = fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad + box_dn;
+  float box_extra = 0.20f * (cur_bot - cur_top);
   ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - box_w * 0.5f,
                              fminf(preview_row_a_y, preview_row_b_y) - preview_pad - box_up - box_extra};
   ImVec2 preview_excl_max = {ctx->size[0] * 0.5f + box_w * 0.5f,
                              fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad + box_dn};
 
-  /* Color/accessory grid panel geometry -- identical to the child-window
-     rect computed further down when the panel actually gets drawn. kept
-     in sync deliberately (same formulas) rather than shared via a
-     variable, since the panel's own setup runs much later after several
-     other widgets. Only present while editing a custom skin. */
+  /* Custom view: the buttons start just below the box, then the two tab
+     buttons (SKIN COLOURS / ACCESSORIES) sit under OK and the wide panel
+     under them. Geometry is computed once here and reused when drawing. */
+  float panel_x = 0, panel_y = 0, panel_w = 0, panel_h = 0;
+  int ncols = 7;
   ImVec2 panel_excl_min = {0, 0};
   ImVec2 panel_excl_max = {0, 0};
-  if (usrs->custom_skin && gdata->skin_editing) {
-    float panel_w = tot_size[0] + style->ScrollbarSize + style->WindowPadding.x * 2.0f;
-    if (panel_w > pop_w - style->WindowPadding.x * 2.0f)
-      panel_w = pop_w - style->WindowPadding.x * 2.0f;
-    float panel_x = ctx->size[0] * 0.5f - panel_w * 0.5f;
-    float panel_h = pop_bottom - grid_y - style->WindowPadding.y * 2.0f;
+  if (gdata->skin_editing) {
+    grid_y = preview_excl_max.y + row_h * 0.45f + row_h * 4.0f;
+    panel_w = pop_w * 0.94f;
+    panel_x = ctx->size[0] * 0.5f - panel_w * 0.5f;
+    panel_y = grid_y + row_h;
+    panel_h = pop_bottom - panel_y - style->WindowPadding.y * 2.0f;
     if (panel_h < scale * 2.25f) panel_h = scale * 2.25f;
-    panel_excl_min = (ImVec2){panel_x, grid_y};
-    panel_excl_max = (ImVec2){panel_x + panel_w, grid_y + panel_h};
+    ncols = (int)((panel_w - style->ScrollbarSize - style->WindowPadding.x * 2.0f) /
+                  (scale + style->ItemSpacing.x));
+    if (ncols > 14) ncols = 14;
+    if (ncols < 4) ncols = 4;
+    if (usrs->custom_skin) {
+      panel_excl_min = (ImVec2){panel_x, panel_y};
+      panel_excl_max = (ImVec2){panel_x + panel_w, panel_y + panel_h};
+    }
   }
 
   /* Restored to the original 0.72 (in fact this could go all the way to
@@ -510,7 +503,6 @@ void ui_skin_editor(tenv* env) {
   igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
   igSetCursorPosY((grid_y) - (stack_h + 2 * (scale + style->ItemSpacing.y)));
 
-  float row_h = style->ItemSpacing.y + frame_height;
   float picker_x = ctx->size[0] * 0.5 - tot_size[0] * 0.5f;
   float half_w = tot_size[0] / 2 - style->ItemSpacing.x / 2;
 
@@ -658,16 +650,27 @@ void ui_skin_editor(tenv* env) {
   crystal_sheen();
   igPopStyleColor(3);
 
-  if (usrs->custom_skin && gdata->skin_editing) {
-    float panel_w = tot_size[0] + style->ScrollbarSize + style->WindowPadding.x * 2.0f;
-    if (panel_w > pop_w - style->WindowPadding.x * 2.0f)
-      panel_w = pop_w - style->WindowPadding.x * 2.0f;
-    float panel_x = ctx->size[0] * 0.5f - panel_w * 0.5f;
-    float panel_h = pop_bottom - grid_y - style->WindowPadding.y * 2.0f;
-    if (panel_h < scale * 2.25f) panel_h = scale * 2.25f;
+  if (!gdata->skin_editing) s_se_tab = 0;
 
-    igSetCursorPosX(panel_x);
+  if (gdata->skin_editing) {
+    /* SKIN COLOURS / ACCESSORIES tabs, directly under OK. */
+    const char* tab_names[2] = {"SKIN COLOURS##tab_col", "ACCESSORIES##tab_acc"};
     igSetCursorPosY(grid_y);
+    for (int t = 0; t < 2; t++) {
+      igSetCursorPosX(picker_x + t * (half_w + style->ItemSpacing.x));
+      bool on = s_se_tab == t;
+      if (on)
+        igPushStyleColor_Vec4(ImGuiCol_Button,
+                              (ImVec4){0.510f, 0.294f, 0.910f, 0.60f});
+      if (igButton(tab_names[t], (ImVec2){half_w, 0})) s_se_tab = t;
+      crystal_sheen();
+      if (on) igPopStyleColor(1);
+    }
+  }
+
+  if (usrs->custom_skin && gdata->skin_editing) {
+    igSetCursorPosX(panel_x);
+    igSetCursorPosY(panel_y);
     igPushStyleColor_Vec4(ImGuiCol_ChildBg,
                           (ImVec4){0.176f, 0.106f, 0.306f, 0.30f});
     igPushStyleColor_Vec4(ImGuiCol_ScrollbarBg,
@@ -684,24 +687,35 @@ void ui_skin_editor(tenv* env) {
         ImGuiWindowFlags_AlwaysVerticalScrollbar | ImGuiWindowFlags_NoMove);
 
     if (child_visible) {
+      static int last_tab = -1;
+      if (last_tab != s_se_tab) {
+        igSetScrollY_Float(0.0f);
+        last_tab = s_se_tab;
+      }
       float clip_x1 = panel_x;
-      float clip_y1 = grid_y;
+      float clip_y1 = panel_y;
       float clip_x2 = panel_x + panel_w - style->ScrollbarSize;
-      float clip_y2 = grid_y + panel_h;
+      float clip_y2 = panel_y + panel_h;
       int skin_code_len = strlen(usrs->skin_code);
+      float pitch_x = style->ItemSpacing.x + scale;
+      float pitch_y = style->ItemSpacing.y + scale;
+      float grid_w = ncols * scale + (ncols - 1) * style->ItemSpacing.x;
+      float gx0 = (panel_w - style->ScrollbarSize - grid_w) * 0.5f;
+      if (gx0 < 0) gx0 = 0;
 
-      igTextDisabled("Snake colours");
-      float colors_y = igGetCursorPosY() + style->ItemSpacing.y;
+      if (s_se_tab == 0) {
+        igTextDisabled("Snake colours");
+        float colors_y = igGetCursorPosY() + style->ItemSpacing.y;
+        int rows = (42 + ncols - 1) / ncols;
 
-      int cg_id = 0;
-      for (int i = 0; i < 6; i++) {
-        for (int j = 0; j < 7; j++) {
+        for (int cg_id = 0; cg_id < 42; cg_id++) {
+          int i = cg_id / ncols, j = cg_id % ncols;
           bool is_disabled =
               (cg_id == 36 || cg_id == 38 || cg_id == 40 || cg_id == 41 ||
                !(skin_code_len < MAX_SKIN_CODE_LEN));
 
-          igSetCursorPosY(colors_y + (style->ItemSpacing.y + scale) * i);
-          igSetCursorPosX((style->ItemSpacing.x + scale) * j);
+          igSetCursorPosY(colors_y + pitch_y * i);
+          igSetCursorPosX(gx0 + pitch_x * j);
           ImVec2 item_pos;
           igGetCursorScreenPos(&item_pos);
           bool ct = gdata->cg_colors_ct[cg_id];
@@ -744,24 +758,22 @@ void ui_skin_editor(tenv* env) {
                                             gdata->cg_uvs[cg_id],
                                             {1, 1, 1, a}});
           }
-          cg_id++;
         }
-      }
 
-      float accessories_label_y = colors_y +
-          (style->ItemSpacing.y + scale) * 6.0f + style->ItemSpacing.y * 2.0f;
-      igSetCursorPosX(0);
-      igSetCursorPosY(accessories_label_y);
-      igTextDisabled("Accessories");
-      float accessories_y = igGetCursorPosY() + style->ItemSpacing.y;
+        igSetCursorPosX(0);
+        igSetCursorPosY(colors_y + pitch_y * rows);
+        igDummy((ImVec2){1, style->ItemSpacing.y});
+      } else {
+        igTextDisabled("Accessories");
+        float accessories_y = igGetCursorPosY() + style->ItemSpacing.y;
+        int total_acc = NUM_ACCESSORIES + 1; /* last tile = no accessory */
+        int rows = (total_acc + ncols - 1) / ncols;
 
-      int aid = 0;
-      for (int i = 0; i < 5; i++) {
-        for (int j = 0; j < 7; j++) {
-          if (aid > NUM_ACCESSORIES) break;
+        for (int aid = 0; aid < total_acc; aid++) {
+          int i = aid / ncols, j = aid % ncols;
           bool is_no_accessory = aid == NUM_ACCESSORIES;
-          igSetCursorPosY(accessories_y + (style->ItemSpacing.y + scale) * i);
-          igSetCursorPosX((style->ItemSpacing.x + scale) * j);
+          igSetCursorPosY(accessories_y + pitch_y * i);
+          igSetCursorPosX(gx0 + pitch_x * j);
           ImVec2 item_pos;
           igGetCursorScreenPos(&item_pos);
           float a = 0.8f;
@@ -797,13 +809,12 @@ void ui_skin_editor(tenv* env) {
                              &(bp_instance){{item_pos.x, item_pos.y, scale},
                                             gdata->accessories[aid].uv,
                                             {1, 1, 1, a}});
-          aid++;
         }
-      }
 
-      igSetCursorPosX(0);
-      igSetCursorPosY(accessories_y + (style->ItemSpacing.y + scale) * 5.0f);
-      igDummy((ImVec2){tot_size[0], style->ItemSpacing.y});
+        igSetCursorPosX(0);
+        igSetCursorPosY(accessories_y + pitch_y * rows);
+        igDummy((ImVec2){1, style->ItemSpacing.y});
+      }
     }
     igEndChild();
     igPopStyleColor(5);

@@ -27,6 +27,18 @@
 
 #define MAX_SAVED_NAMES 20
 
+/* Player ID for event verification (BattleDome-style servers), see
+   user_settings.player_id. Same format as the NTL mod: 16 characters from
+   [0-9A-Za-z]. */
+#define PLAYER_ID_LEN 16
+#define PLAYER_ID_SERVERS_MAX 1024
+/* Servers the ID is sent to by default (one ip:port per line). */
+#define PLAYER_ID_DEFAULT_SERVERS \
+  "81.169.165.225:444\n139.84.170.60:444\n45.77.5.207:444\n" \
+  "216.128.169.33:444\n45.76.102.107:444\n130.94.45.154:444\n" \
+  "81.169.165.225:446\n139.84.170.60:443\n45.77.5.207:443\n" \
+  "216.128.169.33:443\n45.76.102.107:443\n130.94.45.154:443"
+
 /* Head dot diameter range (screen px), see user_settings.head_dot_size. */
 #define HEAD_DOT_SIZE_MIN 2.0f
 #define HEAD_DOT_SIZE_MAX 30.0f
@@ -567,6 +579,16 @@ typedef struct user_settings {
   bool       lb_arrows_enabled;
   float      lb_anim_speed;  /* 0.5 .. 3.0, 1.0 = default (0.3 s slide)   */
   float      lb_arrow_hold;  /* seconds the arrow stays, 1 .. 10          */
+
+  /* v2.33: Player ID. A random 16-character ID created on first use and kept
+     in this file. It is sent to a server (packet 'C' + the 16 characters,
+     right after the handshake reply and before the spawn packet, exactly like
+     the NTL mod) ONLY when that server's ip:port is listed in
+     player_id_servers (one per line) or player_id_force is on. */
+  uint8_t    player_id_reserved[8];
+  char       player_id[PLAYER_ID_LEN + 1];
+  bool       player_id_force;
+  char       player_id_servers[PLAYER_ID_SERVERS_MAX];
 } user_settings;
 
 #define LB_ANIM_SPEED_MIN 0.5f
@@ -676,5 +698,23 @@ void save_user_settings(user_settings* usr_settings);
 bool user_settings_add_saved_name(user_settings* usr_settings, const char* name);
 /* Remove entry `index` from the previous-names list. */
 void user_settings_remove_saved_name(user_settings* usr_settings, int index);
+
+/* ---- Player ID ---------------------------------------------------------- */
+/* True if `id` is exactly 16 characters of [0-9A-Za-z]. */
+bool player_id_is_valid(const char* id);
+/* Creates a new random ID (replacing any old one) and saves the settings.
+   Returns false, leaving the old ID untouched, if no secure randomness is
+   available. */
+bool player_id_generate(user_settings* s);
+/* Makes sure a valid ID exists (generating + saving one if needed). Returns
+   true when s->player_id is usable. */
+bool player_id_ensure(user_settings* s);
+/* True if the ID should be sent to server `ip_port` ("ip:port", compared
+   case-insensitively): it is listed in player_id_servers, or the "send to every
+   server" option is on. */
+bool player_id_should_send(const user_settings* s, const char* ip_port);
+/* Checks a server list (one ip:port per line, blank lines allowed). Returns 0
+   if it is fine, otherwise the 1-based number of the first bad line. */
+int player_id_servers_check(const char* text);
 
 #endif

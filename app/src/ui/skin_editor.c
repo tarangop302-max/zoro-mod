@@ -154,6 +154,33 @@ static void se_track_at(const se_track* t, float u, float* x, float* y,
   *ang = th + (float)PI;
 }
 
+static void se_make_track(se_track* t, float bx0, float by0, float bw,
+                          float bh, float d) {
+  float m = d * 1.01f + 4.0f; /* edge margin incl. wiggle amplitude (0.30 d) */
+  t->r = (bh - 2.0f * m) * 0.5f;
+  t->y1 = by0 + m;
+  t->y2 = by0 + bh - m;
+  t->cy = (t->y1 + t->y2) * 0.5f;
+  t->xl = bx0 + m + t->r;
+  t->xr = bx0 + bw - m - t->r;
+  t->s = t->xr - t->xl;
+  t->p = 2.0f * t->s + 2.0f * (float)PI * t->r;
+}
+
+/* Track position plus a travelling sideways wave, so the body slithers like
+   a real snake instead of sliding along rigidly. */
+static void se_snake_at(const se_track* t, float u, float d, float phase,
+                        float* x, float* y, float* ang) {
+  se_track_at(t, u, x, y, ang);
+  float amp = 0.30f * d;
+  float k = 6.2831853f / (10.0f * d);
+  float arg = k * u - phase;
+  float off = amp * sinf(arg);
+  *x += -sinf(*ang) * off;
+  *y += cosf(*ang) * off;
+  *ang += atanf(amp * k * cosf(arg));
+}
+
 void ui_skin_editor_init(tenv* env) {}
 
 void ui_skin_editor(tenv* env) {
@@ -236,6 +263,13 @@ void ui_skin_editor(tenv* env) {
     if (grid_y < min_grid_y) grid_y = min_grid_y;
   }
 
+  /* Main SKIN EDITOR view only: push the buttons down a little and give the
+     preview box a bit more height (the Custom view is left as it was). */
+  float shift_y = gdata->skin_editing ? 0.0f : scale * 0.8f;
+  float box_up = gdata->skin_editing ? 0.0f : scale * 0.3f;
+  float box_dn = gdata->skin_editing ? 0.0f : shift_y - frame_height * 0.75f;
+  grid_y += shift_y;
+
   float sk_w = scale + (8 * (scale / 48)) * ((MAX_SKIN_CODE_LEN / 2.0f) - 1);
 
   /* Bounding box around both preview rows (the row further up on screen
@@ -244,16 +278,16 @@ void ui_skin_editor(tenv* env) {
      generously for the shadow sprites (which extend 10*(scale/48) past
      each segment) and the eyes/accessory (small offsets past the last
      segment). */
-  float preview_row_a_y = grid_y - (stack_h + scale + style->ItemSpacing.y);
-  float preview_row_b_y = grid_y - (stack_h + 2 * (scale + style->ItemSpacing.y));
+  float preview_row_a_y = grid_y - shift_y - (stack_h + scale + style->ItemSpacing.y);
+  float preview_row_b_y = grid_y - shift_y - (stack_h + 2 * (scale + style->ItemSpacing.y));
   float preview_pad = scale * 0.5f;
   /* The preview box: same vertical band as before, but a fixed, compact
      width instead of the old 256-segment-wide strip. */
   float box_w = pop_w * 0.90f;
   ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - box_w * 0.5f,
-                             fminf(preview_row_a_y, preview_row_b_y) - preview_pad};
+                             fminf(preview_row_a_y, preview_row_b_y) - preview_pad - box_up};
   ImVec2 preview_excl_max = {ctx->size[0] * 0.5f + box_w * 0.5f,
-                             fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad};
+                             fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad + box_dn};
 
   /* Color/accessory grid panel geometry -- identical to the child-window
      rect computed further down when the panel actually gets drawn. kept
@@ -363,35 +397,32 @@ void ui_skin_editor(tenv* env) {
 
   /* Segment size: small enough that the whole body fits on the loop with a
      clear gap between head and tail (spacing between segments = d / 6). */
-  float d = scale * 0.55f;
+  float d = scale * 0.85f;
   se_track tr;
-  for (int it = 0; it < 6; it++) {
-    float m = d * 0.71f + 4.0f;
-    float lane = bh - 2.0f * m;
-    tr.r = lane * 0.5f;
-    tr.y1 = by0 + m;
-    tr.y2 = by0 + bh - m;
-    tr.cy = (tr.y1 + tr.y2) * 0.5f;
-    tr.xl = bx0 + m + tr.r;
-    tr.xr = bx0 + bw - m - tr.r;
-    tr.s = tr.xr - tr.xl;
-    tr.p = 2.0f * tr.s + 2.0f * (float)PI * tr.r;
-    float gap = fmaxf(4.0f * d, 0.12f * tr.p);
+  for (int it = 0; it < 8; it++) {
+    se_make_track(&tr, bx0, by0, bw, bh, d);
+    float gap = fmaxf(3.0f * d, 0.07f * tr.p);
     float dmax = 6.0f * (tr.p - gap) / (float)n_eff;
+    float dlane = (bh - 8.0f) / 3.77f; /* lanes must clear each other */
     if (d > dmax) d = dmax;
+    if (d > dlane) d = dlane;
     if (d < scale * 0.18f) d = scale * 0.18f;
   }
+  se_make_track(&tr, bx0, by0, bw, bh, d);
   float sp = d / 6.0f;
 
   /* time: restart (snake re-enters) whenever the screen is opened again */
   static double s_last_t = 0.0;
   static float s_head = 0.0f;
+  static float s_phase = 0.0f;
   double now = igGetTime();
   float dt = (float)(now - s_last_t);
   if (dt > 0.25f || dt < 0.0f) { s_head = 0.0f; dt = 0.0f; }
   if (dt > 0.05f) dt = 0.05f;
   s_last_t = now;
   s_head += dt * 220.0f * resolution_scale;
+  s_phase += dt * 7.0f;
+  if (s_phase > 6283.0f) s_phase -= 6283.0f;
   if (s_head > 1e7f) s_head = fmodf(s_head, tr.p);
 
   /* box interior (theme-tinted, flat) under the snake */
@@ -409,7 +440,7 @@ void ui_skin_editor(tenv* env) {
     float u = s_head - (MAX_SKIN_CODE_LEN - 1 - k) * sp;
     if (u < -lead) continue;
     float x, y, a;
-    se_track_at(&tr, u, &x, &y, &a);
+    se_snake_at(&tr, u, d, s_phase, &x, &y, &a);
     bp_renderer_push(usr->r->bpr,
                      &(bp_instance){{x - d * 0.5f - 10 * ks, y - d * 0.5f - 10 * ks, 68 * ks},
                                     gdata->SHADOW_UV, {0, 0, 0, 0.2f}});
@@ -420,7 +451,7 @@ void ui_skin_editor(tenv* env) {
     float u = s_head - (MAX_SKIN_CODE_LEN - 1 - k) * sp;
     if (u < -lead) continue;
     float x, y, a;
-    se_track_at(&tr, u, &x, &y, &a);
+    se_snake_at(&tr, u, d, s_phase, &x, &y, &a);
     if (k == MAX_SKIN_CODE_LEN - 1) { head_x = x; head_y = y; head_a = a; }
     if (cg[k] == -1) continue;
     float we = gdata->worm_effect[(MAX_SKIN_CODE_LEN - 1 - k) % WORM_EFFECT_LEN] *

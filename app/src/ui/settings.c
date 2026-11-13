@@ -667,6 +667,98 @@ static void sec_general(tenv* env) {
   }
   if (SO.section_shown && backup_status()[0]) opt_note(backup_status());
   igIndent(-igGetStyle()->WindowPadding.x);
+
+  /* Player ID (event verification, e.g. BattleDome) */
+  static char s_pid_buf[PLAYER_ID_SERVERS_MAX];
+  static bool s_pid_buf_ready = false;
+  static int s_pid_bad_line = 0;
+  static bool s_pid_confirm_new = false;
+  static const char* s_pid_status = NULL;
+  if (!s_pid_buf_ready) {
+    snprintf(s_pid_buf, sizeof s_pid_buf, "%s", usrs->player_id_servers);
+    s_pid_buf_ready = true;
+  }
+  section_begin(env, "Player ID");
+  igIndent(igGetStyle()->WindowPadding.x);
+  if (opt_begin("Your Player ID",
+                "A random 16-character ID that event servers (e.g. BattleDome) use to tell players "
+                "apart. It is only sent to the servers listed below. Keep it private: anyone who "
+                "has it could pretend to be you.")) {
+    if (!player_id_ensure(usrs)) {
+      igTextUnformatted("Could not create an ID on this device.", NULL);
+    } else {
+      ImVec2 av;
+      igGetContentRegionAvail(&av);
+      float bw = (av.x - igGetStyle()->ItemSpacing.x * 2) / 3.0f;
+      igSetNextItemWidth(-1);
+      /* read-only so it can be selected, but never edited by accident */
+      igInputText("##player_id", usrs->player_id, sizeof usrs->player_id,
+                  ImGuiInputTextFlags_ReadOnly, NULL, NULL);
+      if (igButton("Copy##pid_copy", (ImVec2){bw, 0})) {
+        igSetClipboardText(usrs->player_id);
+        s_pid_status = "ID copied.";
+      }
+      igSameLine(0, -1);
+      if (!s_pid_confirm_new) {
+        if (igButton("New ID##pid_new", (ImVec2){bw * 2 + igGetStyle()->ItemSpacing.x, 0}))
+          s_pid_confirm_new = true;
+      } else {
+        if (igButton("Really replace it?##pid_new_ok",
+                     (ImVec2){bw * 2 + igGetStyle()->ItemSpacing.x, 0})) {
+          s_pid_status = player_id_generate(usrs) ? "New ID created. Your old one no longer works."
+                                                  : "Could not create a new ID.";
+          s_pid_confirm_new = false;
+        }
+      }
+    }
+    opt_end();
+  }
+  if (opt_begin("Send ID to these servers",
+                "One ip:port per line. The ID is sent when you join one of these servers. "
+                "Pre-filled with the BattleDome servers.")) {
+    igSetNextItemWidth(-1);
+    igInputTextMultiline("##player_id_servers", s_pid_buf, sizeof s_pid_buf,
+                         (ImVec2){-1, igGetTextLineHeightWithSpacing() * 6},
+                         ImGuiInputTextFlags_None, NULL, NULL);
+    ImVec2 av;
+    igGetContentRegionAvail(&av);
+    float hw = (av.x - igGetStyle()->ItemSpacing.x) * 0.5f;
+    if (igButton("Save list##pid_save", (ImVec2){hw, 0})) {
+      s_pid_bad_line = player_id_servers_check(s_pid_buf);
+      if (s_pid_bad_line == 0) {
+        snprintf(usrs->player_id_servers, sizeof usrs->player_id_servers, "%s", s_pid_buf);
+        save_user_settings(usrs);
+        s_pid_status = "Server list saved.";
+      } else {
+        s_pid_status = NULL;
+      }
+    }
+    igSameLine(0, -1);
+    if (igButton("Reset to BattleDome##pid_reset", (ImVec2){hw, 0})) {
+      snprintf(s_pid_buf, sizeof s_pid_buf, "%s", PLAYER_ID_DEFAULT_SERVERS);
+      snprintf(usrs->player_id_servers, sizeof usrs->player_id_servers, "%s", s_pid_buf);
+      save_user_settings(usrs);
+      s_pid_bad_line = 0;
+      s_pid_status = "Server list reset.";
+    }
+    opt_end();
+  }
+  if (opt_begin("Send to every server",
+                "Sends your ID to ANY server you join, not just the list above. Only turn this on "
+                "if an event organiser asks for it.")) {
+    if (igCheckbox("##player_id_force", &usrs->player_id_force)) save_user_settings(usrs);
+    opt_end();
+  }
+  if (SO.section_shown) {
+    if (s_pid_bad_line > 0) {
+      char note[96];
+      snprintf(note, sizeof note, "Line %d is not ip:port, list not saved.", s_pid_bad_line);
+      opt_note(note);
+    } else if (s_pid_status) {
+      opt_note(s_pid_status);
+    }
+  }
+  igIndent(-igGetStyle()->WindowPadding.x);
 }
 
 static void sec_mode(tenv* env, int i) {

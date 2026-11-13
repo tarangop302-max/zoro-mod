@@ -289,6 +289,7 @@ void ui_skin_editor(tenv* env) {
      under them. Geometry is computed once here and reused when drawing. */
   float panel_x = 0, panel_y = 0, panel_w = 0, panel_h = 0;
   int ncols = 7;
+  float ts = scale; /* colour / accessory tile size in the Custom panel */
   ImVec2 panel_excl_min = {0, 0};
   ImVec2 panel_excl_max = {0, 0};
   if (gdata->skin_editing) {
@@ -298,10 +299,16 @@ void ui_skin_editor(tenv* env) {
     panel_y = grid_y + row_h;
     panel_h = pop_bottom - panel_y - style->WindowPadding.y * 2.0f;
     if (panel_h < scale * 2.25f) panel_h = scale * 2.25f;
-    ncols = (int)((panel_w - style->ScrollbarSize - style->WindowPadding.x * 2.0f) /
-                  (scale + style->ItemSpacing.x));
-    if (ncols > 14) ncols = 14;
-    if (ncols < 4) ncols = 4;
+    /* Big tiles: 14 per row, as large as the panel width allows. */
+    float inner_w = panel_w - style->ScrollbarSize - style->WindowPadding.x * 2.0f;
+    ncols = 14;
+    ts = (inner_w - (ncols - 1) * style->ItemSpacing.x) / ncols;
+    if (ts > scale * 1.6f) ts = scale * 1.6f;
+    if (ts < scale) {
+      ts = scale;
+      ncols = (int)(inner_w / (ts + style->ItemSpacing.x));
+      if (ncols < 4) ncols = 4;
+    }
     if (usrs->custom_skin) {
       panel_excl_min = (ImVec2){panel_x, panel_y};
       panel_excl_max = (ImVec2){panel_x + panel_w, panel_y + panel_h};
@@ -655,8 +662,8 @@ void ui_skin_editor(tenv* env) {
   if (gdata->skin_editing) {
     /* SKIN COLOURS / ACCESSORIES tabs, directly under OK. */
     const char* tab_names[2] = {"SKIN COLOURS##tab_col", "ACCESSORIES##tab_acc"};
-    igSetCursorPosY(grid_y);
     for (int t = 0; t < 2; t++) {
+      igSetCursorPosY(grid_y);
       igSetCursorPosX(picker_x + t * (half_w + style->ItemSpacing.x));
       bool on = s_se_tab == t;
       if (on)
@@ -697,9 +704,9 @@ void ui_skin_editor(tenv* env) {
       float clip_x2 = panel_x + panel_w - style->ScrollbarSize;
       float clip_y2 = panel_y + panel_h;
       int skin_code_len = strlen(usrs->skin_code);
-      float pitch_x = style->ItemSpacing.x + scale;
-      float pitch_y = style->ItemSpacing.y + scale;
-      float grid_w = ncols * scale + (ncols - 1) * style->ItemSpacing.x;
+      float pitch_x = style->ItemSpacing.x + ts;
+      float pitch_y = style->ItemSpacing.y + ts;
+      float grid_w = ncols * ts + (ncols - 1) * style->ItemSpacing.x;
       float gx0 = (panel_w - style->ScrollbarSize - grid_w) * 0.5f;
       if (gx0 < 0) gx0 = 0;
 
@@ -723,7 +730,7 @@ void ui_skin_editor(tenv* env) {
           float a = 0.8f * (1.0f - 0.5f * is_disabled);
           igBeginDisabled(is_disabled);
           char label[2] = {gdata->ntl_cg_map[cg_id], 0};
-          igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, scale / 2);
+          igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, ts / 2);
           igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){ct, ct, ct, 1});
           igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0, 0, 0, 0});
           igPushStyleColor_Vec4(ImGuiCol_Border, (ImVec4){0, 0, 0, 0});
@@ -731,7 +738,7 @@ void ui_skin_editor(tenv* env) {
           igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0, 0, 0, 0});
           igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0, 0, 0, 0});
           igPushID_Int(cg_id);
-          bool pressed = igButton(label, (ImVec2){scale, scale});
+          bool pressed = igButton(label, (ImVec2){ts, ts});
           igPopID();
           igPopStyleVar(1);
           igPopStyleColor(6);
@@ -744,17 +751,17 @@ void ui_skin_editor(tenv* env) {
           if (hovered) a = 1.0f;
           if (active) a = 0.6f;
 
-          bool sprite_visible = item_pos.x + scale >= clip_x1 && item_pos.x <= clip_x2 &&
-                                item_pos.y + scale >= clip_y1 && item_pos.y <= clip_y2;
+          bool sprite_visible = item_pos.x + ts >= clip_x1 && item_pos.x <= clip_x2 &&
+                                item_pos.y + ts >= clip_y1 && item_pos.y <= clip_y2;
           if (sprite_visible) {
             bp_renderer_push(usr->r->bpr,
-                             &(bp_instance){{item_pos.x - scale * 0.25f,
-                                             item_pos.y - scale * 0.25f,
-                                             scale * 1.5f},
+                             &(bp_instance){{item_pos.x - ts * 0.25f,
+                                             item_pos.y - ts * 0.25f,
+                                             ts * 1.5f},
                                             gdata->SHADOW_UV,
                                             {0, 0, 0, 0.2f}});
             bp_renderer_push(usr->r->bpr,
-                             &(bp_instance){{item_pos.x, item_pos.y, scale},
+                             &(bp_instance){{item_pos.x, item_pos.y, ts},
                                             gdata->cg_uvs[cg_id],
                                             {1, 1, 1, a}});
           }
@@ -782,7 +789,7 @@ void ui_skin_editor(tenv* env) {
           sprintf(label, "a%d", aid);
           igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){1, 0.5f, 0.5f, 1});
           if (!is_no_accessory) {
-            igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, scale / 2);
+            igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, ts / 2);
             igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0, 0, 0, 0});
             igPushStyleColor_Vec4(ImGuiCol_Border, (ImVec4){0, 0, 0, 0});
             igPushStyleColor_Vec4(ImGuiCol_BorderShadow, (ImVec4){0, 0, 0, 0});
@@ -791,7 +798,7 @@ void ui_skin_editor(tenv* env) {
           }
           igPushID_Str(label);
           bool pressed = igButton(is_no_accessory ? "\uea0f" : "",
-                                  (ImVec2){scale, scale});
+                                  (ImVec2){ts, ts});
           igPopID();
           if (!is_no_accessory) igPopStyleVar(1);
           igPopStyleColor(is_no_accessory ? 1 : 6);
@@ -802,11 +809,11 @@ void ui_skin_editor(tenv* env) {
           if (hovered) a = 1.0f;
           if (active) a = 0.0f;
 
-          bool sprite_visible = item_pos.x + scale >= clip_x1 && item_pos.x <= clip_x2 &&
-                                item_pos.y + scale >= clip_y1 && item_pos.y <= clip_y2;
+          bool sprite_visible = item_pos.x + ts >= clip_x1 && item_pos.x <= clip_x2 &&
+                                item_pos.y + ts >= clip_y1 && item_pos.y <= clip_y2;
           if (!is_no_accessory && sprite_visible)
             bp_renderer_push(usr->r->bpr,
-                             &(bp_instance){{item_pos.x, item_pos.y, scale},
+                             &(bp_instance){{item_pos.x, item_pos.y, ts},
                                             gdata->accessories[aid].uv,
                                             {1, 1, 1, a}});
         }

@@ -1113,6 +1113,14 @@ bool jsr_network_connect(
     net->last_error[0] = '\0';
 
     /*
+     * Start every connection with a fresh roster. The relay announces
+     * who is online again when we join, so this drops anyone who left
+     * (or changed name) while we were disconnected -- we never got
+     * their "left" notice, which is what left ghost players behind.
+     */
+    net->roster_count = 0;
+
+    /*
      * The relay only tells us about OTHER users joining --
      * we have to add ourselves to the roster locally.
      */

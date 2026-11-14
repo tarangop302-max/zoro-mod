@@ -7,6 +7,7 @@
 #include "android_jni.h"
 #include "user.h"
 #include "game/profile_emoji.h"
+#include "android_glfw_shim.h"
 
 #include <android/asset_manager.h>
 #include <android/keycodes.h>
@@ -167,6 +168,167 @@ static void android_drain_ime_events(ImGuiIO* io) {
         }
         android_jni_release_ime_event(&event);
     }
+}
+
+
+/* ---------------------------------------------------------------------------
+ * Text-edit popup (Cut / Copy / Paste / Select all).
+ *
+ * Long-pressing inside an active text box used to fire an automatic paste
+ * after 0.55 s, so text could never be selected (the clipboard was pasted again
+ * every time you held your finger down). It now behaves like a normal Android
+ * text field: a long press selects the word under the finger and shows a small
+ * popup with Cut / Copy / Paste / Select all.
+ *
+ * The popup is drawn on the foreground draw list and hit-tested here instead of
+ * being an ImGui window: tapping a real ImGui button would take focus away from
+ * the text box and lose the selection before the action could run. Touches that
+ * land on the popup are swallowed by android_text_menu_filter_touch(), which
+ * twindow_android.c calls before forwarding any touch to ImGui.
+ * ------------------------------------------------------------------------- */
+enum { TM_CUT = 0, TM_COPY, TM_PASTE, TM_SELALL, TM_COUNT };
+static const char* const k_tm_labels[TM_COUNT] = {"Cut", "Copy", "Paste", "Select all"};
+
+static struct {
+    bool   visible;
+    bool   swallowing;     /* a touch that started on the popup is in progress */
+    int    pressed;        /* item under that touch, -1 = none/background      */
+    int    pending;        /* action to run next frame, -1 = none              */
+    ImVec2 anchor;         /* where the long press happened                    */
+    ImVec2 bg_min, bg_max; /* last drawn popup rectangle                       */
+    ImVec2 item_min[TM_COUNT], item_max[TM_COUNT];
+    bool   laid_out;
+} s_tm = {.pressed = -1, .pending = -1};
+
+static int tm_hit_item(float x, float y) {
+    if (!s_tm.visible || !s_tm.laid_out) return -2; /* -2: popup not there */
+    if (x < s_tm.bg_min.x || x > s_tm.bg_max.x ||
+        y < s_tm.bg_min.y || y > s_tm.bg_max.y) return -2;
+    for (int i = 0; i < TM_COUNT; ++i)
+        if (x >= s_tm.item_min[i].x && x <= s_tm.item_max[i].x &&
+            y >= s_tm.item_min[i].y && y <= s_tm.item_max[i].y) return i;
+    return -1; /* on the popup, but between buttons */
+}
+
+bool android_text_menu_swallowing(void) { return s_tm.swallowing; }
+
+/* Called for every UI touch event before it reaches ImGui.
+   button: -1 move, 0 up, 1 down. Returns true when the popup consumed it. */
+bool android_text_menu_filter_touch(float x, float y, int button) {
+    if (!s_tm.visible) { s_tm.swallowing = false; return false; }
+    if (button == 1) {
+        int hit = tm_hit_item(x, y);
+        if (hit == -2) { s_tm.visible = false; return false; } /* tap elsewhere */
+        s_tm.swallowing = true;
+        s_tm.pressed    = hit;
+        return true;
+    }
+    if (!s_tm.swallowing) return false;
+    if (button == -1) return true;
+    /* up */
+    int hit = tm_hit_item(x, y);
+    if (hit >= 0 && hit == s_tm.pressed) {
+        s_tm.pending = hit;
+        s_tm.visible = false;
+    }
+    s_tm.swallowing = false;
+    s_tm.pressed    = -1;
+    return true;
+}
+
+static void tm_key_chord(ImGuiIO* io, ImGuiKey key) {
+    ImGuiIO_AddKeyEvent(io, ImGuiMod_Ctrl, true);
+    ImGuiIO_AddKeyEvent(io, key, true);
+    ImGuiIO_AddKeyEvent(io, key, false);
+    ImGuiIO_AddKeyEvent(io, ImGuiMod_Ctrl, false);
+}
+
+/* Runs the chosen action. The text box is still the active widget because the
+   popup touch never reached ImGui, so ordinary shortcut keys do the work. */
+static void tm_run_pending(ImGuiIO* io) {
+    int a = s_tm.pending;
+    if (a < 0) return;
+    s_tm.pending = -1;
+    switch (a) {
+        case TM_CUT:    tm_key_chord(io, ImGuiKey_X); break;
+        case TM_COPY:   tm_key_chord(io, ImGuiKey_C); break;
+        case TM_PASTE:  android_jni_enqueue_clipboard_paste(); break;
+        case TM_SELALL: tm_key_chord(io, ImGuiKey_A); break;
+    }
+}
+
+/* Long press: select the word under the finger (a synthetic double click, which
+   ImGui's InputText turns into "select word") and open the popup. */
+static void tm_long_press(ImGuiIO* io, float x, float y) {
+    ImGuiIO_AddMouseSourceEvent(io, ImGuiMouseSource_TouchScreen);
+    ImGuiIO_AddMousePosEvent(io, x, y);
+    ImGuiIO_AddMouseButtonEvent(io, 0, false);
+    ImGuiIO_AddMouseButtonEvent(io, 0, true);
+    ImGuiIO_AddMouseButtonEvent(io, 0, false);
+    ImGuiIO_AddMouseButtonEvent(io, 0, true); /* finger is still down */
+    s_tm.visible    = true;
+    s_tm.laid_out   = false;
+    s_tm.swallowing = false;
+    s_tm.pressed    = -1;
+    s_tm.anchor     = (ImVec2){x, y};
+}
+
+#define TM_COL(r, g, b, a) \
+    ((ImU32)(((ImU32)(a) << 24) | ((ImU32)(b) << 16) | ((ImU32)(g) << 8) | (ImU32)(r)))
+
+/* Draw + lay out the popup. Call right after igNewFrame(). */
+static void tm_draw(ImGuiIO* io) {
+    if (!s_tm.visible) { s_tm.laid_out = false; return; }
+    if (!io->WantTextInput) { /* text box lost focus */
+        s_tm.visible = s_tm.swallowing = false;
+        s_tm.laid_out = false;
+        return;
+    }
+
+    const float sc   = g_android_imgui_scale;
+    const float padx = 18.0f * sc, pady = 14.0f * sc, gap = 2.0f * sc;
+    float widths[TM_COUNT], total = 0.0f, text_h = 0.0f;
+    for (int i = 0; i < TM_COUNT; ++i) {
+        ImVec2 ts;
+        igCalcTextSize(&ts, k_tm_labels[i], NULL, false, -1.0f);
+        widths[i] = ts.x + padx * 2.0f;
+        text_h    = ts.y;
+        total    += widths[i] + (i ? gap : 0.0f);
+    }
+    const float h = text_h + pady * 2.0f;
+
+    float x0 = s_tm.anchor.x - total * 0.5f;
+    float y0 = s_tm.anchor.y - h - 56.0f * sc;       /* above the finger */
+    if (y0 < 6.0f * sc) y0 = s_tm.anchor.y + 56.0f * sc; /* no room: below it */
+    if (x0 + total > io->DisplaySize.x - 6.0f * sc) x0 = io->DisplaySize.x - total - 6.0f * sc;
+    if (x0 < 6.0f * sc) x0 = 6.0f * sc;
+
+    s_tm.bg_min = (ImVec2){x0, y0};
+    s_tm.bg_max = (ImVec2){x0 + total, y0 + h};
+
+    ImDrawList* dl = igGetForegroundDrawList_ViewportPtr(igGetMainViewport());
+    ImDrawList_AddRectFilled(dl,
+        (ImVec2){x0 - 2.0f, y0 - 2.0f}, (ImVec2){x0 + total + 2.0f, y0 + h + 2.0f},
+        TM_COL(0, 0, 0, 255), 8.0f * sc, 0);
+
+    float x = x0;
+    for (int i = 0; i < TM_COUNT; ++i) {
+        s_tm.item_min[i] = (ImVec2){x, y0};
+        s_tm.item_max[i] = (ImVec2){x + widths[i], y0 + h};
+        const bool down = s_tm.swallowing && s_tm.pressed == i;
+        ImDrawList_AddRectFilled(dl, s_tm.item_min[i], s_tm.item_max[i],
+            down ? TM_COL(90, 90, 90, 255) : TM_COL(48, 48, 48, 255),
+            i == 0 ? 8.0f * sc : (i == TM_COUNT - 1 ? 8.0f * sc : 0.0f),
+            i == 0 ? ImDrawFlags_RoundCornersLeft
+                   : (i == TM_COUNT - 1 ? ImDrawFlags_RoundCornersRight
+                                        : ImDrawFlags_RoundCornersNone));
+        ImDrawList_AddText_Vec2(dl, (ImVec2){x + padx, y0 + pady},
+                                TM_COL(235, 235, 235, 255), k_tm_labels[i], NULL);
+        x += widths[i] + gap;
+    }
+    s_tm.laid_out = true;
+    /* keep gameplay controls from also reacting to touches on the popup */
+    android_ui_capture_rect(x0 - 2.0f, y0 - 2.0f, x0 + total + 2.0f, y0 + h + 2.0f);
 }
 
 void imgui_init(tenv* env) {
@@ -365,31 +527,35 @@ void imgui_prerender(void) {
 
         /* Text, keyboard clipboard suggestions, composition and edit keys
            arrive through the native Android InputConnection. A stationary
-           long press remains available as a direct paste fallback. */
-        static bool s_paste_tracking = false;
-        static bool s_paste_fired = false;
-        static ImVec2 s_paste_start = {0.0f, 0.0f};
-        static double s_paste_start_time = 0.0;
+           long press inside a text box selects the word and opens the
+           Cut / Copy / Paste / Select all popup (see tm_long_press). */
+        static bool   s_lp_tracking = false;
+        static bool   s_lp_fired    = false;
+        static ImVec2 s_lp_start    = {0.0f, 0.0f};
+        static double s_lp_start_t  = 0.0;
 
-        if (!wnd->ui_touch.down || !io->WantTextInput) {
-            s_paste_tracking = false;
-            s_paste_fired = false;
-        } else if (!s_paste_tracking) {
-            s_paste_tracking = true;
-            s_paste_fired = false;
-            s_paste_start = (ImVec2){wnd->ui_touch.x, wnd->ui_touch.y};
-            s_paste_start_time = monotonic_seconds();
+        tm_run_pending(io);
+
+        if (!wnd->ui_touch.down || !io->WantTextInput || s_tm.swallowing) {
+            s_lp_tracking = false;
+            s_lp_fired    = false;
+        } else if (!s_lp_tracking) {
+            s_lp_tracking = true;
+            s_lp_fired    = false;
+            s_lp_start    = (ImVec2){wnd->ui_touch.x, wnd->ui_touch.y};
+            s_lp_start_t  = monotonic_seconds();
         } else {
-            float dx = wnd->ui_touch.x - s_paste_start.x;
-            float dy = wnd->ui_touch.y - s_paste_start.y;
+            float dx = wnd->ui_touch.x - s_lp_start.x;
+            float dy = wnd->ui_touch.y - s_lp_start.y;
             float cancel_distance = 18.0f * g_android_imgui_scale;
             if (dx * dx + dy * dy > cancel_distance * cancel_distance) {
-                s_paste_tracking = false;
-                s_paste_fired = false;
-            } else if (!s_paste_fired &&
-                       monotonic_seconds() - s_paste_start_time >= 0.55) {
-                android_jni_enqueue_clipboard_paste();
-                s_paste_fired = true;
+                /* finger moved: it is a drag-select, not a long press */
+                s_lp_tracking = false;
+                s_lp_fired    = true;
+            } else if (!s_lp_fired &&
+                       monotonic_seconds() - s_lp_start_t >= 0.45) {
+                tm_long_press(io, wnd->ui_touch.x, wnd->ui_touch.y);
+                s_lp_fired = true;
             }
         }
 
@@ -397,6 +563,7 @@ void imgui_prerender(void) {
     }
 
     igNewFrame();
+    tm_draw(igGetIO_Nil());
 }
 
 void imgui_render(VkCommandBuffer cmd) {

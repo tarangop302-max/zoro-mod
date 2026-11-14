@@ -239,8 +239,13 @@ static void handle_app_cmd(struct android_app* app, int32_t cmd) {
    io.MousePos/MouseDown once per frame. A quick tap (down+up inside one frame)
    used to be invisible to ImGui; the event queue spreads press and release
    over consecutive frames so every tap registers. */
+extern bool android_text_menu_filter_touch(float x, float y, int button);
+
 static void imgui_touch_event(float x, float y, int button /* -1 none, 0 up, 1 down */) {
     if (!igGetCurrentContext()) return;
+    /* Cut/Copy/Paste popup above a text box: it consumes its own touches so the
+       text box keeps focus (and its selection) while a button is tapped. */
+    if (android_text_menu_filter_touch(x, y, button)) return;
     ImGuiIO* io = igGetIO_Nil();
     if (!io) return;
     ImGuiIO_AddMouseSourceEvent(io, ImGuiMouseSource_TouchScreen);

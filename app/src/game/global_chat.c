@@ -966,7 +966,16 @@ void global_chat_update(tenv* env) {
      * and our own roster entry all keep showing whatever
      * name we originally joined with.
      */
-    static char last_seen_nickname[64] = "";
+    /*
+     * Debounced: the nickname box changes on every keystroke, and
+     * reconnecting for each one made the relay see (and sometimes
+     * keep) every half-typed name as a separate player -- the
+     * "2 of me / 2 Aura" ghosts in the Online players list. So we
+     * only reconnect once the name has stayed the same for a moment.
+     */
+    static char last_seen_nickname[64] = "";   /* name we are joined as */
+    static char pending_nickname[64] = "";     /* newest typed name */
+    static float nickname_settle_timer = 0.0f;
 
     if (
         global_chat_net != NULL &&
@@ -979,29 +988,53 @@ void global_chat_update(tenv* env) {
             current_nickname = env->usr->usrs.nickname;
         }
 
-        if (
-            last_seen_nickname[0] != '\0' &&
-            strcmp(
+        if (last_seen_nickname[0] == '\0') {
+            strncpy(
                 last_seen_nickname,
-                current_nickname
-            ) != 0
-        ) {
-            jsr_network_disconnect(
-                global_chat_net
+                current_nickname,
+                sizeof(last_seen_nickname) - 1
             );
+            last_seen_nickname[sizeof(last_seen_nickname) - 1] = '\0';
+            pending_nickname[0] = '\0';
+            nickname_settle_timer = 0.0f;
+        } else if (
+            strcmp(last_seen_nickname, current_nickname) != 0
+        ) {
+            /* Name differs from the one we joined with. */
+            if (strcmp(pending_nickname, current_nickname) != 0) {
+                /* Still being edited: restart the wait. */
+                strncpy(
+                    pending_nickname,
+                    current_nickname,
+                    sizeof(pending_nickname) - 1
+                );
+                pending_nickname[sizeof(pending_nickname) - 1] = '\0';
+                nickname_settle_timer = 0.0f;
+            }
 
-            global_chat_try_connect(env);
+            nickname_settle_timer += 1.0f / 60.0f;
+
+            if (nickname_settle_timer >= 2.0f) {
+                jsr_network_disconnect(
+                    global_chat_net
+                );
+
+                global_chat_try_connect(env);
+
+                strncpy(
+                    last_seen_nickname,
+                    current_nickname,
+                    sizeof(last_seen_nickname) - 1
+                );
+                last_seen_nickname[sizeof(last_seen_nickname) - 1] = '\0';
+                pending_nickname[0] = '\0';
+                nickname_settle_timer = 0.0f;
+            }
+        } else {
+            /* Typed back to the joined name: nothing to do. */
+            pending_nickname[0] = '\0';
+            nickname_settle_timer = 0.0f;
         }
-
-        strncpy(
-            last_seen_nickname,
-            current_nickname,
-            sizeof(last_seen_nickname) - 1
-        );
-
-        last_seen_nickname[
-            sizeof(last_seen_nickname) - 1
-        ] = '\0';
     }
 
     /* Beep when a teammate newly turns SOS on. */

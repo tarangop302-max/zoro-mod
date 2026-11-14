@@ -11,6 +11,7 @@
 #include "../game/snakey_rain.h"
 #include "../game/lifetime_stats.h"
 #include "crystal_theme.h"
+#include "flags.h"
 #include "lobby_bg.h"
 #include "kills_gallery.h"
 #include "clips_gallery.h"
@@ -108,7 +109,8 @@ static void sl_text_r(ImDrawList* dl, float right, float y, ImU32 col,
 }
 
 typedef struct {
-  float star_w, name_x, name_right, id_r, slots_r, ping_r, ping_w, slots_w, id_w;
+  float star_w, flag_x, flag_w, flag_h, code_x, code_w, name_x, name_right, id_r,
+      slots_r, ping_r, ping_w, slots_w, id_w;
   bool show_id;
 } sl_cols;
 
@@ -120,7 +122,12 @@ static sl_cols sl_layout(float x0, float w, float u, float row_h) {
   c.ping_w  = u * 7.5f;
   c.slots_w = u * 4.5f;
   c.id_w    = u * 3.8f;
-  c.name_x  = x0 + c.star_w + u * 0.6f;
+  c.flag_x  = x0 + c.star_w + u * 0.4f;
+  c.flag_w  = u * 1.9f;
+  c.flag_h  = u * 1.25f;
+  c.code_x  = c.flag_x + c.flag_w + u * 0.35f;
+  c.code_w  = u * 1.9f;
+  c.name_x  = c.code_x + c.code_w + u * 0.4f;
   c.ping_r  = x0 + w - u * 0.7f;
   c.slots_r = c.ping_r - c.ping_w - u * 0.4f;
   c.id_r    = c.slots_r - c.slots_w;
@@ -270,7 +277,7 @@ static void draw_server_picker(tenv* env) {
   igGetContentRegionAvail(&av);
   float rf_w = frame_h * 3.4f;
   igPushItemWidth(av.x - rf_w - style->ItemSpacing.x);
-  igInputTextWithHint("##sl_search", "Search IP, ID or name", s_sl_search,
+  igInputTextWithHint("##sl_search", "Search IP, ID, name or country", s_sl_search,
                       sizeof(s_sl_search), ImGuiInputTextFlags_None, NULL, NULL);
   crystal_sheen();
   igPopItemWidth();
@@ -325,7 +332,7 @@ static void draw_server_picker(tenv* env) {
     s_sl_isfav[i] = server_fav_is(ip);
     switch (s_sl_filter) {
       case SL_F_FAV:      if (!s_sl_isfav[i]) continue; break;
-      case SL_F_BD:       if (!is_custom) continue; break;
+      case SL_F_BD:       if (!server_is_battledome(ip)) continue; break;
       case SL_F_OFFICIAL: if (is_custom) continue; break;
       case SL_F_FAST:     if (!(sl_ping_ok(p) && p < 80)) continue; break;
       default: break;
@@ -333,8 +340,10 @@ static void draw_server_picker(tenv* env) {
     if (s_sl_search[0]) {
       char idbuf[16];
       snprintf(idbuf, sizeof(idbuf), "%d", gdata->server_list.sids[i]);
+      const char* scc = server_country(ip);
       if (!sl_contains_ci(ip, s_sl_search) &&
-          !(is_custom && sl_contains_ci(CUSTOM_SERVER_NAMES[i], s_sl_search)) &&
+          !(scc && sl_contains_ci(scc, s_sl_search)) &&
+          !(is_custom && sl_contains_ci(server_custom_name(i), s_sl_search)) &&
           !(gdata->server_list.sids[i] >= 0 && sl_contains_ci(idbuf, s_sl_search)))
         continue;
     }
@@ -421,11 +430,25 @@ static void draw_server_picker(tenv* env) {
             "\xe2\x98\x85", NULL);
       }
 
+      /* country flag + code tag */
+      {
+        const char* cc = server_country(ip);
+        float fy = rp.y + (row_h - c.flag_h) * 0.5f;
+        ui_flag_draw(dl, (ImVec2){c.flag_x, fy},
+                     (ImVec2){c.flag_x + c.flag_w, fy + c.flag_h}, cc);
+        ImVec2 ts;
+        const char* tag = cc ? cc : "--";
+        igCalcTextSize(&ts, tag, NULL, false, -1.0f);
+        ImDrawList_AddText_Vec2(
+            dl, (ImVec2){c.code_x + (c.code_w - ts.x) * 0.5f, ty},
+            sl_col((ImVec4){0.80f, 0.72f, 0.98f, 0.85f}), tag, NULL);
+      }
+
       /* name (custom servers by name, official ones by IP) + FASTEST badge */
       {
         char name[48];
         if (is_custom)
-          snprintf(name, sizeof(name), "%s", CUSTOM_SERVER_NAMES[i]);
+          snprintf(name, sizeof(name), "%s", server_custom_name(i));
         else
           snprintf(name, sizeof(name), "%s", ip);
         ImDrawList_PushClipRect(dl, (ImVec2){c.name_x, rp.y},

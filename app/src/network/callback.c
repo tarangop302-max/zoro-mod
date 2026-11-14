@@ -210,6 +210,19 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
     decode_secret(a, a_len, secret);
     mg_ws_send(c, secret, 27, WEBSOCKET_OP_BINARY);
 
+    /* Player ID (event verification), same place and format as the NTL mod:
+       right after the handshake reply and before the spawn packet send 'C'
+       followed by the 16 ID characters. Only to servers the player listed in
+       Settings > Player ID (or when "send to every server" is on), and never
+       on the hidden background-preview connection. */
+    if (!gdata->preview_active &&
+        player_id_should_send(usrs, usrs->ipv4) && player_id_ensure(usrs)) {
+      uint8_t idp[1 + PLAYER_ID_LEN];
+      idp[0] = 'C'; /* 67 */
+      memcpy(idp + 1, usrs->player_id, PLAYER_ID_LEN);
+      mg_ws_send(c, idp, sizeof idp, WEBSOCKET_OP_BINARY);
+    }
+
     int nick_len = strlen(usrs->nickname);
     uint8_t* ba = NULL;
     uint8_t* skin_compressed = NULL;

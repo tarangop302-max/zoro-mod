@@ -143,18 +143,171 @@ void server_destroy(tenv* env) {
 #define SL_URL_HTTP  "http://slither.io/i80124.txt"
 #define SL_URL_HTTPS "https://slither.io/i80124.txt"
 
-static const char* CUSTOM_SERVER_IPS[CUSTOM_SERVER_COUNT] = {
-  "206.206.76.190:444",
-  "139.84.170.60:444",
-  "51.91.19.175:444",
-  "206.221.176.241:444",
+/* ---- Built-in server table (mirrors NTL's list) -------------------------
+   Custom servers come first (custom_count of them); kind 2 = Battledome-type
+   arena where Eyes back is disabled, kind 1 = other custom server, kind 0 =
+   regular official server (also fetched from slither.io; duplicates merge). */
+typedef struct {
+  const char* ip;
+  const char* name;
+  int         kind;
+} ntl_server;
+
+#define NTL_SERVER_COUNT 72
+#define NTL_CUSTOM_COUNT 24
+
+static const ntl_server NTL_SERVERS[NTL_SERVER_COUNT] = {
+  {"206.206.76.190:444", "Singapore Battledome", 2},
+  {"139.84.170.60:444", "India Battledome", 2},
+  {"51.91.19.175:444", "EU Battledome", 2},
+  {"206.221.176.241:444", "USA Battledome", 2},
+  {"139.84.170.60:442", "India Drawing", 2},
+  {"139.84.170.60:443", "India Battledome (443)", 2},
+  {"45.76.102.107:443", "JP Voting Games", 2},
+  {"45.76.102.107:444", "JP Battledome", 2},
+  {"51.91.19.175:460", "EU Battle Royale", 2},
+  {"172.93.101.248:446", "Slither Canvas", 2},
+  {"206.221.176.211:444", "Paper Slither", 2},
+  {"206.221.176.241:443", "US Battle Royale", 2},
+  {"45.77.5.207:442", "West Coast Fakedome", 2},
+  {"45.77.5.207:443", "US One vs One", 2},
+  {"45.77.5.207:444", "West Coast Battledome", 2},
+  {"216.128.169.33:443", "BR One vs One", 2},
+  {"216.128.169.33:444", "BR Battledome", 2},
+  {"51.91.19.175:443", "EU Custom (443)", 1},
+  {"51.91.19.175:446", "EU StarBlitz (446)", 1},
+  {"172.93.101.248:443", "US StarBlitz (443)", 1},
+  {"172.93.101.248:444", "US StarBlitz (444)", 1},
+  {"206.221.176.180:443", "US StarBlitz 2 (443)", 1},
+  {"206.221.176.180:444", "US StarBlitz 2 (444)", 1},
+  {"206.221.176.241:480", "US Custom (480)", 1},
+  {"94.72.180.82:444", NULL, 0},
+  {"217.138.162.194:444", NULL, 0},
+  {"94.20.222.150:444", NULL, 0},
+  {"148.113.20.151:443", NULL, 0},
+  {"148.113.20.151:444", NULL, 0},
+  {"144.168.36.194:444", NULL, 0},
+  {"144.168.36.90:444", NULL, 0},
+  {"181.41.140.146:443", NULL, 0},
+  {"181.41.140.146:444", NULL, 0},
+  {"181.41.140.170:443", NULL, 0},
+  {"181.41.140.170:444", NULL, 0},
+  {"181.41.140.178:444", NULL, 0},
+  {"15.235.216.115:444", NULL, 0},
+  {"15.235.218.24:443", NULL, 0},
+  {"15.235.218.24:444", NULL, 0},
+  {"185.199.38.101:443", NULL, 0},
+  {"185.199.38.101:444", NULL, 0},
+  {"162.19.235.91:444", NULL, 0},
+  {"57.129.37.42:443", NULL, 0},
+  {"57.129.37.42:444", NULL, 0},
+  {"107.155.103.54:444", NULL, 0},
+  {"95.216.38.155:444", NULL, 0},
+  {"95.216.39.140:444", NULL, 0},
+  {"135.125.74.228:444", NULL, 0},
+  {"135.125.74.229:444", NULL, 0},
+  {"92.222.100.202:443", NULL, 0},
+  {"92.222.100.202:444", NULL, 0},
+  {"92.222.100.203:444", NULL, 0},
+  {"198.244.228.230:443", NULL, 0},
+  {"198.244.231.35:444", NULL, 0},
+  {"57.128.202.109:444", NULL, 0},
+  {"57.128.202.110:444", NULL, 0},
+  {"213.159.5.171:443", NULL, 0},
+  {"213.159.5.171:444", NULL, 0},
+  {"213.159.5.171:475", NULL, 0},
+  {"107.155.76.138:444", NULL, 0},
+  {"107.155.98.194:444", NULL, 0},
+  {"107.155.83.170:444", NULL, 0},
+  {"15.204.212.200:444", NULL, 0},
+  {"192.211.52.146:444", NULL, 0},
+  {"23.29.125.178:443", NULL, 0},
+  {"66.165.238.34:444", NULL, 0},
+  {"66.165.238.34:475", NULL, 0},
+  {"51.161.209.120:443", NULL, 0},
+  {"51.161.209.120:444", NULL, 0},
+  {"45.158.39.114:443", NULL, 0},
+  {"45.158.39.122:444", NULL, 0},
+  {"45.158.39.98:444", NULL, 0},
 };
-const char* CUSTOM_SERVER_NAMES[CUSTOM_SERVER_COUNT] = {
-  "Singapore Battledome",
-  "India Battledome",
-  "EU Battledome",
-  "USA Battledome",
+
+typedef struct {
+  const char* host;
+  const char* cc;
+} ntl_host_cc;
+
+static const ntl_host_cc NTL_HOST_CC[] = {
+  {"94.72.180.82", "NG"},
+  {"217.138.162.194", "AE"},
+  {"94.20.222.150", "AZ"},
+  {"139.84.170.60", "IN"},
+  {"148.113.20.151", "IN"},
+  {"144.168.36.194", "JP"},
+  {"144.168.36.90", "JP"},
+  {"181.41.140.146", "JP"},
+  {"181.41.140.170", "JP"},
+  {"181.41.140.178", "JP"},
+  {"45.76.102.107", "JP"},
+  {"15.235.216.115", "SG"},
+  {"15.235.218.24", "SG"},
+  {"206.206.76.190", "SG"},
+  {"185.199.38.101", "BG"},
+  {"162.19.235.91", "DE"},
+  {"57.129.37.42", "DE"},
+  {"107.155.103.54", "ES"},
+  {"95.216.38.155", "FI"},
+  {"95.216.39.140", "FI"},
+  {"135.125.74.228", "FR"},
+  {"135.125.74.229", "FR"},
+  {"51.91.19.175", "FR"},
+  {"92.222.100.202", "FR"},
+  {"92.222.100.203", "FR"},
+  {"198.244.228.230", "GB"},
+  {"198.244.231.35", "GB"},
+  {"57.128.202.109", "PL"},
+  {"57.128.202.110", "PL"},
+  {"213.159.5.171", "TR"},
+  {"107.155.76.138", "CA"},
+  {"107.155.98.194", "CA"},
+  {"107.155.83.170", "US"},
+  {"15.204.212.200", "US"},
+  {"172.93.101.248", "US"},
+  {"192.211.52.146", "US"},
+  {"206.221.176.180", "US"},
+  {"206.221.176.211", "US"},
+  {"206.221.176.241", "US"},
+  {"23.29.125.178", "US"},
+  {"45.77.5.207", "US"},
+  {"66.165.238.34", "US"},
+  {"51.161.209.120", "AU"},
+  {"216.128.169.33", "BR"},
+  {"45.158.39.114", "BR"},
+  {"45.158.39.122", "BR"},
+  {"45.158.39.98", "BR"},
 };
+#define NTL_HOST_CC_COUNT ((int)(sizeof(NTL_HOST_CC) / sizeof(NTL_HOST_CC[0])))
+
+const char* server_custom_name(int idx) {
+  if (idx < 0 || idx >= NTL_CUSTOM_COUNT) return "";
+  return NTL_SERVERS[idx].name;
+}
+
+const char* server_country(const char* ip_port) {
+  if (!ip_port || !*ip_port) return NULL;
+  char host[32] = {0};
+  if (sscanf(ip_port, "%31[^:]", host) != 1) return NULL;
+  for (int i = 0; i < NTL_HOST_CC_COUNT; i++)
+    if (strcmp(host, NTL_HOST_CC[i].host) == 0) return NTL_HOST_CC[i].cc;
+  return NULL;
+}
+
+bool server_is_battledome(const char* ip_port) {
+  if (!ip_port || !*ip_port) return false;
+  for (int i = 0; i < NTL_CUSTOM_COUNT; i++)
+    if (NTL_SERVERS[i].kind == 2 && strcmp(ip_port, NTL_SERVERS[i].ip) == 0)
+      return true;
+  return false;
+}
 
 static void server_list_seed_custom(game_data* gdata) {
   gdata->server_list.count = 0;
@@ -162,12 +315,30 @@ static void server_list_seed_custom(game_data* gdata) {
     gdata->server_list.slots[i] = -1;
     gdata->server_list.sids[i]  = -1;
   }
-  for (int i = 0; i < CUSTOM_SERVER_COUNT; i++) {
-    strncpy(gdata->server_list.ips[i], CUSTOM_SERVER_IPS[i], MAX_SERVER_IP_LEN);
+  for (int i = 0; i < NTL_SERVER_COUNT; i++) {
+    strncpy(gdata->server_list.ips[i], NTL_SERVERS[i].ip, MAX_SERVER_IP_LEN);
     gdata->server_list.ips[i][MAX_SERVER_IP_LEN] = '\0';
     gdata->server_list.count++;
   }
-  gdata->server_list.custom_count = gdata->server_list.count;
+  gdata->server_list.custom_count = NTL_CUSTOM_COUNT;
+}
+
+/* Add a fetched server, or merge its slots/id into the built-in entry that
+   already has the same ip:port. */
+static void sl_add(char ips[][MAX_SERVER_IP_LEN + 1], int* slots, int* sids,
+                   int* count, const char* ip, int slot, int sid) {
+  for (int k = 0; k < *count; k++) {
+    if (strcmp(ips[k], ip) == 0) {
+      slots[k] = slot;
+      sids[k]  = sid;
+      return;
+    }
+  }
+  if (*count >= MAX_SERVER_LIST) return;
+  snprintf(ips[*count], MAX_SERVER_IP_LEN + 1, "%s", ip);
+  slots[*count] = slot;
+  sids[*count]  = sid;
+  (*count)++;
 }
 
 static void server_list_parse(const char* data, int len,
@@ -201,25 +372,23 @@ static void server_list_parse(const char* data, int len,
     for (int i = 0; i + 27 < hb_len && *count < MAX_SERVER_LIST; i += 28) {
       if (hb[i] <= 120) {
         int port = (hb[i + 21] << 8) | hb[i + 22];
-        snprintf(ips[*count], MAX_SERVER_IP_LEN + 1,
-                 "%d.%d.%d.%d:%d",
+        char ipbuf[MAX_SERVER_IP_LEN + 1];
+        snprintf(ipbuf, sizeof(ipbuf), "%d.%d.%d.%d:%d",
                  hb[i+1], hb[i+2], hb[i+3], hb[i+4], port);
         /* Same layout NTL decodes: [23..24] = players, [26..27] = server id. */
-        slots[*count] = (hb[i + 23] << 8) | hb[i + 24];
-        sids[*count]  = (hb[i + 26] << 8) | hb[i + 27];
-        (*count)++;
+        sl_add(ips, slots, sids, count, ipbuf,
+               (hb[i + 23] << 8) | hb[i + 24], (hb[i + 26] << 8) | hb[i + 27]);
       }
     }
   } else if (hb_len > 0 && hb_len % 11 == 0) {
 
     for (int i = 0; i + 10 < hb_len && *count < MAX_SERVER_LIST; i += 11) {
       int port = (hb[i + 5] << 8) | hb[i + 6];
-      snprintf(ips[*count], MAX_SERVER_IP_LEN + 1,
-               "%d.%d.%d.%d:%d",
+      char ipbuf[MAX_SERVER_IP_LEN + 1];
+      snprintf(ipbuf, sizeof(ipbuf), "%d.%d.%d.%d:%d",
                hb[i+0], hb[i+1], hb[i+2], hb[i+3], port);
-      slots[*count] = (hb[i + 7] << 16) | (hb[i + 8] << 8) | hb[i + 9];
-      sids[*count]  = hb[i + 10];
-      (*count)++;
+      sl_add(ips, slots, sids, count, ipbuf,
+             (hb[i + 7] << 16) | (hb[i + 8] << 8) | hb[i + 9], hb[i + 10]);
     }
   }
 }

@@ -19,7 +19,15 @@ void server_list_start_ping(tenv* env);
 bool server_fav_is(const char* ip);
 void server_fav_toggle(const char* ip);
 
-#define CUSTOM_SERVER_COUNT 4
-extern const char* CUSTOM_SERVER_NAMES[CUSTOM_SERVER_COUNT];
+/* Name of built-in custom server number idx (idx < custom_count). */
+const char* server_custom_name(int idx);
+
+/* Two-letter country code ("JP", "US", ...) for "ip" or "ip:port", or NULL
+   when the host isn't known. */
+const char* server_country(const char* ip_port);
+
+/* True if exactly this "ip:port" is a Battledome-type arena server
+   (Eyes back is disabled there). */
+bool server_is_battledome(const char* ip_port);
 
 #endif

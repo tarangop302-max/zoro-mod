@@ -101,6 +101,90 @@ static void se_draw_popup_bg(tenv* env, float pop_x, float pop_y, float pop_w,
                      14.0f, 0, 1.5f);
 }
 
+
+/* ---- themed preview box + looping snake ---------------------------------
+   The preview lives in a box that follows the selected background theme
+   (all colours go through crystal_tint via se_col). The box interior is a
+   flat rect drawn by the preview renderer (so the snake sits on top of it);
+   the corner brackets / hairline are drawn by ImGui on top. The snake enters
+   the box from the left wall, runs along the top lane, U-turns at the right
+   side, comes back along the bottom lane, U-turns again and then keeps
+   chasing its own tail around a rounded racetrack, always fully inside. */
+
+static void se_draw_preview_frame(ImVec2 mn, ImVec2 mx, float rs) {
+  ImDrawList* dl = igGetWindowDrawList();
+  ImU32 line = se_col(0.690f, 0.580f, 0.960f, 0.28f);
+  ImU32 acc = se_col(0.800f, 0.700f, 1.0f, 0.95f);
+  float len = 18.0f * rs, th = 2.0f;
+  ImDrawList_AddRect(dl, mn, mx, line, 0.0f, 0, 1.0f);
+  /* four corner brackets */
+  ImDrawList_AddLine(dl, (ImVec2){mn.x, mn.y}, (ImVec2){mn.x + len, mn.y}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mn.x, mn.y}, (ImVec2){mn.x, mn.y + len}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mx.x, mn.y}, (ImVec2){mx.x - len, mn.y}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mx.x, mn.y}, (ImVec2){mx.x, mn.y + len}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mn.x, mx.y}, (ImVec2){mn.x + len, mx.y}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mn.x, mx.y}, (ImVec2){mn.x, mx.y - len}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mx.x, mx.y}, (ImVec2){mx.x - len, mx.y}, acc, th);
+  ImDrawList_AddLine(dl, (ImVec2){mx.x, mx.y}, (ImVec2){mx.x, mx.y - len}, acc, th);
+}
+
+static int s_se_tab = 0; /* Custom view: 0 = skin colours, 1 = accessories */
+
+typedef struct {
+  float xl, xr, y1, y2, cy, r, s, p; /* racetrack geometry, p = perimeter */
+} se_track;
+
+/* Position + heading at distance u along the track. u < 0 is the straight
+   lead-in on the top lane (the snake entering the box). */
+static void se_track_at(const se_track* t, float u, float* x, float* y,
+                        float* ang) {
+  if (u < 0) { *x = t->xl + u; *y = t->y1; *ang = 0; return; }
+  u = fmodf(u, t->p);
+  float arc = (float)PI * t->r;
+  if (u < t->s) { *x = t->xl + u; *y = t->y1; *ang = 0; return; }
+  u -= t->s;
+  if (u < arc) {
+    float th = u / t->r;
+    *x = t->xr + t->r * sinf(th); *y = t->cy - t->r * cosf(th); *ang = th;
+    return;
+  }
+  u -= arc;
+  if (u < t->s) { *x = t->xr - u; *y = t->y2; *ang = (float)PI; return; }
+  u -= t->s;
+  float th = u / t->r;
+  *x = t->xl - t->r * sinf(th); *y = t->cy + t->r * cosf(th);
+  *ang = th + (float)PI;
+}
+
+static void se_make_track(se_track* t, float bx0, float by0, float bw,
+                          float bh, float d) {
+  float m = d * 1.06f + 4.0f; /* edge margin incl. wiggle amplitude (0.35 d) */
+  t->r = (bh - 2.0f * m) * 0.5f;
+  t->y1 = by0 + m;
+  t->y2 = by0 + bh - m;
+  t->cy = (t->y1 + t->y2) * 0.5f;
+  t->xl = bx0 + m + t->r;
+  t->xr = bx0 + bw - m - t->r;
+  t->s = t->xr - t->xl;
+  t->p = 2.0f * t->s + 2.0f * (float)PI * t->r;
+}
+
+/* Track position plus a sideways wiggle that is a fixed function of the
+   distance along the path. The head swings up and down as it advances and
+   every body segment passes through exactly the same points the head did, so
+   the body follows the head's path precisely. The head tilts up/down with
+   the wiggle. */
+static void se_snake_at(const se_track* t, float u, float d, float* x,
+                        float* y, float* ang) {
+  se_track_at(t, u, x, y, ang);
+  float amp = 0.35f * d;
+  float k = 6.2831853f / (6.0f * d);
+  float off = amp * sinf(k * u);
+  *x += -sinf(*ang) * off;
+  *y += cosf(*ang) * off;
+  *ang += atanf(amp * k * cosf(k * u));
+}
+
 void ui_skin_editor_init(tenv* env) {}
 
 void ui_skin_editor(tenv* env) {
@@ -159,29 +243,24 @@ void ui_skin_editor(tenv* env) {
        editing:     [skin code input] [Save] [Default] [OK]        -> 4
        not editing: [Default skins] [<>] [Saved skins] [<>]
                     [Custom] [OK]                                   -> 6 */
-  int picker_rows = gdata->skin_editing ? 4 : 6;
-  /* The NTL tag block (label + sliding picker + buttons) sits at the bottom,
-     between the Custom button and OK; editing a custom skin needs the room
-     for its colour grid instead, so it only shows when not editing. */
-  float tag_h = gdata->skin_editing ? 0.0f : ntl_tags_block_height();
-  float stack_h = (style->ItemSpacing.y + frame_height) * picker_rows + tag_h;
-  float reserved_h = stack_h + (scale + style->ItemSpacing.y) * 2.0f;
-  float min_grid_y = pop_y + header_h + style->WindowPadding.y + reserved_h;
-  float grid_y;
-  if (gdata->skin_editing) {
-    /* The color/accessory grid (child panel) starts at grid_y and fills
-       everything down to the bottom of the screen, so grid_y only needs to
-       leave enough room above it for the preview + input rows -- it isn't
-       meant to be centered as a fixed-height block. */
-    grid_y = (pop_y + header_h + pop_bottom) * 0.5f - tot_size[1] * 0.5f;
-    if (grid_y < min_grid_y) grid_y = min_grid_y;
-  } else {
-    /* No panel below grid_y here -- the preview + picker rows are the
-       whole visible block, so center that block in the screen instead of
-       anchoring it to the top via min_grid_y. */
-    grid_y = (pop_y + header_h + pop_bottom) * 0.5f + reserved_h * 0.5f;
-    if (grid_y < min_grid_y) grid_y = min_grid_y;
-  }
+  /* Both views (main + Custom) share ONE preview box: its position and size
+     are always computed from the main SKIN EDITOR layout. */
+  float row_h = style->ItemSpacing.y + frame_height;
+  float tag_h_main = ntl_tags_block_height();
+  float stack_h_main = row_h * 6 + tag_h_main;
+  float reserved_main = stack_h_main + (scale + style->ItemSpacing.y) * 2.0f;
+  float min_grid_main = pop_y + header_h + style->WindowPadding.y + reserved_main;
+  float grid_main = (pop_y + header_h + pop_bottom) * 0.5f + reserved_main * 0.5f;
+  if (grid_main < min_grid_main) grid_main = min_grid_main;
+  float shift_y = scale * 0.8f;
+  float box_up = scale * 0.3f;
+  float box_dn = shift_y - frame_height * 0.75f;
+  grid_main += shift_y;
+
+  /* The NTL tag block only shows in the main view. */
+  float tag_h = gdata->skin_editing ? 0.0f : tag_h_main;
+  float stack_h = gdata->skin_editing ? row_h * 4 : stack_h_main;
+  float grid_y = grid_main;
 
   float sk_w = scale + (8 * (scale / 48)) * ((MAX_SKIN_CODE_LEN / 2.0f) - 1);
 
@@ -191,30 +270,49 @@ void ui_skin_editor(tenv* env) {
      generously for the shadow sprites (which extend 10*(scale/48) past
      each segment) and the eyes/accessory (small offsets past the last
      segment). */
-  float preview_row_a_y = grid_y - (stack_h + scale + style->ItemSpacing.y);
-  float preview_row_b_y = grid_y - (stack_h + 2 * (scale + style->ItemSpacing.y));
+  float preview_row_a_y = grid_main - shift_y - (stack_h_main + scale + style->ItemSpacing.y);
+  float preview_row_b_y = grid_main - shift_y - (stack_h_main + 2 * (scale + style->ItemSpacing.y));
   float preview_pad = scale * 0.5f;
-  ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - sk_w * 0.5f - preview_pad,
-                             fminf(preview_row_a_y, preview_row_b_y) - preview_pad};
-  ImVec2 preview_excl_max = {ctx->size[0] * 0.5f + sk_w * 0.5f + preview_pad,
-                             fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad};
+  /* The preview box: same vertical band as before, but a fixed, compact
+     width instead of the old 256-segment-wide strip. */
+  float box_w = pop_w * 0.90f;
+  float cur_top = fminf(preview_row_a_y, preview_row_b_y) - preview_pad - box_up;
+  float cur_bot = fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad + box_dn;
+  float box_extra = 0.20f * (cur_bot - cur_top);
+  ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - box_w * 0.5f,
+                             fminf(preview_row_a_y, preview_row_b_y) - preview_pad - box_up - box_extra};
+  ImVec2 preview_excl_max = {ctx->size[0] * 0.5f + box_w * 0.5f,
+                             fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad + box_dn};
 
-  /* Color/accessory grid panel geometry -- identical to the child-window
-     rect computed further down when the panel actually gets drawn. kept
-     in sync deliberately (same formulas) rather than shared via a
-     variable, since the panel's own setup runs much later after several
-     other widgets. Only present while editing a custom skin. */
+  /* Custom view: the buttons start just below the box, then the two tab
+     buttons (SKIN COLOURS / ACCESSORIES) sit under OK and the wide panel
+     under them. Geometry is computed once here and reused when drawing. */
+  float panel_x = 0, panel_y = 0, panel_w = 0, panel_h = 0;
+  int ncols = 7;
+  float ts = scale; /* colour / accessory tile size in the Custom panel */
   ImVec2 panel_excl_min = {0, 0};
   ImVec2 panel_excl_max = {0, 0};
-  if (usrs->custom_skin && gdata->skin_editing) {
-    float panel_w = tot_size[0] + style->ScrollbarSize + style->WindowPadding.x * 2.0f;
-    if (panel_w > pop_w - style->WindowPadding.x * 2.0f)
-      panel_w = pop_w - style->WindowPadding.x * 2.0f;
-    float panel_x = ctx->size[0] * 0.5f - panel_w * 0.5f;
-    float panel_h = pop_bottom - grid_y - style->WindowPadding.y * 2.0f;
+  if (gdata->skin_editing) {
+    grid_y = preview_excl_max.y + row_h * 0.45f + row_h * 4.0f;
+    panel_w = pop_w * 0.94f;
+    panel_x = ctx->size[0] * 0.5f - panel_w * 0.5f;
+    panel_y = grid_y + row_h;
+    panel_h = pop_bottom - panel_y - style->WindowPadding.y * 2.0f;
     if (panel_h < scale * 2.25f) panel_h = scale * 2.25f;
-    panel_excl_min = (ImVec2){panel_x, grid_y};
-    panel_excl_max = (ImVec2){panel_x + panel_w, grid_y + panel_h};
+    /* Big tiles: 14 per row, as large as the panel width allows. */
+    float inner_w = panel_w - style->ScrollbarSize - style->WindowPadding.x * 2.0f;
+    ncols = 14;
+    ts = (inner_w - (ncols - 1) * style->ItemSpacing.x) / ncols;
+    if (ts > scale * 1.6f) ts = scale * 1.6f;
+    if (ts < scale) {
+      ts = scale;
+      ncols = (int)(inner_w / (ts + style->ItemSpacing.x));
+      if (ncols < 4) ncols = 4;
+    }
+    if (usrs->custom_skin) {
+      panel_excl_min = (ImVec2){panel_x, panel_y};
+      panel_excl_max = (ImVec2){panel_x + panel_w, panel_y + panel_h};
+    }
   }
 
   /* Restored to the original 0.72 (in fact this could go all the way to
@@ -222,6 +320,7 @@ void ui_skin_editor(tenv* env) {
      colors since this doesn't paint over them at all. */
   se_draw_popup_bg(env, pop_x, pop_y, pop_w, pop_h, preview_excl_min,
                    preview_excl_max, panel_excl_min, panel_excl_max);
+  se_draw_preview_frame(preview_excl_min, preview_excl_max, resolution_scale);
   crystal_push_theme();
 
   /* ---- header: title + round close (same as OK) ---- */
@@ -280,163 +379,137 @@ void ui_skin_editor(tenv* env) {
   }
 
 
-  igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
-  igSetCursorPosY((grid_y) - (stack_h + scale + style->ItemSpacing.y));
-
   for (int i = strlen(usrs->skin_code); i < MAX_SKIN_CODE_LEN + 1; i++)
     usrs->skin_code[i] = 0;
 
-  for (int i = (MAX_SKIN_CODE_LEN / 2) - 1; i >= 0; i--) {
-    bp_renderer_push(
-        usr->r->bpr,
-        &(bp_instance){
-            {(igGetCursorPosX() + i * (8 * (scale / 48))) - 10 * (scale / 48),
-             igGetCursorPosY() - 10 * (scale / 48), 68 * (scale / 48)},
-            gdata->SHADOW_UV,
-            {0, 0, 0, 0.2f}});
-  }
+  /* ---- snake preview: racetrack loop inside the themed box ---- */
+  float bx0 = preview_excl_min.x, by0 = preview_excl_min.y;
+  float bw = preview_excl_max.x - bx0, bh = preview_excl_max.y - by0;
 
-  int cbp = 0;
-  for (int i = (MAX_SKIN_CODE_LEN / 2) - 1; i >= 0; i--) {
-    int cg_id;
+  /* which segments actually exist (custom skins can be short) */
+  int cg[MAX_SKIN_CODE_LEN];
+  int n_eff = 0;
+  for (int k = 0; k < MAX_SKIN_CODE_LEN; k++) {
+    int id;
     if (usrs->custom_skin) {
-      cg_id =
-          get_cg_id(&usr->gdata, usrs->skin_code[MAX_SKIN_CODE_LEN - 1 - cbp]);
+      id = get_cg_id(&usr->gdata, usrs->skin_code[MAX_SKIN_CODE_LEN - 1 - k]);
     } else {
       int sk_len = gdata->default_skins[usrs->default_skin][0];
-      cg_id =
-          gdata->default_skins[usrs->default_skin]
-                              [1 + ((MAX_SKIN_CODE_LEN - 1 - cbp) % sk_len)];
+      id = gdata->default_skins[usrs->default_skin]
+                               [1 + ((MAX_SKIN_CODE_LEN - 1 - k) % sk_len)];
     }
+    cg[k] = id;
+    if (id != -1) n_eff++;
+  }
+  if (n_eff < 1) n_eff = 1;
 
-    if (cg_id != -1) {
-      float we =
-          gdata->worm_effect[(MAX_SKIN_CODE_LEN - 1 - cbp) % WORM_EFFECT_LEN] *
-              (!usrs->custom_skin) +
-          usrs->custom_skin;
-      bp_renderer_push(usr->r->bpr, &(bp_instance){{igGetCursorPosX() +
-                                                        i * (8 * (scale / 48)),
-                                                    igGetCursorPosY(), scale},
-                                                   gdata->cg_uvs[cg_id],
-                                                   {we, we, we, 1}});
+  /* Segment size: small enough that the whole body fits on the loop with a
+     clear gap between head and tail (spacing between segments = d / 6). */
+  float d = scale * 0.85f;
+  se_track tr;
+  for (int it = 0; it < 8; it++) {
+    se_make_track(&tr, bx0, by0, bw, bh, d);
+    float gap = fmaxf(3.0f * d, 0.07f * tr.p);
+    float dmax = 6.0f * (tr.p - gap) / (float)n_eff;
+    float dlane = (bh - 8.0f) / 3.97f; /* lanes must clear each other */
+    if (d > dmax) d = dmax;
+    if (d > dlane) d = dlane;
+    if (d < scale * 0.18f) d = scale * 0.18f;
+  }
+  se_make_track(&tr, bx0, by0, bw, bh, d);
+  float sp = d / 6.0f;
+
+  /* time: restart (snake re-enters) whenever the screen is opened again */
+  static double s_last_t = 0.0;
+  static float s_head = 0.0f;
+  double now = igGetTime();
+  float dt = (float)(now - s_last_t);
+  if (dt > 0.25f || dt < 0.0f) { s_head = 0.0f; dt = 0.0f; }
+  if (dt > 0.05f) dt = 0.05f;
+  s_last_t = now;
+  s_head += dt * 154.0f * resolution_scale;
+  if (s_head > 1e7f) s_head = fmodf(s_head, tr.p);
+
+  /* box interior (theme-tinted, flat) under the snake */
+  {
+    ImVec4 f = crystal_tint((ImVec4){0.045f, 0.028f, 0.085f, 1.0f});
+    bp_renderer_push(usr->r->bpr,
+                     &(bp_instance){{bx0, by0, bw, 0}, gdata->cg_uvs[BLANK_UV],
+                                    {f.x, f.y, f.z, 1.0f}, {bh, 2.0f}});
+  }
+
+  float lead = tr.r; /* hidden until it has crossed the left wall */
+  float ks = d / 48.0f;
+  for (int k = 0; k < MAX_SKIN_CODE_LEN; k++) {
+    if (cg[k] == -1) continue;
+    float u = s_head - (MAX_SKIN_CODE_LEN - 1 - k) * sp;
+    if (u < -lead) continue;
+    float x, y, a;
+    se_snake_at(&tr, u, d, &x, &y, &a);
+    bp_renderer_push(usr->r->bpr,
+                     &(bp_instance){{x - d * 0.5f - 10 * ks, y - d * 0.5f - 10 * ks, 68 * ks},
+                                    gdata->SHADOW_UV, {0, 0, 0, 0.2f}});
+  }
+
+  float head_x = 0, head_y = 0, head_a = 0;
+  for (int k = 0; k < MAX_SKIN_CODE_LEN; k++) {
+    float u = s_head - (MAX_SKIN_CODE_LEN - 1 - k) * sp;
+    if (u < -lead) continue;
+    float x, y, a;
+    se_snake_at(&tr, u, d, &x, &y, &a);
+    if (k == MAX_SKIN_CODE_LEN - 1) { head_x = x; head_y = y; head_a = a; }
+    if (cg[k] == -1) continue;
+    float we = gdata->worm_effect[(MAX_SKIN_CODE_LEN - 1 - k) % WORM_EFFECT_LEN] *
+                   (!usrs->custom_skin) + usrs->custom_skin;
+    bp_renderer_push(usr->r->bpr,
+                     &(bp_instance){{x - d * 0.5f, y - d * 0.5f, d, a + (float)PI},
+                                    gdata->cg_uvs[cg[k]], {we, we, we, 1}});
+  }
+
+  /* eyes / accessory / NTL tag follow the head (only once it is inside) */
+  if (s_head >= -lead) {
+    float ssc = d / 29;
+    float ed = 6 * ssc;
+    float esp = 6 * ssc;
+    float er = 6;
+    default_skin_data* dfs =
+        gdata->dfs + ((1 - usrs->custom_skin) * (1 + usrs->default_skin));
+    float pr = dfs->pr;
+    float iris_r = er * ssc;
+    float pupil_r = pr * ssc;
+    float ca = cosf(head_a), sa = sinf(head_a);
+    float ox, oy, px, py;
+    ox = ed; oy = -esp - .5f;
+    px = head_x + ox * ca - oy * sa; py = head_y + ox * sa + oy * ca;
+    bp_renderer_push(usr->r->bpr, &(bp_instance){{px - iris_r, py - iris_r, iris_r * 2},
+                     gdata->cg_uvs[BLANK_UV], {dfs->ec.r, dfs->ec.g, dfs->ec.b, 1}});
+    ox = ed; oy = esp + .5f;
+    px = head_x + ox * ca - oy * sa; py = head_y + ox * sa + oy * ca;
+    bp_renderer_push(usr->r->bpr, &(bp_instance){{px - iris_r, py - iris_r, iris_r * 2},
+                     gdata->cg_uvs[BLANK_UV], {dfs->ec.r, dfs->ec.g, dfs->ec.b, 1}});
+    ox = ed + .5f + 2 * ssc; oy = -esp;
+    px = head_x + ox * ca - oy * sa; py = head_y + ox * sa + oy * ca;
+    bp_renderer_push(usr->r->bpr, &(bp_instance){{px - pupil_r, py - pupil_r, pupil_r * 2},
+                     gdata->cg_uvs[BLANK_UV], {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, 1}});
+    ox = ed + .5f + 2 * ssc; oy = esp;
+    px = head_x + ox * ca - oy * sa; py = head_y + ox * sa + oy * ca;
+    bp_renderer_push(usr->r->bpr, &(bp_instance){{px - pupil_r, py - pupil_r, pupil_r * 2},
+                     gdata->cg_uvs[BLANK_UV], {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, 1}});
+    if (usrs->accessory < NUM_ACCESSORIES) {
+      accessory_data* acc = gdata->accessories + usrs->accessory;
+      float aox = acc->of * ed;
+      float m = d * 0.5f * acc->sc;
+      float acx = head_x + aox * ca;
+      float acy = head_y + aox * sa;
+      bp_renderer_push(usr->r->bpr,
+                       &(bp_instance){{acx - m, acy - m, m * 2, head_a}, acc->uv, {1, 1, 1, 1}});
     }
-
-    cbp++;
+    ntl_tags_draw_preview(head_x, head_y, d);
   }
 
   igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
   igSetCursorPosY((grid_y) - (stack_h + 2 * (scale + style->ItemSpacing.y)));
 
-  for (int i = 0; i < MAX_SKIN_CODE_LEN / 2; i++) {
-    bp_renderer_push(
-        usr->r->bpr,
-        &(bp_instance){
-            {(igGetCursorPosX() + i * (8 * (scale / 48))) - 10 * (scale / 48),
-             igGetCursorPosY() - 10 * (scale / 48), 68 * (scale / 48)},
-            gdata->SHADOW_UV,
-            {0, 0, 0, 0.2f}});
-  }
-
-  vec2 last_bp_pos;
-
-  for (int i = 0; i < MAX_SKIN_CODE_LEN / 2; i++) {
-    int cg_id;
-    if (usrs->custom_skin) {
-      cg_id =
-          get_cg_id(&usr->gdata, usrs->skin_code[MAX_SKIN_CODE_LEN - 1 - cbp]);
-    } else {
-      int sk_len = gdata->default_skins[usrs->default_skin][0];
-      cg_id =
-          gdata->default_skins[usrs->default_skin]
-                              [1 + ((MAX_SKIN_CODE_LEN - 1 - cbp) % sk_len)];
-    }
-
-    last_bp_pos[0] = igGetCursorPosX() + i * (8 * (scale / 48));
-    last_bp_pos[1] = igGetCursorPosY();
-
-    if (cg_id != -1) {
-      float we =
-          gdata->worm_effect[(MAX_SKIN_CODE_LEN - 1 - cbp) % WORM_EFFECT_LEN] *
-              (!usrs->custom_skin) +
-          usrs->custom_skin;
-      bp_renderer_push(usr->r->bpr, &(bp_instance){{last_bp_pos[0],
-                                                    last_bp_pos[1], scale, PI},
-                                                   gdata->cg_uvs[cg_id],
-                                                   {we, we, we, 1}});
-    }
-
-    cbp++;
-  }
-
-  float ssc = scale / 29;
-  float ed = 6 * ssc;
-  float esp = 6 * ssc;
-  float er = 6;
-  default_skin_data* dfs =
-      gdata->dfs + ((1 - usrs->custom_skin) * (1 + usrs->default_skin));
-  float pr = dfs->pr;
-  float iris_r = er * ssc;
-  float pupil_r = pr * ssc;
-
-  float ex = ed;
-  float ey = -esp - .5;
-
-  bp_renderer_push(
-      usr->r->bpr,
-      &(bp_instance){{((last_bp_pos[0] + scale / 2) + ex) - iris_r,
-                      ((last_bp_pos[1] + scale / 2) + ey) - iris_r, iris_r * 2},
-                     gdata->cg_uvs[BLANK_UV],
-                     {dfs->ec.r, dfs->ec.g, dfs->ec.b, 1}});
-
-  ex = ed;
-  ey = esp + .5;
-
-  bp_renderer_push(
-      usr->r->bpr,
-      &(bp_instance){{((last_bp_pos[0] + scale / 2) + ex) - iris_r,
-                      ((last_bp_pos[1] + scale / 2) + ey) - iris_r, iris_r * 2},
-                     gdata->cg_uvs[BLANK_UV],
-                     {dfs->ec.r, dfs->ec.g, dfs->ec.b, 1}});
-
-  ex = ed + .5 + 2 * ssc;
-  ey = -esp;
-
-  bp_renderer_push(
-      usr->r->bpr,
-      &(bp_instance){
-          {((last_bp_pos[0] + scale / 2) + ex) - pupil_r,
-           ((last_bp_pos[1] + scale / 2) + ey) - pupil_r, pupil_r * 2},
-          gdata->cg_uvs[BLANK_UV],
-          {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, 1}});
-
-  ex = (ed + .5) + 2 * ssc;
-  ey = esp;
-
-  bp_renderer_push(
-      usr->r->bpr,
-      &(bp_instance){
-          {((last_bp_pos[0] + scale / 2) + ex) - pupil_r,
-           ((last_bp_pos[1] + scale / 2) + ey) - pupil_r, pupil_r * 2},
-          gdata->cg_uvs[BLANK_UV],
-          {dfs->ppc.r, dfs->ppc.g, dfs->ppc.b, 1}});
-
-  if (usrs->accessory < NUM_ACCESSORIES) {
-    accessory_data* acc = gdata->accessories + usrs->accessory;
-    ex = acc->of * ed;
-    ey = 0;
-    float m = scale * 0.5f * acc->sc;
-    float acx = (ex + last_bp_pos[0] + scale / 2);
-    float acy = (ey + last_bp_pos[1] + scale / 2);
-
-    bp_renderer_push(
-        usr->r->bpr,
-        &(bp_instance){{acx - m, acy - m, m * 2, 0}, acc->uv, {1, 1, 1, 1}});
-  }
-
-  /* The chosen NTL tag, hanging off the preview snake's head like in a match. */
-  ntl_tags_draw_preview(last_bp_pos[0] + scale / 2, last_bp_pos[1] + scale / 2, scale);
-
-  float row_h = style->ItemSpacing.y + frame_height;
   float picker_x = ctx->size[0] * 0.5 - tot_size[0] * 0.5f;
   float half_w = tot_size[0] / 2 - style->ItemSpacing.x / 2;
 
@@ -584,16 +657,27 @@ void ui_skin_editor(tenv* env) {
   crystal_sheen();
   igPopStyleColor(3);
 
-  if (usrs->custom_skin && gdata->skin_editing) {
-    float panel_w = tot_size[0] + style->ScrollbarSize + style->WindowPadding.x * 2.0f;
-    if (panel_w > pop_w - style->WindowPadding.x * 2.0f)
-      panel_w = pop_w - style->WindowPadding.x * 2.0f;
-    float panel_x = ctx->size[0] * 0.5f - panel_w * 0.5f;
-    float panel_h = pop_bottom - grid_y - style->WindowPadding.y * 2.0f;
-    if (panel_h < scale * 2.25f) panel_h = scale * 2.25f;
+  if (!gdata->skin_editing) s_se_tab = 0;
 
+  if (gdata->skin_editing) {
+    /* SKIN COLOURS / ACCESSORIES tabs, directly under OK. */
+    const char* tab_names[2] = {"SKIN COLOURS##tab_col", "ACCESSORIES##tab_acc"};
+    for (int t = 0; t < 2; t++) {
+      igSetCursorPosY(grid_y);
+      igSetCursorPosX(picker_x + t * (half_w + style->ItemSpacing.x));
+      bool on = s_se_tab == t;
+      if (on)
+        igPushStyleColor_Vec4(ImGuiCol_Button,
+                              (ImVec4){0.510f, 0.294f, 0.910f, 0.60f});
+      if (igButton(tab_names[t], (ImVec2){half_w, 0})) s_se_tab = t;
+      crystal_sheen();
+      if (on) igPopStyleColor(1);
+    }
+  }
+
+  if (usrs->custom_skin && gdata->skin_editing) {
     igSetCursorPosX(panel_x);
-    igSetCursorPosY(grid_y);
+    igSetCursorPosY(panel_y);
     igPushStyleColor_Vec4(ImGuiCol_ChildBg,
                           (ImVec4){0.176f, 0.106f, 0.306f, 0.30f});
     igPushStyleColor_Vec4(ImGuiCol_ScrollbarBg,
@@ -610,24 +694,35 @@ void ui_skin_editor(tenv* env) {
         ImGuiWindowFlags_AlwaysVerticalScrollbar | ImGuiWindowFlags_NoMove);
 
     if (child_visible) {
+      static int last_tab = -1;
+      if (last_tab != s_se_tab) {
+        igSetScrollY_Float(0.0f);
+        last_tab = s_se_tab;
+      }
       float clip_x1 = panel_x;
-      float clip_y1 = grid_y;
+      float clip_y1 = panel_y;
       float clip_x2 = panel_x + panel_w - style->ScrollbarSize;
-      float clip_y2 = grid_y + panel_h;
+      float clip_y2 = panel_y + panel_h;
       int skin_code_len = strlen(usrs->skin_code);
+      float pitch_x = style->ItemSpacing.x + ts;
+      float pitch_y = style->ItemSpacing.y + ts;
+      float grid_w = ncols * ts + (ncols - 1) * style->ItemSpacing.x;
+      float gx0 = (panel_w - style->ScrollbarSize - grid_w) * 0.5f;
+      if (gx0 < 0) gx0 = 0;
 
-      igTextDisabled("Snake colours");
-      float colors_y = igGetCursorPosY() + style->ItemSpacing.y;
+      if (s_se_tab == 0) {
+        igTextDisabled("Snake colours");
+        float colors_y = igGetCursorPosY() + style->ItemSpacing.y;
+        int rows = (42 + ncols - 1) / ncols;
 
-      int cg_id = 0;
-      for (int i = 0; i < 6; i++) {
-        for (int j = 0; j < 7; j++) {
+        for (int cg_id = 0; cg_id < 42; cg_id++) {
+          int i = cg_id / ncols, j = cg_id % ncols;
           bool is_disabled =
               (cg_id == 36 || cg_id == 38 || cg_id == 40 || cg_id == 41 ||
                !(skin_code_len < MAX_SKIN_CODE_LEN));
 
-          igSetCursorPosY(colors_y + (style->ItemSpacing.y + scale) * i);
-          igSetCursorPosX((style->ItemSpacing.x + scale) * j);
+          igSetCursorPosY(colors_y + pitch_y * i);
+          igSetCursorPosX(gx0 + pitch_x * j);
           ImVec2 item_pos;
           igGetCursorScreenPos(&item_pos);
           bool ct = gdata->cg_colors_ct[cg_id];
@@ -635,7 +730,7 @@ void ui_skin_editor(tenv* env) {
           float a = 0.8f * (1.0f - 0.5f * is_disabled);
           igBeginDisabled(is_disabled);
           char label[2] = {gdata->ntl_cg_map[cg_id], 0};
-          igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, scale / 2);
+          igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, ts / 2);
           igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){ct, ct, ct, 1});
           igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0, 0, 0, 0});
           igPushStyleColor_Vec4(ImGuiCol_Border, (ImVec4){0, 0, 0, 0});
@@ -643,7 +738,7 @@ void ui_skin_editor(tenv* env) {
           igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0, 0, 0, 0});
           igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0, 0, 0, 0});
           igPushID_Int(cg_id);
-          bool pressed = igButton(label, (ImVec2){scale, scale});
+          bool pressed = igButton(label, (ImVec2){ts, ts});
           igPopID();
           igPopStyleVar(1);
           igPopStyleColor(6);
@@ -656,38 +751,36 @@ void ui_skin_editor(tenv* env) {
           if (hovered) a = 1.0f;
           if (active) a = 0.6f;
 
-          bool sprite_visible = item_pos.x + scale >= clip_x1 && item_pos.x <= clip_x2 &&
-                                item_pos.y + scale >= clip_y1 && item_pos.y <= clip_y2;
+          bool sprite_visible = item_pos.x + ts >= clip_x1 && item_pos.x <= clip_x2 &&
+                                item_pos.y + ts >= clip_y1 && item_pos.y <= clip_y2;
           if (sprite_visible) {
             bp_renderer_push(usr->r->bpr,
-                             &(bp_instance){{item_pos.x - scale * 0.25f,
-                                             item_pos.y - scale * 0.25f,
-                                             scale * 1.5f},
+                             &(bp_instance){{item_pos.x - ts * 0.25f,
+                                             item_pos.y - ts * 0.25f,
+                                             ts * 1.5f},
                                             gdata->SHADOW_UV,
                                             {0, 0, 0, 0.2f}});
             bp_renderer_push(usr->r->bpr,
-                             &(bp_instance){{item_pos.x, item_pos.y, scale},
+                             &(bp_instance){{item_pos.x, item_pos.y, ts},
                                             gdata->cg_uvs[cg_id],
                                             {1, 1, 1, a}});
           }
-          cg_id++;
         }
-      }
 
-      float accessories_label_y = colors_y +
-          (style->ItemSpacing.y + scale) * 6.0f + style->ItemSpacing.y * 2.0f;
-      igSetCursorPosX(0);
-      igSetCursorPosY(accessories_label_y);
-      igTextDisabled("Accessories");
-      float accessories_y = igGetCursorPosY() + style->ItemSpacing.y;
+        igSetCursorPosX(0);
+        igSetCursorPosY(colors_y + pitch_y * rows);
+        igDummy((ImVec2){1, style->ItemSpacing.y});
+      } else {
+        igTextDisabled("Accessories");
+        float accessories_y = igGetCursorPosY() + style->ItemSpacing.y;
+        int total_acc = NUM_ACCESSORIES + 1; /* last tile = no accessory */
+        int rows = (total_acc + ncols - 1) / ncols;
 
-      int aid = 0;
-      for (int i = 0; i < 5; i++) {
-        for (int j = 0; j < 7; j++) {
-          if (aid > NUM_ACCESSORIES) break;
+        for (int aid = 0; aid < total_acc; aid++) {
+          int i = aid / ncols, j = aid % ncols;
           bool is_no_accessory = aid == NUM_ACCESSORIES;
-          igSetCursorPosY(accessories_y + (style->ItemSpacing.y + scale) * i);
-          igSetCursorPosX((style->ItemSpacing.x + scale) * j);
+          igSetCursorPosY(accessories_y + pitch_y * i);
+          igSetCursorPosX(gx0 + pitch_x * j);
           ImVec2 item_pos;
           igGetCursorScreenPos(&item_pos);
           float a = 0.8f;
@@ -696,7 +789,7 @@ void ui_skin_editor(tenv* env) {
           sprintf(label, "a%d", aid);
           igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){1, 0.5f, 0.5f, 1});
           if (!is_no_accessory) {
-            igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, scale / 2);
+            igPushStyleVar_Float(ImGuiStyleVar_FrameRounding, ts / 2);
             igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0, 0, 0, 0});
             igPushStyleColor_Vec4(ImGuiCol_Border, (ImVec4){0, 0, 0, 0});
             igPushStyleColor_Vec4(ImGuiCol_BorderShadow, (ImVec4){0, 0, 0, 0});
@@ -705,7 +798,7 @@ void ui_skin_editor(tenv* env) {
           }
           igPushID_Str(label);
           bool pressed = igButton(is_no_accessory ? "\uea0f" : "",
-                                  (ImVec2){scale, scale});
+                                  (ImVec2){ts, ts});
           igPopID();
           if (!is_no_accessory) igPopStyleVar(1);
           igPopStyleColor(is_no_accessory ? 1 : 6);
@@ -716,20 +809,19 @@ void ui_skin_editor(tenv* env) {
           if (hovered) a = 1.0f;
           if (active) a = 0.0f;
 
-          bool sprite_visible = item_pos.x + scale >= clip_x1 && item_pos.x <= clip_x2 &&
-                                item_pos.y + scale >= clip_y1 && item_pos.y <= clip_y2;
+          bool sprite_visible = item_pos.x + ts >= clip_x1 && item_pos.x <= clip_x2 &&
+                                item_pos.y + ts >= clip_y1 && item_pos.y <= clip_y2;
           if (!is_no_accessory && sprite_visible)
             bp_renderer_push(usr->r->bpr,
-                             &(bp_instance){{item_pos.x, item_pos.y, scale},
+                             &(bp_instance){{item_pos.x, item_pos.y, ts},
                                             gdata->accessories[aid].uv,
                                             {1, 1, 1, a}});
-          aid++;
         }
-      }
 
-      igSetCursorPosX(0);
-      igSetCursorPosY(accessories_y + (style->ItemSpacing.y + scale) * 5.0f);
-      igDummy((ImVec2){tot_size[0], style->ItemSpacing.y});
+        igSetCursorPosX(0);
+        igSetCursorPosY(accessories_y + pitch_y * rows);
+        igDummy((ImVec2){1, style->ItemSpacing.y});
+      }
     }
     igEndChild();
     igPopStyleColor(5);

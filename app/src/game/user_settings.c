@@ -2,10 +2,12 @@
 #include "backgrounds.h"
 #include "ntl_emoji.h"
 #include "profile_emoji.h"
+#include "../external/mongoose.h" /* mg_random */
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <math.h>
+#include <ctype.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -372,6 +374,15 @@ void user_settings_default(user_settings* usr_settings) {
   strcpy(usr_settings->snakey_rain_bot_skin,
          "uuuuuuuauuuuuuaauuuuuaaauuuuaaaauuuaaaaauuaaaaaauaaaaaaa"
          "uuaaaaaauuuaaaaauuuuaaaauuuuuaaauuuuuuaa");
+
+  /* Player ID: created lazily on first use (player_id_ensure). */
+  memset(usr_settings->player_id_reserved, 0,
+         sizeof(usr_settings->player_id_reserved));
+  usr_settings->player_id[0] = '\0';
+  usr_settings->player_id_force = false;
+  snprintf(usr_settings->player_id_servers,
+           sizeof usr_settings->player_id_servers, "%s",
+           PLAYER_ID_DEFAULT_SERVERS);
 }
 
 void write_default_settings(user_settings* usr_settings) {
@@ -456,9 +467,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v230_prefix = offsetof(user_settings, game_bg_reserved);
   size_t v231_prefix = offsetof(user_settings, lb_fx_reserved);
   size_t v232_prefix = offsetof(user_settings, hud_theme_reserved);
+  size_t v233_prefix = offsetof(user_settings, player_id_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v233_prefix)
+    /* A file saved before the Player ID existed ends at v233_prefix, possibly
+       followed only by compiler tail padding. Keep every saved value; the
+       Player ID fields keep their defaults. */
+    bytes_to_read = v233_prefix;
   else if ((size_t)file_size >= v232_prefix)
     /* A file saved before HUD themes / leaderboard rank animation existed
        ends at v232_prefix, possibly followed only by compiler tail padding.
@@ -748,6 +765,16 @@ void read_user_settings(user_settings* usr_settings) {
         (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
   }
   if (!valid_ntl_client_id) loaded.ntl_client_id[0] = 0;
+
+  /* Player ID: a damaged ID is dropped (a new one is made on next use); the
+     server list is force-terminated and must parse, else back to defaults. */
+  loaded.player_id[PLAYER_ID_LEN] = 0;
+  if (!player_id_is_valid(loaded.player_id)) loaded.player_id[0] = 0;
+  loaded.player_id_force = loaded.player_id_force ? true : false;
+  loaded.player_id_servers[PLAYER_ID_SERVERS_MAX - 1] = 0;
+  if (player_id_servers_check(loaded.player_id_servers) != 0)
+    snprintf(loaded.player_id_servers, sizeof loaded.player_id_servers, "%s",
+             PLAYER_ID_DEFAULT_SERVERS);
 
   if (!isfinite(loaded.public_chat_rel_x) || loaded.public_chat_rel_x < -0.25f ||
       loaded.public_chat_rel_x > 1.25f)
@@ -1197,4 +1224,101 @@ void user_settings_remove_saved_name(user_settings* usr_settings, int index) {
            sizeof usr_settings->saved_names[i]);
   --usr_settings->saved_name_count;
   usr_settings->saved_names[usr_settings->saved_name_count][0] = 0;
+}
+
+/* ---- Player ID ---------------------------------------------------------- */
+
+bool player_id_is_valid(const char* id) {
+  if (!id || strlen(id) != PLAYER_ID_LEN) return false;
+  for (int i = 0; i < PLAYER_ID_LEN; ++i) {
+    char ch = id[i];
+    if (!((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') ||
+          (ch >= 'a' && ch <= 'z')))
+      return false;
+  }
+  return true;
+}
+
+bool player_id_generate(user_settings* s) {
+  static const char alphabet[] =
+      "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  char id[PLAYER_ID_LEN + 1];
+  int n = 0;
+  /* Rejection sampling (bytes >= 248 are skipped, 248 = 62 * 4) so every
+     character is equally likely, same as the NTL mod. */
+  for (int tries = 0; n < PLAYER_ID_LEN && tries < 64; ++tries) {
+    unsigned char rnd[PLAYER_ID_LEN];
+    if (!mg_random(rnd, sizeof rnd)) return false;
+    for (int i = 0; i < PLAYER_ID_LEN && n < PLAYER_ID_LEN; ++i)
+      if (rnd[i] < 248) id[n++] = alphabet[rnd[i] % 62];
+  }
+  if (n < PLAYER_ID_LEN) return false;
+  id[PLAYER_ID_LEN] = '\0';
+  memcpy(s->player_id, id, sizeof id);
+  save_user_settings(s);
+  return true;
+}
+
+bool player_id_ensure(user_settings* s) {
+  if (player_id_is_valid(s->player_id)) return true;
+  return player_id_generate(s);
+}
+
+/* Parses one list line into a normalised lower-case "host:port" (no spaces).
+   Returns 1 = ok, 0 = blank line, -1 = not host:port. */
+static int pid_parse_line(const char* b, const char* e, char* out,
+                          size_t cap) {
+  size_t n = 0;
+  for (const char* p = b; p < e; ++p) {
+    unsigned char ch = (unsigned char)*p;
+    if (ch == ' ' || ch == '\t' || ch == '\r') continue;
+    if (n + 1 >= cap) return -1;
+    out[n++] = (char)tolower(ch);
+  }
+  out[n] = '\0';
+  if (n == 0) return 0;
+  char* colon = strrchr(out, ':');
+  if (!colon || colon == out || colon[1] == '\0') return -1;
+  long port = 0;
+  for (const char* p = colon + 1; *p; ++p) {
+    if (*p < '0' || *p > '9') return -1;
+    port = port * 10 + (*p - '0');
+    if (port > 65535) return -1;
+  }
+  if (port < 1) return -1;
+  return 1;
+}
+
+int player_id_servers_check(const char* text) {
+  char tmp[64];
+  int line = 1;
+  const char* b = text;
+  for (const char* p = text;; ++p) {
+    if (*p == '\n' || *p == '\0') {
+      if (pid_parse_line(b, p, tmp, sizeof tmp) < 0) return line;
+      if (*p == '\0') break;
+      b = p + 1;
+      ++line;
+    }
+  }
+  return 0;
+}
+
+bool player_id_should_send(const user_settings* s, const char* ip_port) {
+  if (s->player_id_force) return true;
+  char want[64], have[64];
+  if (!ip_port || pid_parse_line(ip_port, ip_port + strlen(ip_port), want,
+                                 sizeof want) != 1)
+    return false;
+  const char* b = s->player_id_servers;
+  for (const char* p = s->player_id_servers;; ++p) {
+    if (*p == '\n' || *p == '\0') {
+      if (pid_parse_line(b, p, have, sizeof have) == 1 &&
+          strcmp(have, want) == 0)
+        return true;
+      if (*p == '\0') break;
+      b = p + 1;
+    }
+  }
+  return false;
 }

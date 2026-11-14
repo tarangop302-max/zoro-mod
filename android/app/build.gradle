@@ -5,7 +5,7 @@ plugins {
 
 // ---------------------------------------------------------------------------
 // Single place to bump the app version. It must MATCH the tag of the release
-// you upload (tag v1.3  ->  appVersion = "1.3"), otherwise the app would keep
+// you upload (tag v1.4  ->  appVersion = "1.4"), otherwise the app would keep
 // showing NEW UPDATE after updating.
 //   - versionName / BuildConfig.VERSION_NAME: shown on the first screen and
 //     compared against the newest GitHub Release tag
@@ -13,7 +13,7 @@ plugins {
 // versionCode is minutes-since-1970, so every build is always accepted by
 // Android as an upgrade, even over test builds with a bigger number.
 // ---------------------------------------------------------------------------
-def appVersion = "1.3"
+def appVersion = "1.4"
 def appVersionCode = (int) (System.currentTimeMillis() / 60000L)
 
 android {

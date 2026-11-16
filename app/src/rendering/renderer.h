@@ -42,6 +42,7 @@ typedef struct renderer {
   } global;
 
   texture* tex_atlas;
+  texture* orb_atlas; /* Orb render mode skin texture (optional) */
   texture* bg_tex;
   /* In-game background (arena floor), see game/backgrounds.h. bg_tex is the
      texture bound in descriptor binding 2 right now. bg_tex_default is the

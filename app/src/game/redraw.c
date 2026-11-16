@@ -45,6 +45,21 @@ int arp(snake* o, int q, float xx, float yy) {
 }
 
 /* Per-point colours for the transparent-body ribbon (indexed like pbx). */
+/* Orb render mode: orb_skin_atlas.png is 7 columns (brightness shades) x 41
+ * rows (one per colour id, 0-40). Shade bounces 0..6..0 along the body so the
+ * orbs look lit, except colour 36 which cycles 0..6. */
+static inline vec4s redraw_orb_cell_uv(int cg_id, int seg) {
+  int c = (cg_id < 0 || cg_id > 40) ? 40 : cg_id;
+  int shade;
+  if (c == 36) {
+    shade = seg % 7;
+  } else {
+    shade = seg % 14;
+    if (shade >= 7) shade = 13 - shade;
+  }
+  return (vec4s){{shade / 7.0f, c / 41.0f, 1.0f / 7.0f, 1.0f / 41.0f}};
+}
+
 static vec4s body_cols[32767];
 
 /* Draws a snake body as ONE continuous ribbon instead of a chain of
@@ -957,9 +972,15 @@ void redraw(tenv* env) {
           }
           if (flatten_snake)
             push_body_ribbon(usr->r->bpr, gdata, bp, mww2, mhh2, ribbon_half_w);
-        } else if (mode->render_mode == 1) {
+        } else if (mode->render_mode == RENDER_MODE_SOLID ||
+                   mode->render_mode == RENDER_MODE_ORB) {
           float skinless_a = skin_alpha;
           bool ribbon_snake = skinless_a < 1.0f;
+          /* Orb mode draws each segment from the orb atlas. Transparent
+           * skins (ribbon) and assist-white snakes keep plain colour. */
+          const bool orb_tex_ok = mode->render_mode == RENDER_MODE_ORB &&
+                                  usr->r && usr->r->orb_atlas &&
+                                  !ribbon_snake && !assist_force_white;
           if (render_shadows) {
 
             int start = bp >= 4 ? bp - 4 : 0;
@@ -1026,6 +1047,17 @@ void redraw(tenv* env) {
                   body_cols[(int)j] = assist_force_white
                             ? (vec4s){1, 1, 1, a * skinless_a}
                             : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a};
+                } else if (orb_tex_ok) {
+                  bp_renderer_push(
+                      usr->r->bpr,
+                      &(bp_instance){
+                          .circle = {fix - (gdata->data.gsc * lsz),
+                                     fiy - (gdata->data.gsc * lsz),
+                                     gdata->data.gsc * 2 * lsz,
+                                     gdata->data.pba[(int)j]},
+                          .uv_rect = redraw_orb_cell_uv(cg_id, (int)j),
+                          .color = {1, 1, 1, a * skinless_a},
+                          .shape = {0, 6}});
                 } else {
                   bp_renderer_push(
                     usr->r->bpr,
@@ -1083,6 +1115,17 @@ void redraw(tenv* env) {
                   body_cols[(int)j] = assist_force_white
                             ? (vec4s){1, 1, 1, a * skinless_a}
                             : (vec4s){cg_col->r, cg_col->g, cg_col->b, a * skinless_a};
+                } else if (orb_tex_ok) {
+                  bp_renderer_push(
+                      usr->r->bpr,
+                      &(bp_instance){
+                          .circle = {fix - (gdata->data.gsc * lsz),
+                                     fiy - (gdata->data.gsc * lsz),
+                                     gdata->data.gsc * 2 * lsz,
+                                     gdata->data.pba[(int)j]},
+                          .uv_rect = redraw_orb_cell_uv(cg_id, (int)j),
+                          .color = {1, 1, 1, a * skinless_a},
+                          .shape = {0, 6}});
                 } else {
                   bp_renderer_push(
                     usr->r->bpr,

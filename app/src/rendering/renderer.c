@@ -154,6 +154,9 @@ renderer* renderer_create(tenv* env) {
   DLOG("renderer: loading atlas texture (8K) - needs ~256MB staging RAM");
   r->tex_atlas = create_mipmap_texture(ctx, "app/res/textures/tex_atlas_8k.png");
   DLOG("renderer: tex_atlas=%p", (void*)r->tex_atlas);
+  /* Optional: Orb render mode texture. Falls back to the main atlas. */
+  r->orb_atlas = create_mipmap_texture(ctx, "app/res/textures/orb_skin_atlas.png");
+  DLOG("renderer: orb_atlas=%p", (void*)r->orb_atlas);
 
   DLOG("renderer: loading boost button texture");
   r->boost_button_tex = create_mipmap_texture(ctx, "app/res/textures/boost_button.png");
@@ -165,6 +168,7 @@ renderer* renderer_create(tenv* env) {
          (void*)r->bg_tex, (void*)r->tex_atlas, (void*)r->boost_button_tex);
     if (r->bg_tex) { destroy_texture(ctx, r->bg_tex); }
     if (r->tex_atlas) { destroy_texture(ctx, r->tex_atlas); }
+    if (r->orb_atlas) { destroy_texture(ctx, r->orb_atlas); }
     if (r->boost_button_tex) { destroy_texture(ctx, r->boost_button_tex); }
     free(r);
     return NULL;
@@ -268,7 +272,7 @@ renderer* renderer_create(tenv* env) {
           .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
           .pNext = NULL,
           .flags = 0,
-          .bindingCount = 4,
+          .bindingCount = 5,
           .pBindings =
               (VkDescriptorSetLayoutBinding[]){
                   {.binding = 0,
@@ -285,6 +289,10 @@ renderer* renderer_create(tenv* env) {
                    .descriptorCount = 1,
                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
                   {.binding = 3,
+                   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                   .descriptorCount = 1,
+                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+                  {.binding = 4,
                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                    .descriptorCount = 1,
                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}}},
@@ -354,7 +362,7 @@ renderer* renderer_create(tenv* env) {
 
   for (int i = 0; i < ctx->fif; i++)
     vkUpdateDescriptorSets(
-        ctx->device, 4,
+        ctx->device, 5,
         (VkWriteDescriptorSet[]){
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -405,6 +413,20 @@ renderer* renderer_create(tenv* env) {
                 .pImageInfo =
                     &(VkDescriptorImageInfo){
                         r->nearest_sampler, r->mmr->minimap_tex[i]->view,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = NULL,
+                .dstSet = r->global_set[i],
+                .dstBinding = 4,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo =
+                    &(VkDescriptorImageInfo){
+                        r->linear_sampler,
+                        r->orb_atlas ? r->orb_atlas->view : r->tex_atlas->view,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             }},
         0, NULL);
@@ -623,6 +645,7 @@ void renderer_destroy(renderer* r, tcontext* ctx) {
   if (r->arrow_atlas_ds) igImplVulkan_RemoveTexture(r->arrow_atlas_ds);
   if (r->arrow_atlas_tex) destroy_texture(ctx, r->arrow_atlas_tex);
   destroy_texture(ctx, r->tex_atlas);
+  if (r->orb_atlas) destroy_texture(ctx, r->orb_atlas);
   if (r->bg_thumbs_ds) igImplVulkan_RemoveTexture(r->bg_thumbs_ds);
   if (r->bg_thumbs_tex) destroy_texture(ctx, r->bg_thumbs_tex);
   if (r->bg_tex_extra) destroy_texture(ctx, r->bg_tex_extra);

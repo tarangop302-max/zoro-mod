@@ -816,7 +816,7 @@ static void sec_mode(tenv* env, int i) {
     igSetNextItemWidth(-1);
     igCombo_Str_arr("##render mode", &mode->render_mode,
                     (const char*[]){"Texture", "Solid", "Flat", "Rounded plain", "Squared plain",
-                                    "Vlither textured", "Striped plain"},
+                                    "Vlither textured", "Striped plain", "Orb"},
                     NUM_RENDER_MODES, -1);
     opt_end();
   }

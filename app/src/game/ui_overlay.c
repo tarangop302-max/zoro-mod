@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../user.h"
+#include "../network/server.h"
 #include "../ui/crystal_theme.h"
 #include "../arrow_styles.h"
 #include "net_graph.h"
@@ -596,7 +597,22 @@ void ui_overlay(tenv* env) {
 
     igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ueaeb");
     igSameLine(0, -1);
-    igTextColored(hud_tint(usrs->hud_value_color, 0.7f), "%d", gdata->data.kills);
+    /* Battledome: the server resets kills on death and lowers them over
+       time, so show its real-time number instead of our own tally -- our
+       row on the leaderboard when we are on it, otherwise the counter the
+       server sent with our last kill (what NTL shows). */
+    int hud_kills = gdata->data.kills;
+    if (server_is_battledome(usrs->ipv4)) {
+      const int lp = gdata->data.lb_pos;
+      if (gdata->data.gotlb && lp >= 1 && lp <= NUM_LEADERBOARD_ENTRIES)
+        hud_kills = gdata->data.lb.entries[lp - 1].score;
+      else if (gdata->data.bd_k_valid)
+        hud_kills = gdata->data.bd_k_counter;
+      else
+        hud_kills = 0;
+      if (hud_kills < 0) hud_kills = 0;
+    }
+    igTextColored(hud_tint(usrs->hud_value_color, 0.7f), "%d", hud_kills);
 
     igTextColored(hud_tint(usrs->hud_icon_color, 0.3f), "\ue9d9");
     igSameLine(0, -1);

@@ -1573,6 +1573,14 @@ void got_packet(tenv* env, uint8_t* a, int a_len) {
     }
     gdata->data.lb_serial++;
   } else if (cmd == 'k') {
+    /* Battledome-type servers append our snake id (2 bytes) and the
+       server's kill counter (3 bytes) -- the number NTL shows. Plain
+       servers send a bare 'k'. */
+    if (dlen >= 5 && ((a[1] << 8) | a[2]) == gdata->data.snake_id) {
+      gdata->data.bd_k_counter = (a[3] << 16) | (a[4] << 8) | a[5];
+      gdata->data.bd_k_valid = true;
+      gdata->data.bd_k_serial++;
+    }
     gdata->data.kills++;
     if (!gdata->preview_active) {
       lifetime_stats_add_kill();

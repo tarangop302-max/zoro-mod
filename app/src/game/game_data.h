@@ -257,6 +257,11 @@ typedef struct game_data {
     int rank;
     int slither_count;
     int kills;
+    /* Battledome-type servers send the server's own kill counter inside the
+       'k' packet: [id:2][counter:3]. Same as the NTL mod's KK_KILL_COUNTER. */
+    int bd_k_counter;
+    bool bd_k_valid;
+    unsigned bd_k_serial;
     int snake_id;
     int kd_l_frb;
     int kd_r_frb;

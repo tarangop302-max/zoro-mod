@@ -603,6 +603,8 @@ void game_data_reset(tenv* env) {
   gdata->data.cur_length = 0;
   gdata->data.rank = 0;
   gdata->data.kills = 0;
+  gdata->data.bd_k_counter = 0;
+  gdata->data.bd_k_valid = false;
   gdata->data.slither_count = 0;
   gdata->data.snake_id = -1;
   gdata->data.ping_follow = GOOD_PING;

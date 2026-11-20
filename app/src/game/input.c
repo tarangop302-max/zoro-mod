@@ -355,7 +355,9 @@ void input(tenv* env) {
     /* NTL sets snake.eang only when it sends a steering packet (below). */    
     float ang;    
     if (want_e &&    
-        rt_gate(now_ms, gdata->data.rt_last_e_ms, STEER_ANGLE_MIN_MS)) {    
+        rt_gate(now_ms, gdata->data.rt_last_e_ms,
+                eb_on ? STEER_ANGLE_MIN_MS
+                      : STEER_ANGLE_MIN_MS - STEER_GATE_SLACK_MS)) {    
       want_e = false;    
       gdata->data.rt_last_e_ms = now_ms;    
       gdata->data.last_e_mtm = gdata->data.ctm;    

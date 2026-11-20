@@ -52,13 +52,14 @@
    the same distance every frame instead of wobbling with timer jitter. */
 #define FRAME_STEP_SNAP 1
 
-/* 1 = start the touch arrow the way the official Slither app does: at
-   58 * snake scale * zoom "game units" from the head, where the screen's short
-   side is 480 units. The old fixed 44 px start is tiny on a 1080 px-wide
-   phone, so every finger movement swung the heading ~3x harder than the
-   official app. The arrow then grows with the snake and the zoom, like the
-   official one. 0 = the old fixed 44 px. */
+/* 1 = start the touch arrow where the official Slither app does instead of
+   the old fixed 44 px. ARROW_SPAWN_UNITS is the distance from the head centre
+   to the arrow's NEAR end (tail), in units of 1/480 of the screen's short side
+   (about 2.25 px on a 1080 px-wide phone). 65 was measured from an official
+   app screenshot (~146 px). Raise it to start the arrow farther out, lower it
+   to start closer. 0 = the old fixed 44 px. */
 #define ARROW_SPAWN_OFFICIAL 1
+#define ARROW_SPAWN_UNITS 65.0f
 
 /* 1 = my own head is steered by the server-true model (game/lag_comp.c): every
    steering byte is logged, every heading the server reports re-anchors the

@@ -179,8 +179,13 @@ void input(tenv* env) {
             float spawn_r = NTL_SPAWN_R;
 #if ARROW_SPAWN_OFFICIAL
             {
+              /* Measured on an official-app screenshot: the arrow's near end
+                 (tail) sits ARROW_SPAWN_UNITS from the head centre, and the
+                 arrow extends outward from there. Zoro draws its arrow
+                 centred on the cursor, so add half its drawn length. */
               float unit = (sw < sh ? sw : sh) / 480.0f;
-              float r = 58.0f * unit * me->sc * gdata->data.gsc;
+              float half_len = 0.5f * sh * 0.11f * usrs->arrow_size;
+              float r = ARROW_SPAWN_UNITS * unit + half_len;
               float rmax = (sw < sh ? sw : sh) * 0.45f;
               spawn_r = r < NTL_SPAWN_R ? NTL_SPAWN_R : (r > rmax ? rmax : r);
             }

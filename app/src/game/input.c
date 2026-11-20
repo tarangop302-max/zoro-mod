@@ -176,8 +176,17 @@ void input(tenv* env) {
             gdata->touch_ctrl.tp_vy           = 0.0f;
 
             float ang = me->eang;
-            float spawn_x = cx + NTL_SPAWN_R * cosf(ang);
-            float spawn_y = cy + NTL_SPAWN_R * sinf(ang);
+            float spawn_r = NTL_SPAWN_R;
+#if ARROW_SPAWN_OFFICIAL
+            {
+              float unit = (sw < sh ? sw : sh) / 480.0f;
+              float r = 58.0f * unit * me->sc * gdata->data.gsc;
+              float rmax = (sw < sh ? sw : sh) * 0.45f;
+              spawn_r = r < NTL_SPAWN_R ? NTL_SPAWN_R : (r > rmax ? rmax : r);
+            }
+#endif
+            float spawn_x = cx + spawn_r * cosf(ang);
+            float spawn_y = cy + spawn_r * sinf(ang);
 
             gdata->touch_ctrl.tp_anchor_x = spawn_x;
             gdata->touch_ctrl.tp_anchor_y = spawn_y;

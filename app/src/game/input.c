@@ -201,11 +201,26 @@ void input(tenv* env) {
 
           if (!(env->wnd->touch.just_down || !gdata->touch_ctrl.tp_tracking)) {
 
+#if ARROW_DELTA_TRACK
+            /* Move the arrow by how far the finger moved since the last
+               frame, like the official app. The old code placed it at
+               (spawn + total drag since touch-down) and then clamped it to the
+               screen, so once the finger had dragged past the screen edge the
+               arrow stayed stuck there and ignored the finger until it came
+               all the way back: turning back felt late. */
+            float nx = gdata->touch_ctrl.tp_cursor_x
+                     + (tx - gdata->touch_ctrl.tp_last_touch_x) * usrs->arrow_sensitivity;
+            float ny = gdata->touch_ctrl.tp_cursor_y
+                     + (ty - gdata->touch_ctrl.tp_last_touch_y) * usrs->arrow_sensitivity;
+            gdata->touch_ctrl.tp_last_touch_x = tx;
+            gdata->touch_ctrl.tp_last_touch_y = ty;
+#else
             float nx = gdata->touch_ctrl.tp_anchor_x
 
                      + (tx - gdata->touch_ctrl.tp_last_touch_x) * usrs->arrow_sensitivity;
             float ny = gdata->touch_ctrl.tp_anchor_y
                      + (ty - gdata->touch_ctrl.tp_last_touch_y) * usrs->arrow_sensitivity;
+#endif
 
             nx = GLM_MAX(0.0f, GLM_MIN(sw, nx));
             ny = GLM_MAX(0.0f, GLM_MIN(sh, ny));

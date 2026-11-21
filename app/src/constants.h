@@ -52,25 +52,12 @@
    the same distance every frame instead of wobbling with timer jitter. */
 #define FRAME_STEP_SNAP 1
 
-/* 1 = start the touch arrow where the official Slither app does instead of
-   the old fixed 44 px. ARROW_SPAWN_UNITS is the distance from the head centre
-   to the arrow's NEAR end (tail), in units of 1/480 of the screen's short side
-   (about 2.25 px on a 1080 px-wide phone). 65 was measured from an official
-   app screenshot (~146 px). Raise it to start the arrow farther out, lower it
-   to start closer. 0 = the old fixed 44 px. */
-#define ARROW_SPAWN_OFFICIAL 1
-#define ARROW_SPAWN_UNITS 65.0f
-
-/* 1 = the arrow you see glides toward your finger (60% of the remaining way
-   per frame at 60 fps) like the official app's arrow, instead of sitting
-   exactly under the touch point. Only the drawing is eased, steering is
-   unchanged. 0 = old behaviour. */
-#define ARROW_DRAW_EASE 1
-
-/* 1 = the arrow moves by the finger's movement each frame, so it reacts the
-   moment you reverse the drag even if you had dragged it against the screen
-   edge. 0 = old behaviour (arrow = start point + total drag, then clamped). */
-#define ARROW_DELTA_TRACK 1
+/* How much farther out the touch arrow is DRAWN than the point that actually
+   steers the snake (1.0 = same as before). It only changes how far the arrow
+   looks from the head: the direction, and so the steering and the Sensitivity
+   slider, stay exactly the same. Try 1.5 to 3.0; a 360 degree finger circle
+   now makes a bigger arrow circle even at low Sensitivity. */
+#define ARROW_STRETCH 2.0f
 
 /* 1 = my own head is steered by the server-true model (game/lag_comp.c): every
    steering byte is logged, every heading the server reports re-anchors the

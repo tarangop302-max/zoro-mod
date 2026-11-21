@@ -692,6 +692,9 @@ void read_user_settings(user_settings* usr_settings) {
   }
   loaded.net_graph_reserved[0] = loaded.net_graph_reserved[0] ? 1 : 0;
   if (loaded.net_graph_reserved[1] > 101) loaded.net_graph_reserved[1] = 0;
+  if (loaded.net_graph_reserved[7] != 0 &&
+      (loaded.net_graph_reserved[7] < 50 || loaded.net_graph_reserved[7] > 200))
+    loaded.net_graph_reserved[7] = 0;
   if (loaded.net_graph_reserved[3] != 0 &&
       (loaded.net_graph_reserved[3] < 10 || loaded.net_graph_reserved[3] > 100))
     loaded.net_graph_reserved[3] = 0;

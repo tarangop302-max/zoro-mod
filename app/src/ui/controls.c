@@ -7,10 +7,13 @@
 #include "crystal_theme.h"
 #include "key_buttons.h"
 #include "settings.h"
+#include "../arrow_shapes.h"
 
 static const char* const ARROW_STYLE_NAMES[ARROW_STYLE_COUNT] = {
     "Red Arrow", "Red 3D", "Blue 3D", "Blue Neon", "Colourful",
     "Wing 3D", "Yellow Double", "Purple", "Magenta", "Crimson Dart",
+    "Neon Outline", "Triple Chevron", "Gold Metal", "Flame Dart", "Ice Dart",
+    "Pixel", "Glass", "Lightning", "Radar",
 };
 
 enum { TAB_LAYOUT = 0, TAB_AIM, TAB_ZOOM, TAB_COUNT };
@@ -116,6 +119,10 @@ static void reset_tab(user_settings* usrs, int tab) {
       user_settings_set_arrow_start(usrs, 1.0f);
       usrs->boost_arrow_anim = false;
       usrs->arrow_style = 0;
+      usrs->arrow_shape_color[0] = 0.90f;
+      usrs->arrow_shape_color[1] = 0.16f;
+      usrs->arrow_shape_color[2] = 0.20f;
+      usrs->arrow_shape_color[3] = 1.0f;
       usrs->arrow_invisible = false;
       usrs->arrow_sync_with_zoom = true;
       break;
@@ -259,8 +266,10 @@ static void tab_aim(tuser_data* usr, user_settings* usrs, ImGuiStyle* style,
     if (!arrow_mode) igTextDisabled("Only used with the Arrow scheme.");
     {
       int shown = usrs->arrow_style;
-      if (shown < 0 || shown >= ARROW_STYLE_COUNT) shown = 0;
-      igText("Selected: %s", ARROW_STYLE_NAMES[shown]);
+      if (shown < 0 || shown >= ARROW_STYLE_TOTAL) shown = 0;
+      igText("Selected: %s", shown < ARROW_STYLE_COUNT
+                                 ? ARROW_STYLE_NAMES[shown]
+                                 : ARROW_SHAPE_NAMES[shown - ARROW_STYLE_COUNT]);
       ImVec2 avail;
       igGetContentRegionAvail(&avail);
       float tile = (avail.x - style->ItemSpacing.x * 2.0f) / 3.0f;
@@ -291,6 +300,42 @@ static void tab_aim(tuser_data* usr, user_settings* usrs, ImGuiStyle* style,
           if (picked) usrs->arrow_style = i;
           if (igIsItemHovered(0)) igSetTooltip("%s", ARROW_STYLE_NAMES[i]);
           igPopStyleColor(2);
+        }
+        igEndTable();
+      }
+
+      /* Recolourable shapes. Same colour picker as Settings > Laser color,
+         so any colour (and opacity) can be chosen. Only shapes use it; the
+         fixed designs above keep their own colours. */
+      igSeparatorText("Arrow shapes");
+      igTextDisabled("Colour applies to shapes only.");
+      igSetNextItemWidth(-1.0f);
+      igColorEdit4("##arrow shape color", usrs->arrow_shape_color,
+                   ImGuiColorEditFlags_AlphaBar);
+      if (igBeginTable("arrow_shape_picker", 3, ImGuiTableFlags_None,
+                       (ImVec2){0, 0}, 0)) {
+        for (int i = 0; i < ARROW_SHAPE_COUNT; ++i) {
+          igTableNextColumn();
+          char shape_id[32];
+          snprintf(shape_id, sizeof shape_id, "##arrow_shape_%d", i);
+          int shape_style = ARROW_STYLE_COUNT + i;
+          bool selected = usrs->arrow_style == shape_style;
+          if (igInvisibleButton(shape_id, (ImVec2){tile, tile * 0.62f}, 0))
+            usrs->arrow_style = shape_style;
+          bool hovered = igIsItemHovered(0);
+          ImVec2 mn, mx;
+          igGetItemRectMin(&mn);
+          igGetItemRectMax(&mx);
+          ImDrawList* tdl = igGetWindowDrawList();
+          ImDrawList_AddRectFilled(
+              tdl, mn, mx,
+              igColorConvertFloat4ToU32(selected ? COL_SEL
+                                                 : (hovered ? COL_IDLE_H : COL_IDLE)),
+              style->FrameRounding, 0);
+          arrow_shape_draw(tdl, i, (mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f,
+                           1.0f, 0.0f, (mx.x - mn.x) * 0.78f,
+                           usrs->arrow_shape_color, 1.0f);
+          if (hovered) igSetTooltip("%s", ARROW_SHAPE_NAMES[i]);
         }
         igEndTable();
       }

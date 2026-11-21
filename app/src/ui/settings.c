@@ -802,9 +802,9 @@ static void sec_mode(tenv* env, int i) {
     igCheckbox("##player names outline", &mode->player_names_outline);
     opt_end();
   }
-  if (opt_begin("Segment separation", "Spacing between the drawn body segments of snakes.")) {
+  if (opt_begin("Segment separation", "Spacing between the drawn body segments of snakes. Lower = smoother, finer body (more segments to draw); 1 is the old minimum.")) {
     igSetNextItemWidth(-1);
-    igSliderFloat("##bps", &mode->qsm, 1, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+    igSliderFloat("##bps", &mode->qsm, 0.4f, 4, "%.2f", ImGuiSliderFlags_AlwaysClamp);
     opt_end();
   }
   if (opt_begin("Background scale", "Size of the background pattern.")) {

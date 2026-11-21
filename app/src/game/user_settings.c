@@ -294,6 +294,10 @@ void user_settings_default(user_settings* usr_settings) {
 
   memset(usr_settings->key_btn_shape, 0, sizeof(usr_settings->key_btn_shape));
   usr_settings->arrow_style = 0;
+  usr_settings->arrow_shape_color[0] = 0.90f;
+  usr_settings->arrow_shape_color[1] = 0.16f;
+  usr_settings->arrow_shape_color[2] = 0.20f;
+  usr_settings->arrow_shape_color[3] = 1.0f;
   usr_settings->arrow_sync_with_zoom = true;
   usr_settings->head_dot_color[0] = 1.0f;
   usr_settings->head_dot_color[1] = 1.0f;
@@ -468,9 +472,15 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v231_prefix = offsetof(user_settings, lb_fx_reserved);
   size_t v232_prefix = offsetof(user_settings, hud_theme_reserved);
   size_t v233_prefix = offsetof(user_settings, player_id_reserved);
+  size_t v234_prefix = offsetof(user_settings, arrow_shape_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v234_prefix)
+    /* A file saved before the arrow shape colour existed ends at v234_prefix,
+       possibly followed only by compiler tail padding. Keep every saved
+       value; the shape colour keeps its default. */
+    bytes_to_read = v234_prefix;
   else if ((size_t)file_size >= v233_prefix)
     /* A file saved before the Player ID existed ends at v233_prefix, possibly
        followed only by compiler tail padding. Keep every saved value; the
@@ -820,8 +830,13 @@ void read_user_settings(user_settings* usr_settings) {
      that might still check it. */
   loaded.ntl_enabled = false;
 
-  if (loaded.arrow_style < 0 || loaded.arrow_style >= ARROW_STYLE_COUNT)
+  if (loaded.arrow_style < 0 || loaded.arrow_style >= ARROW_STYLE_TOTAL)
     loaded.arrow_style = 0;
+  for (int c = 0; c < 4; ++c) {
+    if (!isfinite(loaded.arrow_shape_color[c]) || loaded.arrow_shape_color[c] < 0.0f ||
+        loaded.arrow_shape_color[c] > 1.0f)
+      loaded.arrow_shape_color[c] = (c == 0) ? 0.90f : (c == 1) ? 0.16f : (c == 2) ? 0.20f : 1.0f;
+  }
   for (int c = 0; c < 3; ++c) {
     if (!isfinite(loaded.head_dot_color[c]) || loaded.head_dot_color[c] < 0.0f ||
         loaded.head_dot_color[c] > 1.0f)

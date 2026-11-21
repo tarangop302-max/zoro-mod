@@ -22,6 +22,7 @@
 #include "lifetime_stats.h"
 #include "global_chat.h"
 #include "lb_text_fx.h"
+#include "../arrow_shapes.h"
 
 /* Moves a point on the touch-arrow cursor away from (k > 1) or toward (k < 1)
    the head along the same line from the head, so the direction (and so the
@@ -1415,7 +1416,14 @@ void ui_overlay(tenv* env) {
 
         ImU32 border_col = IM_COL32((int)(ar*178),(int)(ag*178),(int)(ab*178), 255);
 
-        if (usr->r && usr->r->arrow_atlas_ds) {
+        if (usrs->arrow_style >= ARROW_STYLE_COUNT) {
+          /* Recolourable shape: drawn as polygons in the colour picked in
+             Settings > Controls > Arrow shapes (arrow_shape_color). Same
+             centre, rotation and width as the atlas arrows below, so Size
+             and "Grows on boost" apply to it too. */
+          arrow_shape_draw(dl, usrs->arrow_style - ARROW_STYLE_COUNT, acx, acy,
+                           cs, sn_v, aw, usrs->arrow_shape_color, 0.92f);
+        } else if (usr->r && usr->r->arrow_atlas_ds) {
           /* Textured steering arrow: whichever design is picked in
              Settings > Controls > Arrow design (usrs->arrow_style) is
              what actually gets drawn here now. qw/qh keep the same

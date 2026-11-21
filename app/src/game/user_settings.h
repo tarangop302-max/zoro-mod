@@ -590,6 +590,14 @@ typedef struct user_settings {
   char       player_id[PLAYER_ID_LEN + 1];
   bool       player_id_force;
   char       player_id_servers[PLAYER_ID_SERVERS_MAX];
+
+  /* v2.34: colour of the recolourable arrow shapes (arrow_style >=
+     ARROW_STYLE_COUNT, see arrow_shapes.h). RGBA 0..1, edited with the same
+     igColorEdit4 picker as laser_color. Appended after player_id_servers so
+     every earlier file stays a compatible prefix (see v234_prefix in
+     read_user_settings). */
+  uint8_t    arrow_shape_reserved[8];
+  vec4       arrow_shape_color;
 } user_settings;
 
 #define LB_ANIM_SPEED_MIN 0.5f

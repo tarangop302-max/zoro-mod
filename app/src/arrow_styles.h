@@ -3,11 +3,11 @@
 
 #include "constants.h"
 
-/* Ten arrows packed 3-per-row in a 768px-wide atlas (three full rows plus
-   a fourth row holding just the newest design). Each 256px cell has an 8px
+/* Nineteen arrows packed 3-per-row in a 768px-wide atlas (six full rows plus
+   a seventh row holding the last one). Each 256px cell has an 8px
    transparent gutter to keep neighbouring sprites out of generated mipmaps. */
 #define ARROW_ATLAS_WIDTH 768.0f
-#define ARROW_ATLAS_HEIGHT 1024.0f
+#define ARROW_ATLAS_HEIGHT 1792.0f
 
 static inline void arrow_style_uv_bounds(int style, float* u0, float* v0,
                                          float* u1, float* v1) {
@@ -20,13 +20,16 @@ static inline void arrow_style_uv_bounds(int style, float* u0, float* v0,
   *v1 = (row * 256.0f + 248.0f) / ARROW_ATLAS_HEIGHT;
 }
 
-/* redarrow.webp was supplied as 612x408, and the newest design (index 9)
-   was supplied as 714x497; the remaining source canvases are square. The
-   atlas stores every cell square and this restores each one's real shape. */
+/* Real width/height of each design. The atlas stores every cell square and
+   this restores each one's real shape. Styles 0 (redarrow.webp, 612x408) and
+   9 (714x497) came as non-square images; styles 10-18 are the newer designs,
+   each cropped to its own bounding box and stretched to fill its cell. */
 static inline float arrow_style_aspect(int style) {
-  if (style == 0) return 1.5f;
-  if (style == 9) return 1.44f;
-  return 1.0f;
+  static const float k_aspect[ARROW_STYLE_COUNT] = {
+      1.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.44f,
+      1.571f, 1.472f, 1.616f, 1.646f, 1.393f, 0.996f, 1.681f, 1.603f, 1.000f};
+  if (style < 0 || style >= ARROW_STYLE_COUNT) return 1.0f;
+  return k_aspect[style];
 }
 
 #endif

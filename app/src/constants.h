@@ -17,7 +17,10 @@
 #define NUM_FOOD_SIZES 17
 #define NUM_PREY_SIZES 22
 #define MAX_MINIMAP_SIZE 512
-#define ARROW_STYLE_COUNT 10
+#define ARROW_STYLE_COUNT 19 /* fixed-design arrows in arrow_atlas.png */
+#define ARROW_SHAPE_COUNT 12 /* recolourable shapes, see arrow_shapes.h */
+/* arrow_style 0..COUNT-1 = atlas arrow, COUNT..TOTAL-1 = shape (style-COUNT) */
+#define ARROW_STYLE_TOTAL (ARROW_STYLE_COUNT + ARROW_SHAPE_COUNT)
 #define TIMEOUT 5
 #define PING_SAMPLE_COUNT 8
 #define GOOD_PING 30

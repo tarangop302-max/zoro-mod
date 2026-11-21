@@ -1030,6 +1030,44 @@ open class GameActivity : NativeActivity() {
     private inner class ImeBridgeView(context: Context) : View(context) {
         private var composingCodePoints = 0
 
+        /* Text the bridge has already inserted into the ImGui field that
+         * could still be part of the word being typed (the tail of the
+         * current word, never containing whitespace), plus the text that is
+         * currently being composed. Gboard treats "20k" as ONE word: after
+         * "20" has gone in it later sends setComposingText("20k") and expects
+         * the editor to replace the "20" it already has. This bridge keeps no
+         * real text buffer, so without this memory the "20" was never
+         * replaced and "20k" was simply appended after it, giving "2020k".
+         * See setComposingText() / setComposingRegion() below. */
+        private val recentRun = StringBuilder()
+        private var composingText = ""
+
+        private fun noteInserted(text: String) {
+            if (text.isEmpty()) return
+            var cut = -1
+            for (i in text.indices) if (Character.isWhitespace(text[i])) cut = i
+            if (cut >= 0) {
+                recentRun.setLength(0)
+                recentRun.append(text, cut + 1, text.length)
+            } else {
+                recentRun.append(text)
+            }
+            if (recentRun.length > 64) recentRun.delete(0, recentRun.length - 64)
+        }
+
+        private fun breakRun() {
+            recentRun.setLength(0)
+        }
+
+        private fun noteKey(keyCode: Int) {
+            if (KeyEvent.isModifierKey(keyCode)) return
+            if (keyCode == KeyEvent.KEYCODE_DEL) {
+                if (recentRun.isNotEmpty()) recentRun.setLength(recentRun.length - 1)
+            } else {
+                breakRun()
+            }
+        }
+
         /* Some keyboards (notably many numeric/digit keys) deliver the
          * exact same KeyEvent through TWO independent Android paths at
          * once: the normal system dispatch (View.onKeyDown/onKeyUp) AND
@@ -1064,14 +1102,17 @@ open class GameActivity : NativeActivity() {
 
         private fun sendText(text: String) {
             enqueueImeText(text)
+            noteInserted(text)
         }
 
         private fun sendKey(keyCode: Int, metaState: Int = 0) {
+            noteKey(keyCode)
             enqueueImeKey(keyCode, KeyEvent.ACTION_DOWN, metaState)
             enqueueImeKey(keyCode, KeyEvent.ACTION_UP, metaState)
         }
 
         private fun sendShortcut(keyCode: Int) {
+            breakRun()
             enqueueImeKey(KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.ACTION_DOWN, 0)
             enqueueImeKey(keyCode, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON)
             enqueueImeKey(keyCode, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON)
@@ -1103,12 +1144,15 @@ open class GameActivity : NativeActivity() {
                 }
             }
 
+            if (event.action == KeyEvent.ACTION_DOWN) noteKey(event.keyCode)
             enqueueImeKey(event.keyCode, event.action, event.metaState)
             return true
         }
 
         fun resetComposition() {
             composingCodePoints = 0
+            composingText = ""
+            breakRun()
         }
 
         override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
@@ -1124,23 +1168,56 @@ open class GameActivity : NativeActivity() {
                     val committed = text?.toString().orEmpty()
                     enqueueImeComposition(composingCodePoints, committed)
                     composingCodePoints = 0
+                    composingText = ""
+                    noteInserted(committed)
                     return true
                 }
 
                 override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
                     val composing = text?.toString().orEmpty()
-                    enqueueImeComposition(composingCodePoints, composing)
+                    var replace = composingCodePoints
+                    /* The keyboard is re-opening the word it already typed
+                     * ("20" -> "20k") but the bridge was not told those
+                     * characters were composing: replace them instead of
+                     * adding the whole word a second time. */
+                    if (replace == 0 && recentRun.isNotEmpty() &&
+                        composing.length > recentRun.length &&
+                        composing.startsWith(recentRun.toString())) {
+                        replace = codePointCount(recentRun)
+                        breakRun()
+                    }
+                    enqueueImeComposition(replace, composing)
                     composingCodePoints = codePointCount(composing)
+                    composingText = composing
+                    return true
+                }
+
+                override fun setComposingRegion(start: Int, end: Int): Boolean {
+                    /* Keyboards use this to re-open text they already
+                     * committed as composing again. Only text this bridge
+                     * inserted itself is known, so never claim more than that
+                     * (the field may also hold text typed earlier). */
+                    val n = minOf(maxOf(end - start, 0), codePointCount(recentRun))
+                    if (n > 0 && composingCodePoints == 0) {
+                        val keep = recentRun.offsetByCodePoints(recentRun.length, -n)
+                        composingText = recentRun.substring(keep)
+                        recentRun.setLength(keep)
+                        composingCodePoints = n
+                    }
                     return true
                 }
 
                 override fun finishComposingText(): Boolean {
+                    noteInserted(composingText)
+                    composingText = ""
                     composingCodePoints = 0
                     return true
                 }
 
                 override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
                     composingCodePoints = 0
+                    composingText = ""
+                    breakRun()
                     repeat(beforeLength.coerceIn(0, 4096)) { sendKey(KeyEvent.KEYCODE_DEL) }
                     repeat(afterLength.coerceIn(0, 4096)) { sendKey(KeyEvent.KEYCODE_FORWARD_DEL) }
                     return true
@@ -1205,29 +1282,46 @@ open class GameActivity : NativeActivity() {
         imeBridgeView = bridge
     }
 
+    /* Ask for the keyboard. showSoftInput() with flag 0 is an explicit request
+     * (SHOW_IMPLICIT is dropped, or hidden again, by many devices when the
+     * request does not come straight from a touch on this view -- here the tap
+     * landed on the ImGui surface, not on this 1px bridge view). Android 11+
+     * also has WindowInsetsController, which is the reliable path on newer
+     * versions where showSoftInput() alone is sometimes ignored for a view
+     * that is not the one being touched, so ask through both. */
+    private fun showImeNow(bridge: ImeBridgeView, imm: InputMethodManager) {
+        bridge.requestFocus()
+        imm.showSoftInput(bridge, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.show(android.view.WindowInsets.Type.ime())
+        }
+    }
+
     private fun setTextInputActiveOnUi(active: Boolean) {
         runOnUiThread {
             val bridge = imeBridgeView ?: return@runOnUiThread
-            if (textInputActive == active) return@runOnUiThread
-            textInputActive = active
-
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 ?: return@runOnUiThread
+
+            if (textInputActive == active) {
+                /* Already in this state. When a text field is still focused
+                 * in ImGui and the player taps it again, native calls us with
+                 * active=true once more: that is the case where the keyboard
+                 * was dismissed (Back gesture / hide arrow) while the field
+                 * kept focus, so ImGui's "wants text" flag never changed and
+                 * nothing would ever bring the keyboard back. Showing it
+                 * again is harmless if it is already visible. */
+                if (active) showImeNow(bridge, imm)
+                return@runOnUiThread
+            }
+            textInputActive = active
 
             if (active) {
                 clearImeEvents(this@GameActivity)
                 bridge.resetComposition()
                 bridge.requestFocus()
                 imm.restartInput(bridge)
-                bridge.post {
-                    bridge.requestFocus()
-                    /* Flag 0 = an explicit request. SHOW_IMPLICIT is dropped
-                     * (or hidden again) by many devices when the request
-                     * does not come straight from a touch on this view,
-                     * which is exactly the case here: the tap landed on the
-                     * ImGui surface, not on this 1px bridge view. */
-                    imm.showSoftInput(bridge, 0)
-                }
+                bridge.post { showImeNow(bridge, imm) }
             } else {
                 clearImeEvents(this@GameActivity)
                 bridge.resetComposition()

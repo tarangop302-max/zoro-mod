@@ -850,8 +850,12 @@ static void sec_mode(tenv* env, int i) {
     igEndDisabled();
     opt_end();
   }
-  if (i == 1 && opt_begin("White skin (enemies)", "Draws every other snake as a plain white silhouette.")) {
+  if (i == 1 && opt_begin("White skin (enemies)", "Draws every enemy snake as a plain white silhouette. Your teammates stay as they are while Teammate highlight is on.")) {
     igCheckbox("##white skin enemies", &usrs->white_skin_enemies[1]);
+    opt_end();
+  }
+  if (opt_begin("Teammate highlight", "Draws a green outline around your teammates' snakes, and keeps them from turning white with White skin (enemies).")) {
+    igCheckbox("##teammate highlight", &usrs->teammate_highlight[i]);
     opt_end();
   }
   if (opt_begin("Head dot", "Draws a dot on your snake's head.")) {

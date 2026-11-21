@@ -681,10 +681,16 @@ void twindow_poll_input(twindow* window) {
     }
 
     extern bool g_imgui_wants_keyboard;
+    extern bool g_imgui_keyboard_retap;
     if (g_imgui_wants_keyboard != g_keyboard_shown) {
         g_keyboard_shown = g_imgui_wants_keyboard;
         _android_set_keyboard(g_imgui_wants_keyboard);
+    } else if (g_imgui_keyboard_retap && g_keyboard_shown) {
+        /* Tapped a text field that already had focus: the keyboard may have
+           been hidden by the player, so ask for it again. */
+        _android_set_keyboard(true);
     }
+    g_imgui_keyboard_retap = false;
 }
 
 /*

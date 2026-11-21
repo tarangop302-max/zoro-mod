@@ -52,13 +52,6 @@
    the same distance every frame instead of wobbling with timer jitter. */
 #define FRAME_STEP_SNAP 1
 
-/* How much farther out the touch arrow is DRAWN than the point that actually
-   steers the snake (1.0 = same as before). It only changes how far the arrow
-   looks from the head: the direction, and so the steering and the Sensitivity
-   slider, stay exactly the same. Try 1.5 to 3.0; a 360 degree finger circle
-   now makes a bigger arrow circle even at low Sensitivity. */
-#define ARROW_STRETCH 2.0f
-
 /* 1 = my own head is steered by the server-true model (game/lag_comp.c): every
    steering byte is logged, every heading the server reports re-anchors the
    model, and the turns still in flight are replayed on top. 0 = old behaviour

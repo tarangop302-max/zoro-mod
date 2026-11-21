@@ -113,6 +113,7 @@ static void reset_tab(user_settings* usrs, int tab) {
     case TAB_AIM:
       usrs->arrow_size = 1.0f;
       usrs->arrow_sensitivity = 1.0f;
+      user_settings_set_arrow_start(usrs, 1.0f);
       usrs->boost_arrow_anim = false;
       usrs->arrow_style = 0;
       usrs->arrow_invisible = false;
@@ -237,6 +238,12 @@ static void tab_aim(tuser_data* usr, user_settings* usrs, ImGuiStyle* style,
       form_slider("Size", "##arrow size", &usrs->arrow_size, 0.40f, 2.50f, "%.2f");
       form_slider("Sensitivity", "##arrow sens", &usrs->arrow_sensitivity, 0.25f,
                   3.00f, "%.2f");
+      {
+        float start = user_settings_get_arrow_start(usrs);
+        if (form_slider("Start distance", "##arrow start", &start, 0.50f, 2.00f,
+                        "%.2fx"))
+          user_settings_set_arrow_start(usrs, start);
+      }
       form_check("Invisible arrow", "##arrow invisible", &usrs->arrow_invisible);
       form_check("Grows on boost", "##arrow grows boost", &usrs->boost_arrow_anim);
       form_check("Sync with zoom", "##arrow sync zoom", &usrs->arrow_sync_with_zoom);

@@ -801,11 +801,34 @@ void redraw(tenv* env) {
          * white fill has no pattern to misalign at segment overlaps,
          * so there's nothing to show "segments" or look blurry the way
          * the real skin texture did at reduced alpha. */
+        /* Teammate highlight (Settings > Teammate highlight): JSR teammates
+         * get a green outline and are not "enemies", so the white
+         * silhouette below skips them. Never applies to our own snake. */
+        bool teammate_hl = usrs->teammate_highlight[mode_index] &&
+                           o->id != gdata->data.snake_id &&
+                           global_chat_is_teammate(o->nk);
         bool assist_force_white = mode_index == 1 &&
                                    o->id != gdata->data.snake_id &&
-                                   usrs->white_skin_enemies[1];
+                                   usrs->white_skin_enemies[1] &&
+                                   !teammate_hl;
         bool flatten_snake = assist_force_white || skin_alpha < 1.0f;
         const float ribbon_half_w = gdata->data.gsc * lsz;
+
+        /* Green outline: one slightly wider ribbon pushed BEFORE the body, so
+         * it sits behind it and only a rim shows around the edge. Works for
+         * every render mode because it is drawn independently of them.
+         * body_cols is shared scratch space; the body code below always
+         * refills whatever it uses before drawing, so borrowing it here is
+         * safe. */
+        if (teammate_hl && bp >= 2) {
+          float outline_w = ribbon_half_w * 0.35f;
+          if (outline_w < 2.0f) outline_w = 2.0f;
+          if (outline_w > 6.0f) outline_w = 6.0f;
+          vec4s outline_col = {{0.25f, 1.0f, 0.35f, a}};
+          for (int oi = 0; oi < bp; oi++) body_cols[oi] = outline_col;
+          push_body_ribbon(usr->r->bpr, gdata, bp, mww2, mhh2,
+                           ribbon_half_w + outline_w);
+        }
 
         if (mode->render_mode == RENDER_MODE_TEXTURE ||
             mode->render_mode == RENDER_MODE_VLITHER_TEXTURED) {

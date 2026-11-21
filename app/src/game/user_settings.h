@@ -598,6 +598,16 @@ typedef struct user_settings {
      read_user_settings). */
   uint8_t    arrow_shape_reserved[8];
   vec4       arrow_shape_color;
+
+  /* v2.35: Teammate highlight, per mode ([0]=Normal, [1]=Assist). When on,
+     JSR teammates (global_chat_is_teammate) get a green outline around their
+     snake, and they are NOT turned white by "White skin (enemies)" -- only
+     real enemies are. On by default. Appended after arrow_shape_color so
+     every earlier file stays a compatible prefix (see v235_prefix in
+     read_user_settings). The reserved block keeps sizeof(user_settings)
+     strictly larger than the previous release. */
+  uint8_t    teammate_highlight_reserved[8];
+  bool       teammate_highlight[2];
 } user_settings;
 
 #define LB_ANIM_SPEED_MIN 0.5f

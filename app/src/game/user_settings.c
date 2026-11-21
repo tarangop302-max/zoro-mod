@@ -298,6 +298,10 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->arrow_shape_color[1] = 0.16f;
   usr_settings->arrow_shape_color[2] = 0.20f;
   usr_settings->arrow_shape_color[3] = 1.0f;
+  memset(usr_settings->teammate_highlight_reserved, 0,
+         sizeof usr_settings->teammate_highlight_reserved);
+  usr_settings->teammate_highlight[0] = true;
+  usr_settings->teammate_highlight[1] = true;
   usr_settings->arrow_sync_with_zoom = true;
   usr_settings->head_dot_color[0] = 1.0f;
   usr_settings->head_dot_color[1] = 1.0f;
@@ -473,9 +477,16 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v232_prefix = offsetof(user_settings, hud_theme_reserved);
   size_t v233_prefix = offsetof(user_settings, player_id_reserved);
   size_t v234_prefix = offsetof(user_settings, arrow_shape_reserved);
+  size_t v235_prefix = offsetof(user_settings, teammate_highlight_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v235_prefix)
+    /* A file saved before Teammate highlight existed ends at v235_prefix
+       (it already contains the arrow shape colour), possibly followed only by
+       compiler tail padding. Keep every saved value; Teammate highlight keeps
+       its default (on). */
+    bytes_to_read = v235_prefix;
   else if ((size_t)file_size >= v234_prefix)
     /* A file saved before the arrow shape colour existed ends at v234_prefix,
        possibly followed only by compiler tail padding. Keep every saved
@@ -837,6 +848,10 @@ void read_user_settings(user_settings* usr_settings) {
         loaded.arrow_shape_color[c] > 1.0f)
       loaded.arrow_shape_color[c] = (c == 0) ? 0.90f : (c == 1) ? 0.16f : (c == 2) ? 0.20f : 1.0f;
   }
+  /* Normalise the bools so a damaged file can't leave them in a state that
+     is neither true nor false. */
+  for (int m = 0; m < 2; ++m)
+    loaded.teammate_highlight[m] = loaded.teammate_highlight[m] ? true : false;
   for (int c = 0; c < 3; ++c) {
     if (!isfinite(loaded.head_dot_color[c]) || loaded.head_dot_color[c] < 0.0f ||
         loaded.head_dot_color[c] > 1.0f)

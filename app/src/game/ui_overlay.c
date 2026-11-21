@@ -22,6 +22,25 @@
 #include "lifetime_stats.h"
 #include "global_chat.h"
 #include "lb_text_fx.h"
+
+/* Moves a point on the touch-arrow cursor away from (k > 1) or toward (k < 1)
+   the head along the same line from the head, so the direction (and so the
+   steering) never changes. Used for both the drawn arrow and the laser so the
+   laser always ends exactly at the arrow. Kept inside the screen. */
+static void arrow_start_point(float k, float sw, float sh, float* x, float* y) {
+  if (k == 1.0f) return;
+  float sdx = *x - sw * 0.5f;
+  float sdy = *y - sh * 0.5f;
+  if (k > 1.0f) {
+    float lim_x = sw * 0.5f * 0.94f;
+    float lim_y = sh * 0.5f * 0.94f;
+    if (fabsf(sdx) * k > lim_x) k = lim_x / fabsf(sdx);
+    if (fabsf(sdy) * k > lim_y) k = lim_y / fabsf(sdy);
+    if (k < 1.0f) k = 1.0f;
+  }
+  *x = sw * 0.5f + sdx * k;
+  *y = sh * 0.5f + sdy * k;
+}
 #ifdef ANDROID
 #include "../android_glfw_shim.h"
 #endif
@@ -438,6 +457,10 @@ void ui_overlay(tenv* env) {
           laser_tx = mww2;
           laser_ty = mhh2;
         }
+        if (usrs->ctrl_mode_trackpad && !(laser_tx == mww2 && laser_ty == mhh2))
+          arrow_start_point(user_settings_get_arrow_start(usrs),
+                            (float)ctx->size[0], (float)ctx->size[1],
+                            &laser_tx, &laser_ty);
 
         /* Joystick mode: there is no cursor, so fire the laser along the
            joystick direction from the head to the screen edge. */
@@ -1367,6 +1390,8 @@ void ui_overlay(tenv* env) {
           && !usrs->hotkeys[HOTKEY_BOT].active && !usrs->arrow_invisible) {
         float acx = gdata->touch_ctrl.tp_cursor_x;
         float acy = gdata->touch_ctrl.tp_cursor_y;
+        arrow_start_point(user_settings_get_arrow_start(usrs), sw, sh, &acx,
+                          &acy);
 
         /* Must match the real steering vector in input.c (xm/ym =
          * cursor - center, i.e. "point toward where you're dragging").

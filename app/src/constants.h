@@ -40,6 +40,18 @@
 /* Minimum real-time gap between boost on/off packets (was 150 ms). */
 #define STEER_BOOST_MIN_MS 50.0
 
+/* The angle gate is checked once per frame, so with 60 Hz frames (16.7 ms) a
+   33 ms gap is 33.3 ms and a tiny timing jitter pushed the packet a whole
+   frame late (50 ms). Letting the gate open this much early keeps steering at
+   2 frames instead of 3 without ever sending more than one packet per frame.
+   Not used while Eyes back is on (its model assumes NTL's 33 ms ticks). */
+#define STEER_GATE_SLACK_MS 3.0
+
+/* 1 = snap the frame step to whole display refresh periods (only with VSync
+   on) and pay the difference back gradually, so bodies and heads advance by
+   the same distance every frame instead of wobbling with timer jitter. */
+#define FRAME_STEP_SNAP 1
+
 /* 1 = my own head is steered by the server-true model (game/lag_comp.c): every
    steering byte is logged, every heading the server reports re-anchors the
    model, and the turns still in flight are replayed on top. 0 = old behaviour

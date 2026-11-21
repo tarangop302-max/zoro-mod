@@ -99,7 +99,7 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->modes[0].food_color[1] = 1;
   usr_settings->modes[0].food_color[2] = 1;
   usr_settings->modes[0].boost_type = 0;
-  usr_settings->modes[0].qsm = 1;
+  usr_settings->modes[0].qsm = 0.7f; /* finer body, closer to NTL */
   usr_settings->modes[0].bg_scale = 599 / 4096.0f;
   usr_settings->modes[0].boost_strength = 1;
   usr_settings->modes[0].show_crosshair = false;
@@ -692,6 +692,9 @@ void read_user_settings(user_settings* usr_settings) {
   }
   loaded.net_graph_reserved[0] = loaded.net_graph_reserved[0] ? 1 : 0;
   if (loaded.net_graph_reserved[1] > 101) loaded.net_graph_reserved[1] = 0;
+  if (loaded.net_graph_reserved[7] != 0 &&
+      (loaded.net_graph_reserved[7] < 50 || loaded.net_graph_reserved[7] > 200))
+    loaded.net_graph_reserved[7] = 0;
   if (loaded.net_graph_reserved[3] != 0 &&
       (loaded.net_graph_reserved[3] < 10 || loaded.net_graph_reserved[3] > 100))
     loaded.net_graph_reserved[3] = 0;

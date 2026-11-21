@@ -8,6 +8,58 @@
 #include "net_graph.h"
 #include "sbot.h"
 
+#include <math.h>
+
+#if FRAME_STEP_SNAP
+/* Display-locked frame step. Under VSync every frame really is a whole number
+   of display periods long, but the clock reads that as 8.2, 8.5, 8.3 ms ...
+   and the snakes advance by slightly different distances each frame, which
+   shows up as a faint shimmer in body movement. The period is learnt from the
+   frames themselves, the step is snapped to n periods, and the difference
+   from real time is paid back gradually so no time is lost. */
+static double ft_period_ms;
+static double ft_debt_ms;
+static int ft_off_frames;
+
+static void ft_reset(void) {
+  ft_period_ms = 0;
+  ft_debt_ms = 0;
+  ft_off_frames = 0;
+}
+
+static double ft_step_ms(double raw) {
+  if (raw <= 0.0 || raw > 250.0) {
+    ft_debt_ms = 0;
+    return raw;
+  }
+  if (ft_period_ms <= 0.0) ft_period_ms = raw;
+  double ratio = raw / ft_period_ms;
+  long n = lround(ratio);
+  if (n < 1 || fabs(ratio - (double)n) > 0.35) {
+    /* Not a whole number of periods (display rate changed, or a hitch): use
+       the real step plus anything still owed. After 20 such frames in a row,
+       learn the period again. */
+    if (++ft_off_frames >= 20) {
+      ft_period_ms = raw;
+      ft_off_frames = 0;
+    }
+    double plain = raw + ft_debt_ms;
+    ft_debt_ms = 0;
+    return plain > 0.0 ? plain : 0.0;
+  }
+  ft_off_frames = 0;
+  double one = raw / (double)n;
+  ft_period_ms += (one - ft_period_ms) *
+                  (fabs(one - ft_period_ms) > 0.1 * ft_period_ms ? 0.1 : 0.02);
+  double step = (double)n * ft_period_ms;
+  ft_debt_ms += raw - step;
+  double pay = fabs(ft_debt_ms) > 4.0 * ft_period_ms ? ft_debt_ms
+                                                     : ft_debt_ms * 0.1;
+  ft_debt_ms -= pay;
+  return step + pay;
+}
+#endif
+
 void time_step(tenv* env) {
   tuser_data* usr = env->usr;
   tcontext* ctx = env->ctx;
@@ -26,6 +78,13 @@ void time_step(tenv* env) {
      shows up as tiny random speed changes frame to frame. */
   double dt_ms = now_ms - gdata->data.rt_ltm_ms;
   gdata->data.rt_ltm_ms = now_ms;
+#if FRAME_STEP_SNAP
+  /* Only meaningful when frames are paced by the display (VSync on). */
+  if (usr->usrs.vsync)
+    dt_ms = ft_step_ms(dt_ms);
+  else
+    ft_reset();
+#endif
   gdata->data.vfr = (float)(dt_ms / 8.0);
   /* A frame longer than MAX_VFR*8 ms is caught up in one go (up to that cap)
      instead of the world slowing down every time the phone hitches. */

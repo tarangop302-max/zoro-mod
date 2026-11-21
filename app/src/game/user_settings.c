@@ -99,7 +99,7 @@ void user_settings_default(user_settings* usr_settings) {
   usr_settings->modes[0].food_color[1] = 1;
   usr_settings->modes[0].food_color[2] = 1;
   usr_settings->modes[0].boost_type = 0;
-  usr_settings->modes[0].qsm = 1;
+  usr_settings->modes[0].qsm = 0.7f; /* finer body, closer to NTL */
   usr_settings->modes[0].bg_scale = 599 / 4096.0f;
   usr_settings->modes[0].boost_strength = 1;
   usr_settings->modes[0].show_crosshair = false;

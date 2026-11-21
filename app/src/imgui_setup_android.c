@@ -482,6 +482,12 @@ void imgui_init(tenv* env) {
 }
 
 bool g_imgui_wants_keyboard = false;
+/* True for one frame when the player tapped and a text box is (still) focused
+   afterwards -- i.e. they tapped a text field. twindow_android.c uses it to
+   ask Android for the keyboard again, because the keyboard may have been
+   dismissed (Back / hide arrow) while the field kept focus, in which case
+   g_imgui_wants_keyboard never changes and nothing else would reopen it. */
+bool g_imgui_keyboard_retap = false;
 
 void imgui_prerender(void) {
     igImplVulkan_NewFrame();
@@ -560,6 +566,13 @@ void imgui_prerender(void) {
         }
 
         g_imgui_wants_keyboard = io->WantTextInput;
+
+        /* ImGui updates WantTextInput one frame after the click that changed
+           it, so remember that a tap ended last frame and look at the flag
+           now: still true means the tap landed on / kept a text field. */
+        static bool s_tap_last_frame = false;
+        g_imgui_keyboard_retap = s_tap_last_frame && io->WantTextInput;
+        s_tap_last_frame = wnd->ui_touch.just_up;
     }
 
     igNewFrame();

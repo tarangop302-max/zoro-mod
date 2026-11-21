@@ -693,6 +693,22 @@ static inline void user_settings_set_panel_alpha(user_settings* s, int slot,
   s->net_graph_reserved[4 + slot] = (uint8_t)v;
 }
 
+/* How far from the head the touch arrow is drawn, as a multiple (0.50 - 2.00).
+   Stored as percent in the spare byte net_graph_reserved[7] so the file layout
+   is unchanged; 0 (never set / older files) means 1.00 (the normal distance).
+   Only the drawing and the laser use it, steering is not affected. */
+static inline float user_settings_get_arrow_start(const user_settings* s) {
+  int v = s->net_graph_reserved[7];
+  if (v < 50 || v > 200) return 1.0f;
+  return (float)v / 100.0f;
+}
+static inline void user_settings_set_arrow_start(user_settings* s, float x) {
+  int v = (int)(x * 100.0f + 0.5f);
+  if (v < 50) v = 50;
+  if (v > 200) v = 200;
+  s->net_graph_reserved[7] = (v == 100) ? 0 : (uint8_t)v;
+}
+
 void save_user_settings(user_settings* usr_settings);
 /* Remember a nickname in the previous-names list. Ignores empty names and
    names already in the list. Returns true if the list changed. */

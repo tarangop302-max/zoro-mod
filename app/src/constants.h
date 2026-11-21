@@ -61,6 +61,17 @@
 #define ARROW_SPAWN_OFFICIAL 1
 #define ARROW_SPAWN_UNITS 65.0f
 
+/* 1 = the arrow you see glides toward your finger (60% of the remaining way
+   per frame at 60 fps) like the official app's arrow, instead of sitting
+   exactly under the touch point. Only the drawing is eased, steering is
+   unchanged. 0 = old behaviour. */
+#define ARROW_DRAW_EASE 1
+
+/* 1 = the arrow moves by the finger's movement each frame, so it reacts the
+   moment you reverse the drag even if you had dragged it against the screen
+   edge. 0 = old behaviour (arrow = start point + total drag, then clamped). */
+#define ARROW_DELTA_TRACK 1
+
 /* 1 = my own head is steered by the server-true model (game/lag_comp.c): every
    steering byte is logged, every heading the server reports re-anchors the
    model, and the turns still in flight are replayed on top. 0 = old behaviour

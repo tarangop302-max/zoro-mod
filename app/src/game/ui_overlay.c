@@ -1350,13 +1350,6 @@ void ui_overlay(tenv* env) {
       }
 
       static float s_accel_a  = 0.0f;
-#if ARROW_DRAW_EASE
-      /* Drawn-arrow position, eased toward the real touch point the way the
-         official Slither app does (it moves the shown arrow 60% of the way
-         per frame). Steering still uses the exact touch point. */
-      static float s_ash_x = 0.0f, s_ash_y = 0.0f;
-      static int   s_ash_init = 0;
-#endif
       static float s_accel_fr = 0.0f;
       bool is_boosting = boost_on;
       float vfr2 = gdata->data.vfr > 0.0f ? gdata->data.vfr : 1.0f;
@@ -1374,21 +1367,23 @@ void ui_overlay(tenv* env) {
           && !usrs->hotkeys[HOTKEY_BOT].active && !usrs->arrow_invisible) {
         float acx = gdata->touch_ctrl.tp_cursor_x;
         float acy = gdata->touch_ctrl.tp_cursor_y;
-#if ARROW_DRAW_EASE
-        if (!s_ash_init) {
-          s_ash_x = acx;
-          s_ash_y = acy;
-          s_ash_init = 1;
-        } else {
-          /* 0.6 per frame at 60 fps, converted to elapsed time so it looks
-             the same at 90/120 fps. vfr2 is in 8 ms units. */
-          float k = 1.0f - powf(0.4f, vfr2 * 0.5f);
-          s_ash_x += (acx - s_ash_x) * k;
-          s_ash_y += (acy - s_ash_y) * k;
+        if (ARROW_STRETCH > 1.0f) {
+          /* Draw the arrow farther from the head than the real steering
+             point, along the same line from the head. The direction is
+             unchanged, so steering and the Sensitivity slider behave exactly
+             as before; only how far out the arrow is drawn grows. Kept inside
+             the screen. */
+          float sdx = acx - sw * 0.5f;
+          float sdy = acy - sh * 0.5f;
+          float k = ARROW_STRETCH;
+          float lim_x = sw * 0.5f * 0.94f;
+          float lim_y = sh * 0.5f * 0.94f;
+          if (fabsf(sdx) * k > lim_x) k = lim_x / fabsf(sdx);
+          if (fabsf(sdy) * k > lim_y) k = lim_y / fabsf(sdy);
+          if (k < 1.0f) k = 1.0f;
+          acx = sw * 0.5f + sdx * k;
+          acy = sh * 0.5f + sdy * k;
         }
-        acx = s_ash_x;
-        acy = s_ash_y;
-#endif
 
         /* Must match the real steering vector in input.c (xm/ym =
          * cursor - center, i.e. "point toward where you're dragging").
@@ -1488,11 +1483,6 @@ void ui_overlay(tenv* env) {
 
         #undef ARPT
       }
-#if ARROW_DRAW_EASE
-      else {
-        s_ash_init = 0;
-      }
-#endif
     }
 
     {

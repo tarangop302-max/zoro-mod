@@ -176,22 +176,8 @@ void input(tenv* env) {
             gdata->touch_ctrl.tp_vy           = 0.0f;
 
             float ang = me->eang;
-            float spawn_r = NTL_SPAWN_R;
-#if ARROW_SPAWN_OFFICIAL
-            {
-              /* Measured on an official-app screenshot: the arrow's near end
-                 (tail) sits ARROW_SPAWN_UNITS from the head centre, and the
-                 arrow extends outward from there. Zoro draws its arrow
-                 centred on the cursor, so add half its drawn length. */
-              float unit = (sw < sh ? sw : sh) / 480.0f;
-              float half_len = 0.5f * sh * 0.11f * usrs->arrow_size;
-              float r = ARROW_SPAWN_UNITS * unit + half_len;
-              float rmax = (sw < sh ? sw : sh) * 0.45f;
-              spawn_r = r < NTL_SPAWN_R ? NTL_SPAWN_R : (r > rmax ? rmax : r);
-            }
-#endif
-            float spawn_x = cx + spawn_r * cosf(ang);
-            float spawn_y = cy + spawn_r * sinf(ang);
+            float spawn_x = cx + NTL_SPAWN_R * cosf(ang);
+            float spawn_y = cy + NTL_SPAWN_R * sinf(ang);
 
             gdata->touch_ctrl.tp_anchor_x = spawn_x;
             gdata->touch_ctrl.tp_anchor_y = spawn_y;
@@ -201,26 +187,11 @@ void input(tenv* env) {
 
           if (!(env->wnd->touch.just_down || !gdata->touch_ctrl.tp_tracking)) {
 
-#if ARROW_DELTA_TRACK
-            /* Move the arrow by how far the finger moved since the last
-               frame, like the official app. The old code placed it at
-               (spawn + total drag since touch-down) and then clamped it to the
-               screen, so once the finger had dragged past the screen edge the
-               arrow stayed stuck there and ignored the finger until it came
-               all the way back: turning back felt late. */
-            float nx = gdata->touch_ctrl.tp_cursor_x
-                     + (tx - gdata->touch_ctrl.tp_last_touch_x) * usrs->arrow_sensitivity;
-            float ny = gdata->touch_ctrl.tp_cursor_y
-                     + (ty - gdata->touch_ctrl.tp_last_touch_y) * usrs->arrow_sensitivity;
-            gdata->touch_ctrl.tp_last_touch_x = tx;
-            gdata->touch_ctrl.tp_last_touch_y = ty;
-#else
             float nx = gdata->touch_ctrl.tp_anchor_x
 
                      + (tx - gdata->touch_ctrl.tp_last_touch_x) * usrs->arrow_sensitivity;
             float ny = gdata->touch_ctrl.tp_anchor_y
                      + (ty - gdata->touch_ctrl.tp_last_touch_y) * usrs->arrow_sensitivity;
-#endif
 
             nx = GLM_MAX(0.0f, GLM_MIN(sw, nx));
             ny = GLM_MAX(0.0f, GLM_MIN(sh, ny));

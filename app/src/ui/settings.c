@@ -573,6 +573,10 @@ static void sec_general(tenv* env) {
     }
     opt_end();
   }
+  if (opt_begin("Native text box (beta)", "Typing opens a real Android text box above the keyboard, so autocorrect, paste and voice typing work like any other app and the field is never hidden behind the keyboard. Turn it off if typing misbehaves.")) {
+    igCheckbox("##native text box", &usrs->native_text_box);
+    opt_end();
+  }
   if (opt_begin("Instant restart", "After you die, jump straight into a new game without waiting.")) {
     igCheckbox("##instant restart", &usrs->instant_restart);
     opt_end();

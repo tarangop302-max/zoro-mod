@@ -448,6 +448,62 @@ text_input_cleanup:
     if (did_attach) (*vm)->DetachCurrentThread(vm);
 }
 
+void android_jni_set_text_input_text(const char* text, int len, int flags,
+                                     int max_len, bool use_native_box) {
+    if (!g_android_app || !g_android_app->activity ||
+        !g_android_app->activity->vm || !g_android_app->activity->clazz) {
+        return;
+    }
+    if (!text || len < 0) len = 0;
+
+    JavaVM* vm = g_android_app->activity->vm;
+    JNIEnv* env = NULL;
+    bool did_attach = false;
+    jclass cls = NULL;
+    jbyteArray bytes = NULL;
+
+    int status = (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) return;
+        did_attach = true;
+    } else if (status != JNI_OK || !env) {
+        return;
+    }
+
+    cls = (*env)->GetObjectClass(env, g_android_app->activity->clazz);
+    if (!cls || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto text_input_text_cleanup;
+    }
+
+    jmethodID mid = (*env)->GetStaticMethodID(
+        env, cls, "setTextInputText", "(Landroid/app/Activity;[BIIZ)V");
+    if (!mid || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto text_input_text_cleanup;
+    }
+
+    /* Raw bytes, decoded as UTF-8 on the Java side: NewStringUTF() only
+       accepts "modified UTF-8" and can abort on valid 4-byte characters. */
+    bytes = (*env)->NewByteArray(env, len);
+    if (!bytes || (*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto text_input_text_cleanup;
+    }
+    if (len > 0)
+        (*env)->SetByteArrayRegion(env, bytes, 0, len, (const jbyte*)text);
+
+    (*env)->CallStaticVoidMethod(env, cls, mid,
+        g_android_app->activity->clazz, bytes, (jint)flags, (jint)max_len,
+        use_native_box ? JNI_TRUE : JNI_FALSE);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+
+text_input_text_cleanup:
+    if (bytes) (*env)->DeleteLocalRef(env, bytes);
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    if (did_attach) (*vm)->DetachCurrentThread(vm);
+}
+
 bool android_jni_enqueue_clipboard_paste(void) {
     if (!g_android_app || !g_android_app->activity ||
         !g_android_app->activity->vm || !g_android_app->activity->clazz) {

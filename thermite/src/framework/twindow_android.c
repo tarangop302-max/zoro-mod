@@ -89,7 +89,12 @@ static bool is_ui_pointer_owned(int pid) {
 
 extern struct android_app* g_android_app;
 
+extern void android_imgui_prepare_text_entry(void);
+
 static void _android_set_keyboard(bool show) {
+    /* Tell Java what the focused field holds first (and whether the Native
+       text box is on), so it is ready when the keyboard request arrives. */
+    if (show) android_imgui_prepare_text_entry();
     android_jni_set_text_input_active(show);
 }
 

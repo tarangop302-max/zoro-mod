@@ -139,9 +139,59 @@ static bool saved_has(const user_settings *us, const char *code) {
     if (strcmp(us->saved_skins[i].skin_code, code) == 0) return true;
   return lib_has(code);
 }
+static bool same_skin(const char *a, uint8_t aa, const char *b, uint8_t ba) {
+  return aa == ba && strcmp(a, b) == 0;
+}
+
+/* Index of an identical saved skin (same code AND accessory), or -1. */
+int skin_saved_find(const user_settings *us, const char *code, uint8_t acc) {
+  lib_load();
+  for (int i = 0; i < us->saved_skin_count; i++)
+    if (same_skin(us->saved_skins[i].skin_code, us->saved_skins[i].accessory, code, acc)) return i;
+  for (int j = 0; j < s_count; j++)
+    if (same_skin(s_lib[j].code, s_lib[j].accessory, code, acc)) return us->saved_skin_count + j;
+  return -1;
+}
+
+/* Removes saved skins that are exact copies of an earlier one. Returns how
+   many were removed. */
+int skin_saved_dedupe(user_settings *us) {
+  lib_load();
+  int removed = 0, w = 0;
+  for (int i = 0; i < us->saved_skin_count; i++) {
+    bool dup = false;
+    for (int k = 0; k < w && !dup; k++)
+      dup = same_skin(us->saved_skins[k].skin_code, us->saved_skins[k].accessory,
+                      us->saved_skins[i].skin_code, us->saved_skins[i].accessory);
+    if (dup) { removed++; continue; }
+    if (w != i) us->saved_skins[w] = us->saved_skins[i];
+    w++;
+  }
+  us->saved_skin_count = w;
+  int lw = 0;
+  for (int j = 0; j < s_count; j++) {
+    bool dup = false;
+    for (int k = 0; k < w && !dup; k++)
+      dup = same_skin(us->saved_skins[k].skin_code, us->saved_skins[k].accessory,
+                      s_lib[j].code, s_lib[j].accessory);
+    for (int k = 0; k < lw && !dup; k++)
+      dup = same_skin(s_lib[k].code, s_lib[k].accessory, s_lib[j].code, s_lib[j].accessory);
+    if (dup) { removed++; continue; }
+    if (lw != j) s_lib[lw] = s_lib[j];
+    lw++;
+  }
+  s_count = lw;
+  if (removed) {
+    lib_save();
+    us->active_saved_skin = -1;
+  }
+  return removed;
+}
+
 bool skin_saved_add(user_settings *us, const char *code, uint8_t acc) {
   lib_load();
   if (!code[0]) return false;
+  if (skin_saved_find(us, code, acc) >= 0) return false; /* already saved */
   if (us->saved_skin_count < MAX_SAVED_SKINS) {
     int idx = us->saved_skin_count++;
     snprintf(us->saved_skins[idx].name, MAX_SAVED_SKIN_NAME + 1, "Skin %d", idx + 1);

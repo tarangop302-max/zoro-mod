@@ -481,6 +481,15 @@ void ui_skin_editor(tenv* env) {
   igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
              usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
 
+  /* One-time cleanup: older versions let the same skin be saved many times. */
+  {
+    static bool s_deduped = false;
+    if (!s_deduped) {
+      s_deduped = true;
+      if (skin_saved_dedupe(usrs) > 0) save_user_settings(usrs);
+    }
+  }
+
   usr->r->global.bg_opacity = 0;
   usr->r->global.bd_opacity = 0;
   usr->r->global.minimap_opacity = 0;
@@ -835,7 +844,10 @@ void ui_skin_editor(tenv* env) {
                     skin_saved_total(usrs) < MAX_SAVED_SKINS + SKIN_LIB_MAX;
     igBeginDisabled(!can_save);
     if (igButton("Save", (ImVec2){tot_size[0]})) {
-      if (skin_saved_add(usrs, usrs->skin_code, usrs->accessory))
+      int existing = skin_saved_find(usrs, usrs->skin_code, usrs->accessory);
+      if (existing >= 0)
+        usrs->active_saved_skin = existing; /* already saved: just select it */
+      else if (skin_saved_add(usrs, usrs->skin_code, usrs->accessory))
         usrs->active_saved_skin = skin_saved_total(usrs) - 1;
     }
     crystal_sheen();

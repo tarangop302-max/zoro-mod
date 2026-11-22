@@ -619,6 +619,18 @@ typedef struct user_settings {
      sizeof(user_settings) strictly larger than the previous release. */
   uint8_t    native_text_box_reserved[8];
   bool       native_text_box;
+
+  /* v2.37: Center line colour, per mode ([0]=Normal, [1]=Assist). While
+     center_line_color_set[m] is false the colour is automatic: white, or
+     black when your own snake wears a plain white skin (so the line never
+     disappears). Once you pick a colour (set = true) it is used as-is and is
+     never changed automatically. Appended after native_text_box so every
+     earlier file stays a compatible prefix (see v237_prefix in
+     read_user_settings). The reserved block keeps sizeof(user_settings)
+     strictly larger than the previous release. */
+  uint8_t    center_line_color_reserved[8];
+  float      center_line_color[2][3];
+  bool       center_line_color_set[2];
 } user_settings;
 
 #define LB_ANIM_SPEED_MIN 0.5f

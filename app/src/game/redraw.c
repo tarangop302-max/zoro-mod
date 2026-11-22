@@ -1435,6 +1435,27 @@ void redraw(tenv* env) {
             line_thickness = CENTER_LINE_WIDTH_MIN;
           if (line_thickness > CENTER_LINE_WIDTH_MAX)
             line_thickness = CENTER_LINE_WIDTH_MAX;
+          /* Colour: the player's own choice if they set one; otherwise white,
+           * switching to black while the snake wears a plain white skin so the
+           * line stays visible. */
+          vec3s line_rgb = {{1.0f, 1.0f, 1.0f}};
+          if (usrs->center_line_color_set[mode_index]) {
+            line_rgb = (vec3s){{usrs->center_line_color[mode_index][0],
+                                usrs->center_line_color[mode_index][1],
+                                usrs->center_line_color[mode_index][2]}};
+          } else {
+            int skin_n = o->cusk ? (int)o->cusk_len
+                                 : (int)gdata->default_skins[o->cv][0];
+            bool skin_white = skin_n > 0;
+            for (int si = 0; si < skin_n && skin_white; si++) {
+              int sid = o->cusk ? o->cusk_data[si]
+                                : gdata->default_skins[o->cv][1 + si];
+              vec3s* sc = gdata->cg_colors + sid;
+              if (sc->r < 0.85f || sc->g < 0.85f || sc->b < 0.85f)
+                skin_white = false;
+            }
+            if (skin_white) line_rgb = (vec3s){{0.0f, 0.0f, 0.0f}};
+          }
           for (j = 1; j < bp; j++) {
             float x1 = ((gdata->data.pbx[(int)j - 1] - gdata->data.view_xx) *
                         gdata->data.gsc) +
@@ -1475,7 +1496,7 @@ void redraw(tenv* env) {
                      center_y - line_thickness * 0.5f, capsule_length,
                      line_angle},
                     gdata->cg_uvs[BLANK_UV],
-                    {1, 1, 1, 0.85f * a},
+                    {line_rgb.r, line_rgb.g, line_rgb.b, 0.85f * a},
                     {line_thickness, 1}});
           }
         }

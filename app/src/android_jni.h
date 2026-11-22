@@ -30,6 +30,12 @@ const char* android_jni_get_clipboard_text(void);
 void android_jni_set_clipboard_text(const char* text);
 
 void android_jni_set_text_input_active(bool active);
+/* Tells the Java side what the active text field holds right now (UTF-8, `len`
+   bytes), its ImGuiInputTextFlags, the longest text it can take (0 = unknown)
+   and whether the player turned on the Native text box. Called just before
+   android_jni_set_text_input_active(true). */
+void android_jni_set_text_input_text(const char* text, int len, int flags,
+                                     int max_len, bool use_native_box);
 bool android_jni_enqueue_clipboard_paste(void);
 
 /* Saves an RGBA8 pixel buffer as a PNG into the app-private

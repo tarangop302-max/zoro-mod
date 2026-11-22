@@ -608,6 +608,17 @@ typedef struct user_settings {
      strictly larger than the previous release. */
   uint8_t    teammate_highlight_reserved[8];
   bool       teammate_highlight[2];
+
+  /* v2.36: "Native text box" (beta). When on, tapping a text field opens a
+     real Android text box (EditText) above the keyboard instead of typing
+     straight into the game-drawn field, so autocorrect, paste, voice typing
+     and the clipboard bar behave like any other app, and the field can never
+     end up hidden behind the keyboard. Off by default. Appended after
+     teammate_highlight so every earlier file stays a compatible prefix (see
+     v236_prefix in read_user_settings). The reserved block keeps
+     sizeof(user_settings) strictly larger than the previous release. */
+  uint8_t    native_text_box_reserved[8];
+  bool       native_text_box;
 } user_settings;
 
 #define LB_ANIM_SPEED_MIN 0.5f

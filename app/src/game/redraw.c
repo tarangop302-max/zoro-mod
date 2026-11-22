@@ -1,4 +1,3 @@
-
 #include "redraw.h"
 
 #include "../user.h"

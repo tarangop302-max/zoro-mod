@@ -811,6 +811,20 @@ static void jsr_websocket_handler(
         return;
     }
 
+    /*
+     * Ignore events from a socket we already replaced. On a rename we
+     * disconnect and immediately reconnect; the OLD socket's late CLOSE
+     * event used to run here and null out ws_connection (the NEW
+     * socket) and mark us disconnected. The new socket then opened
+     * without being able to send its JOIN (so we looked "connected" but
+     * saw no teammates until a reconnect ~1 min later), and the old
+     * name stayed in the lists, giving the duplicate "2 of me".
+     */
+    if (event != MG_EV_POLL &&
+        connection != net->ws_connection) {
+        return;
+    }
+
     if (event == MG_EV_OPEN) {
         printf(
             "JSR: TCP connection opened\n"
@@ -1119,6 +1133,7 @@ bool jsr_network_connect(
      * their "left" notice, which is what left ghost players behind.
      */
     net->roster_count = 0;
+    net->location_count = 0;
 
     /*
      * The relay only tells us about OTHER users joining --
@@ -1177,6 +1192,7 @@ void jsr_network_disconnect(
     }
 
     if (net->ws_connection != NULL) {
+        net->ws_connection->fn_data = NULL;
         net->ws_connection
             ->is_closing = 1;
 
@@ -1184,6 +1200,10 @@ void jsr_network_disconnect(
     }
 
     net->is_connected = false;
+
+    /* Drop everyone else's last-known positions too: their "left"
+     * notices will never reach us for this socket. */
+    net->location_count = 0;
 
     /*
      * We won't get a "left" notice for ourselves from the

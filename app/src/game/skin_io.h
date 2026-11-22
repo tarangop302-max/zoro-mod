@@ -30,5 +30,9 @@ int skin_saved_total(const user_settings *us);
 bool skin_saved_get(const user_settings *us, int i, char *code_out /* >=257 */,
                     uint8_t *accessory_out);
 bool skin_saved_add(user_settings *us, const char *code, uint8_t accessory);
+/* Index of an identical saved skin (same code and accessory), or -1. */
+int skin_saved_find(const user_settings *us, const char *code, uint8_t accessory);
+/* Removes exact duplicates from Saved skins; returns how many were removed. */
+int skin_saved_dedupe(user_settings *us);
 
 #endif

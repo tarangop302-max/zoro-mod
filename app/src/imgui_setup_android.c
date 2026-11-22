@@ -122,6 +122,42 @@ static bool utf8_single_cp(const char* s, unsigned int* cp) {
     return true;
 }
 
+/* Called by twindow_android.c right before the Android keyboard is requested.
+ * Hands the Java side what the focused ImGui text field holds, so the optional
+ * Native text box (Settings) can open pre-filled with it. The text is only
+ * READ here; edits come back as normal IME events. The ImGui state is checked
+ * before use and ignored if it looks wrong, in which case the box simply
+ * starts empty. */
+void android_imgui_prepare_text_entry(void) {
+    const char* text = "";
+    int len = 0;
+    int flags = 0;
+    int max_len = 0;
+    bool use_box = false;
+
+    if (g_android_app && g_android_app->userData) {
+        twindow* wnd = (twindow*)g_android_app->userData;
+        if (wnd->env && wnd->env->usr)
+            use_box = wnd->env->usr->usrs.native_text_box;
+    }
+
+    if (use_box) {
+        ImGuiContext* g = igGetCurrentContext();
+        if (g && g->ActiveId != 0 && g->InputTextState.ID == g->ActiveId) {
+            const ImGuiInputTextState* st = &g->InputTextState;
+            if (st->TextA.Data && st->TextLen > 0 && st->TextLen < 65536 &&
+                st->TextLen <= st->TextA.Size) {
+                text = st->TextA.Data;
+                len = st->TextLen;
+            }
+            flags = (int)st->Flags;
+            if (st->BufCapacity > 1 && st->BufCapacity < 1000000)
+                max_len = st->BufCapacity - 1;
+        }
+    }
+    android_jni_set_text_input_text(text, len, flags, max_len, use_box);
+}
+
 static void android_drain_ime_events(ImGuiIO* io) {
     android_ime_event event;
     while (android_jni_poll_ime_event(&event)) {

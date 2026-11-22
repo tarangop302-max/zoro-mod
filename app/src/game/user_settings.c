@@ -305,6 +305,14 @@ void user_settings_default(user_settings* usr_settings) {
   memset(usr_settings->native_text_box_reserved, 0,
          sizeof usr_settings->native_text_box_reserved);
   usr_settings->native_text_box = false;
+  memset(usr_settings->center_line_color_reserved, 0,
+         sizeof usr_settings->center_line_color_reserved);
+  for (int m = 0; m < 2; ++m) {
+    usr_settings->center_line_color[m][0] = 1.0f;
+    usr_settings->center_line_color[m][1] = 1.0f;
+    usr_settings->center_line_color[m][2] = 1.0f;
+    usr_settings->center_line_color_set[m] = false;
+  }
   usr_settings->arrow_sync_with_zoom = true;
   usr_settings->head_dot_color[0] = 1.0f;
   usr_settings->head_dot_color[1] = 1.0f;
@@ -482,9 +490,14 @@ void read_user_settings(user_settings* usr_settings) {
   size_t v234_prefix = offsetof(user_settings, arrow_shape_reserved);
   size_t v235_prefix = offsetof(user_settings, teammate_highlight_reserved);
   size_t v236_prefix = offsetof(user_settings, native_text_box_reserved);
+  size_t v237_prefix = offsetof(user_settings, center_line_color_reserved);
   size_t bytes_to_read;
   if ((size_t)file_size >= sizeof loaded)
     bytes_to_read = sizeof loaded;
+  else if ((size_t)file_size >= v237_prefix)
+    /* A file saved before the Center line colour existed ends at
+       v237_prefix. Keep every saved value; the colour stays automatic. */
+    bytes_to_read = v237_prefix;
   else if ((size_t)file_size >= v236_prefix)
     /* A file saved before the Native text box option existed ends at
        v236_prefix. Keep every saved value; the option keeps its default
@@ -862,6 +875,14 @@ void read_user_settings(user_settings* usr_settings) {
   for (int m = 0; m < 2; ++m)
     loaded.teammate_highlight[m] = loaded.teammate_highlight[m] ? true : false;
   loaded.native_text_box = loaded.native_text_box ? true : false;
+  for (int m = 0; m < 2; ++m) {
+    loaded.center_line_color_set[m] = loaded.center_line_color_set[m] ? true : false;
+    for (int c = 0; c < 3; ++c) {
+      float v = loaded.center_line_color[m][c];
+      if (!isfinite(v) || v < 0.0f || v > 1.0f)
+        loaded.center_line_color[m][c] = 1.0f;
+    }
+  }
   for (int c = 0; c < 3; ++c) {
     if (!isfinite(loaded.head_dot_color[c]) || loaded.head_dot_color[c] < 0.0f ||
         loaded.head_dot_color[c] > 1.0f)

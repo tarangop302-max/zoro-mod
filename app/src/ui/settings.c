@@ -846,6 +846,27 @@ static void sec_mode(tenv* env, int i) {
     igCheckbox("##center line", &mode->center_line);
     opt_end();
   }
+  if (opt_begin("Centre line colour", "Colour of the centre line on your snake. Automatic = white, or black when your own snake has a plain white skin. Pick a colour to always use it; Auto goes back to automatic.")) {
+    igBeginDisabled(!mode->center_line);
+    if (!usrs->center_line_color_set[i]) {
+      /* Show the automatic colour (white); editing it makes it a choice. */
+      usrs->center_line_color[i][0] = 1.0f;
+      usrs->center_line_color[i][1] = 1.0f;
+      usrs->center_line_color[i][2] = 1.0f;
+    }
+    igSetNextItemWidth(-1);
+    if (igColorEdit3("##center line color", usrs->center_line_color[i],
+                     ImGuiColorEditFlags_None))
+      usrs->center_line_color_set[i] = true;
+    if (usrs->center_line_color_set[i]) {
+      if (igButton("Auto", (ImVec2){0, 0}))
+        usrs->center_line_color_set[i] = false;
+    } else {
+      igTextDisabled("Auto (white, black on a white skin)");
+    }
+    igEndDisabled();
+    opt_end();
+  }
   if (opt_begin("Centre line width", "How thick the centre line on your snake is.")) {
     igBeginDisabled(!mode->center_line);
     igSetNextItemWidth(-1);

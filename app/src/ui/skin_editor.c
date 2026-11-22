@@ -9,6 +9,7 @@
 #include "lobby_bg.h"
 #include "../game/ntl_tags.h"
 #include "../game/skin_io.h"
+#include "../game/skin_gen.h"
 
 
 int skin_code_filter(ImGuiInputTextCallbackData* data) {
@@ -183,6 +184,289 @@ static void se_snake_at(const se_track* t, float u, float d, float* x,
   *x += -sinf(*ang) * off;
   *y += cosf(*ang) * off;
   *ang += atanf(amp * k * cosf(k * u));
+}
+
+
+/* ---- Random skin generator (RANDOM tab) ---------------------------------
+   The engine lives in game/skin_gen.c. This part only holds the UI state:
+   the recipe (options), the last batch of candidates, the list of skins that
+   were already shown (never offered twice) and a back/forward history of the
+   skins that were applied to the preview. */
+
+#define SE_HIST_MAX 64
+#define SE_SEEN_MAX 512
+
+typedef struct {
+  char code[MAX_SKIN_CODE_LEN + 1];
+  uint8_t acc;
+} se_hist_t;
+
+static skin_gen_recipe s_rcp;
+static bool s_rcp_ready = false;
+static skin_gen_skin s_cand[SKIN_GEN_MAX_BATCH];
+static int s_ncand = 0, s_sel = -1;
+static int s_batch = 6;
+static bool s_remix = false;
+static uint64_t s_seen[SE_SEEN_MAX];
+static int s_nseen = 0;
+static se_hist_t s_hist[SE_HIST_MAX];
+static int s_hn = 0, s_hpos = -1;
+static char s_gmsg[96] = "";
+static uint32_t s_ui_rng = 0;
+
+static uint32_t se_rnd(void) {
+  if (!s_ui_rng) s_ui_rng = skin_gen_new_seed() | 1u;
+  s_ui_rng ^= s_ui_rng << 13;
+  s_ui_rng ^= s_ui_rng >> 17;
+  s_ui_rng ^= s_ui_rng << 5;
+  return s_ui_rng;
+}
+
+static void se_rcp_init(void) {
+  if (s_rcp_ready) return;
+  skin_gen_default_recipe(&s_rcp);
+  s_rcp_ready = true;
+}
+
+static void se_hist_push(const char* code, uint8_t acc) {
+  if (s_hpos < s_hn - 1) s_hn = s_hpos + 1; /* drop the "forward" part */
+  if (s_hn >= SE_HIST_MAX) {
+    memmove(&s_hist[0], &s_hist[1], sizeof(se_hist_t) * (SE_HIST_MAX - 1));
+    s_hn = SE_HIST_MAX - 1;
+  }
+  strncpy(s_hist[s_hn].code, code, MAX_SKIN_CODE_LEN);
+  s_hist[s_hn].code[MAX_SKIN_CODE_LEN] = 0;
+  s_hist[s_hn].acc = acc;
+  s_hn++;
+  s_hpos = s_hn - 1;
+}
+
+/* Put a code (and accessory, unless "keep") on the live preview. */
+static void se_apply(user_settings* usrs, const char* code, uint8_t acc) {
+  strncpy(usrs->skin_code, code, MAX_SKIN_CODE_LEN);
+  usrs->skin_code[MAX_SKIN_CODE_LEN] = 0;
+  if (acc != SKIN_GEN_KEEP_ACC) usrs->accessory = acc;
+  usrs->custom_skin = true;
+  usrs->active_saved_skin = -1;
+}
+
+/* Apply a skin and remember it in the history. The skin that was on screen
+   before the very first apply is stored too, so Back can return to it. */
+static void se_use(user_settings* usrs, const skin_gen_skin* sk) {
+  if (s_hn == 0 && usrs->skin_code[0]) se_hist_push(usrs->skin_code, usrs->accessory);
+  se_apply(usrs, sk->code, sk->accessory);
+  se_hist_push(sk->code, usrs->accessory);
+}
+
+static void se_seen_add(uint64_t key) {
+  for (int i = 0; i < s_nseen; i++)
+    if (s_seen[i] == key) return;
+  if (s_nseen >= SE_SEEN_MAX) {
+    memmove(&s_seen[0], &s_seen[1], sizeof(uint64_t) * (SE_SEEN_MAX - 1));
+    s_nseen = SE_SEEN_MAX - 1;
+  }
+  s_seen[s_nseen++] = key;
+}
+
+/* Build a new batch from the current options. Optionally apply the best one. */
+static void se_generate(user_settings* usrs, bool apply_best) {
+  se_rcp_init();
+  s_rcp.seed = skin_gen_new_seed();
+  skin_gen_recipe rc = s_rcp;
+  if (s_remix) {
+    skin_gen_own_from_code(&rc, usrs->skin_code);
+    if (rc.own_n < 2) {
+      snprintf(s_gmsg, sizeof s_gmsg, "Remix needs a skin with 2+ different colours.");
+      return;
+    }
+  }
+  int n = skin_gen_batch(&rc, s_batch, NUM_ACCESSORIES, s_seen, s_nseen, s_cand);
+  s_ncand = n;
+  s_sel = -1;
+  if (n <= 0) {
+    snprintf(s_gmsg, sizeof s_gmsg, "Nothing fits these options. Loosen them and try again.");
+    return;
+  }
+  for (int i = 0; i < n; i++) se_seen_add(s_cand[i].key);
+  snprintf(s_gmsg, sizeof s_gmsg, "%d new skins. Tap one to use it.", n);
+  if (apply_best) {
+    se_use(usrs, &s_cand[0]);
+    s_sel = 0;
+  }
+}
+
+/* Every option gets a random value, then a skin is made and applied. */
+static void se_surprise(user_settings* usrs) {
+  se_rcp_init();
+  s_rcp.mood = (int)(se_rnd() % SKIN_MOOD_COUNT);
+  s_rcp.theme = (se_rnd() % 100 < 35) ? (int)(se_rnd() % SKIN_THEME_COUNT) : -1;
+  s_rcp.style = -1;
+  s_rcp.tone = SKIN_TONE_AUTO;
+  s_rcp.size = (int)(se_rnd() % SKIN_SIZE_COUNT);
+  s_rcp.symmetry = SKIN_SYM_AUTO;
+  s_rcp.wildness = 0.05f + (float)(se_rnd() % 60) / 100.0f;
+  s_rcp.random_accessory = true;
+  s_remix = false;
+  se_generate(usrs, true);
+}
+
+static void se_opt_label(const char* text, float lw) {
+  igTextDisabled("%s", text);
+  igSameLine(igGetStyle()->WindowPadding.x + lw, 0);
+}
+
+/* The body of the RANDOM tab (called inside the scrolling child panel). */
+static void se_random_panel(tenv* env, float ts, float clip_x1, float clip_y1,
+                            float clip_x2, float clip_y2) {
+  tuser_data* usr = env->usr;
+  game_data* gdata = &usr->gdata;
+  user_settings* usrs = &usr->usrs;
+  ImGuiStyle* style = igGetStyle();
+  se_rcp_init();
+
+  ImVec2 av;
+  igGetContentRegionAvail(&av);
+  float w = av.x;
+  float half = (w - style->ItemSpacing.x) * 0.5f;
+
+  igTextDisabled("Random skin generator");
+
+  /* Generate / Surprise me */
+  igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
+  if (igButton("Generate##gen_go", (ImVec2){half, 0})) se_generate(usrs, true);
+  igPopStyleColor(3);
+  crystal_sheen();
+  igSetItemTooltip("%s", "Make new skins from the options below and use the best one.");
+  igSameLine(0, -1);
+  if (igButton("Surprise me##gen_sur", (ImVec2){half, 0})) se_surprise(usrs);
+  crystal_sheen();
+  igSetItemTooltip("%s", "Random options, random skin, random accessory.");
+
+  /* History */
+  igBeginDisabled(s_hpos <= 0);
+  if (igButton("\uea38 Back##gen_back", (ImVec2){half, 0})) {
+    s_hpos--;
+    se_apply(usrs, s_hist[s_hpos].code, s_hist[s_hpos].acc);
+    s_sel = -1;
+  }
+  igEndDisabled();
+  crystal_sheen();
+  igSameLine(0, -1);
+  igBeginDisabled(s_hpos < 0 || s_hpos >= s_hn - 1);
+  if (igButton("Forward \uea34##gen_fwd", (ImVec2){half, 0})) {
+    s_hpos++;
+    se_apply(usrs, s_hist[s_hpos].code, s_hist[s_hpos].acc);
+    s_sel = -1;
+  }
+  igEndDisabled();
+  crystal_sheen();
+
+  if (s_hn > 0) igTextDisabled("History %d/%d    %s", s_hpos + 1, s_hn, s_gmsg);
+  else if (s_gmsg[0]) igTextDisabled("%s", s_gmsg);
+
+  /* Results: one strip per skin, tap to use. */
+  if (s_ncand > 0) {
+    igSpacing();
+    float sh = ts * 0.9f;
+    ImDrawList* dl = igGetWindowDrawList();
+    for (int i = 0; i < s_ncand; i++) {
+      const skin_gen_skin* c = &s_cand[i];
+      igPushID_Int(i);
+      ImVec2 p;
+      igGetCursorScreenPos(&p);
+      bool clicked = igInvisibleButton("##cand", (ImVec2){w, sh}, 0);
+      bool hov = igIsItemHovered(ImGuiHoveredFlags_None);
+      bool sel = (i == s_sel);
+      /* Outline only: a fill here would dull the beads drawn under ImGui. */
+      ImDrawList_AddRect(dl, p, (ImVec2){p.x + w, p.y + sh},
+                         se_col(0.800f, 0.700f, 1.0f, sel ? 0.95f : hov ? 0.65f : 0.25f), 8.0f, 0,
+                         sel ? 2.0f : 1.0f);
+
+      float bs = sh * 0.80f, pad = 8.0f;
+      float avail = w - pad * 2.0f - bs;
+      float step = c->len > 1 ? avail / (float)(c->len - 1) : bs;
+      if (step > bs / 3.2f) step = bs / 3.2f;
+      if (step < bs / 10.0f) step = bs / 10.0f;
+      int nfit = (int)(avail / step) + 1;
+      if (nfit > c->len) nfit = c->len;
+      bool inside = p.x >= clip_x1 && p.x + w <= clip_x2 && p.y >= clip_y1 && p.y + sh <= clip_y2;
+      if (inside) {
+        for (int k = 0; k < nfit; k++) {
+          int id = get_cg_id(gdata, c->code[k]);
+          if (id < 0) continue;
+          bp_renderer_push(usr->r->bpr,
+                           &(bp_instance){{p.x + pad + k * step, p.y + (sh - bs) * 0.5f, bs},
+                                          gdata->cg_uvs[id], {1, 1, 1, 1}});
+        }
+      }
+      igTextDisabled("%s, %d beads, %d%% match%s", skin_gen_style_name(c->style), c->len,
+                     (int)(c->score * 100.0f + 0.5f),
+                     c->accessory == SKIN_GEN_KEEP_ACC ? "" : ", + accessory");
+      igPopID();
+      if (clicked) {
+        se_use(usrs, c);
+        s_sel = i;
+      }
+    }
+  }
+
+  /* Options */
+  igSpacing();
+  if (igCollapsingHeader_TreeNodeFlags("Options", ImGuiTreeNodeFlags_DefaultOpen)) {
+    float lw = w * 0.32f;
+    float cw = w - lw;
+
+    se_opt_label("Mood", lw);
+    igSetNextItemWidth(cw);
+    igCombo_Str("##g_mood", &s_rcp.mood, skin_gen_mood_list(), -1);
+
+    igBeginDisabled(s_remix);
+    se_opt_label("Theme", lw);
+    igSetNextItemWidth(cw);
+    int ti = s_rcp.theme + 1;
+    if (igCombo_Str("##g_theme", &ti, skin_gen_theme_list(), -1)) s_rcp.theme = ti - 1;
+    igEndDisabled();
+
+    se_opt_label("Pattern", lw);
+    igSetNextItemWidth(cw);
+    int si = s_rcp.style + 1;
+    if (igCombo_Str("##g_style", &si, skin_gen_style_list(), -1)) s_rcp.style = si - 1;
+
+    igBeginDisabled(s_remix || s_rcp.theme >= 0);
+    se_opt_label("Brightness", lw);
+    igSetNextItemWidth(cw);
+    igCombo_Str("##g_tone", &s_rcp.tone, skin_gen_tone_list(), -1);
+    igEndDisabled();
+
+    se_opt_label("Band width", lw);
+    igSetNextItemWidth(cw);
+    igCombo_Str("##g_size", &s_rcp.size, skin_gen_size_list(), -1);
+
+    se_opt_label("Mirror", lw);
+    igSetNextItemWidth(cw);
+    igCombo_Str("##g_sym", &s_rcp.symmetry, skin_gen_sym_list(), -1);
+
+    se_opt_label("Wildness", lw);
+    igSetNextItemWidth(cw);
+    igSliderFloat("##g_wild", &s_rcp.wildness, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+
+    se_opt_label("Max length", lw);
+    igSetNextItemWidth(cw);
+    igSliderInt("##g_len", &s_rcp.max_len, 8, SKIN_GEN_MAX_CODE, "%d beads",
+                ImGuiSliderFlags_AlwaysClamp);
+
+    se_opt_label("Results", lw);
+    igSetNextItemWidth(cw);
+    igSliderInt("##g_batch", &s_batch, 1, 12, "%d skins", ImGuiSliderFlags_AlwaysClamp);
+
+    igCheckbox("Random accessory##g_acc", &s_rcp.random_accessory);
+    igCheckbox("Remix my current colours##g_remix", &s_remix);
+    igSetItemTooltip("%s", "Builds new patterns using only the colours of the skin in the preview.");
+  }
+
+  igDummy((ImVec2){1, style->ItemSpacing.y * 2.0f});
 }
 
 void ui_skin_editor_init(tenv* env) {}
@@ -517,7 +801,7 @@ void ui_skin_editor(tenv* env) {
     /* Rows 4-3: skin code input, then Save (image 2). */
     igSetCursorPosX(picker_x);
     igSetCursorPosY((grid_y) - row_h * 4);
-    igSetNextItemWidth(tot_size[0] - 2 * (frame_height + style->ItemSpacing.x));
+    igSetNextItemWidth(tot_size[0] - 3 * (frame_height + style->ItemSpacing.x));
     igInputTextWithHint("##ss", "Skin code", usrs->skin_code,
                         MAX_SKIN_CODE_LEN + 1,
                         ImGuiInputTextFlags_CallbackCharFilter |
@@ -537,6 +821,12 @@ void ui_skin_editor(tenv* env) {
       usrs->skin_code[0] = 0;
     }
     crystal_sheen();
+    igSameLine(0, -1);
+    if (igButton("R##skin_rnd", (ImVec2){frame_height, frame_height})) {
+      se_generate(usrs, true);
+    }
+    crystal_sheen();
+    igSetItemTooltip("%s", "Random skin (see the RANDOM tab for options)");
     igPopStyleVar(1);
 
     igSetCursorPosX(picker_x);
@@ -661,15 +951,17 @@ void ui_skin_editor(tenv* env) {
 
   if (gdata->skin_editing) {
     /* SKIN COLOURS / ACCESSORIES tabs, directly under OK. */
-    const char* tab_names[2] = {"SKIN COLOURS##tab_col", "ACCESSORIES##tab_acc"};
-    for (int t = 0; t < 2; t++) {
+    const char* tab_names[3] = {"SKIN COLOURS##tab_col", "ACCESSORIES##tab_acc",
+                                "RANDOM##tab_rnd"};
+    float tab_w = (tot_size[0] - 2.0f * style->ItemSpacing.x) / 3.0f;
+    for (int t = 0; t < 3; t++) {
       igSetCursorPosY(grid_y);
-      igSetCursorPosX(picker_x + t * (half_w + style->ItemSpacing.x));
+      igSetCursorPosX(picker_x + t * (tab_w + style->ItemSpacing.x));
       bool on = s_se_tab == t;
       if (on)
         igPushStyleColor_Vec4(ImGuiCol_Button,
                               (ImVec4){0.510f, 0.294f, 0.910f, 0.60f});
-      if (igButton(tab_names[t], (ImVec2){half_w, 0})) s_se_tab = t;
+      if (igButton(tab_names[t], (ImVec2){tab_w, 0})) s_se_tab = t;
       crystal_sheen();
       if (on) igPopStyleColor(1);
     }
@@ -770,7 +1062,7 @@ void ui_skin_editor(tenv* env) {
         igSetCursorPosX(0);
         igSetCursorPosY(colors_y + pitch_y * rows);
         igDummy((ImVec2){1, style->ItemSpacing.y});
-      } else {
+      } else if (s_se_tab == 1) {
         igTextDisabled("Accessories");
         float accessories_y = igGetCursorPosY() + style->ItemSpacing.y;
         int total_acc = NUM_ACCESSORIES + 1; /* last tile = no accessory */
@@ -821,6 +1113,8 @@ void ui_skin_editor(tenv* env) {
         igSetCursorPosX(0);
         igSetCursorPosY(accessories_y + pitch_y * rows);
         igDummy((ImVec2){1, style->ItemSpacing.y});
+      } else {
+        se_random_panel(env, ts, clip_x1, clip_y1, clip_x2, clip_y2);
       }
     }
     igEndChild();

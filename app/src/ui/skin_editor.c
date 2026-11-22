@@ -471,209 +471,13 @@ static void se_random_panel(tenv* env, float ts, float clip_x1, float clip_y1,
 
 void ui_skin_editor_init(tenv* env) {}
 
-void ui_skin_editor(tenv* env) {
+/* The live snake preview: draws the looping skin inside the themed box. */
+static void se_draw_preview(tenv* env, ImVec2 preview_excl_min,
+                            ImVec2 preview_excl_max, float scale,
+                            float resolution_scale) {
   tuser_data* usr = env->usr;
-  tcontext* ctx = env->ctx;
-  ImGuiStyle* style = igGetStyle();
   game_data* gdata = &usr->gdata;
   user_settings* usrs = &usr->usrs;
-
-  igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
-             usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
-
-  /* One-time cleanup: older versions let the same skin be saved many times. */
-  {
-    static bool s_deduped = false;
-    if (!s_deduped) {
-      s_deduped = true;
-      if (skin_saved_dedupe(usrs) > 0) save_user_settings(usrs);
-    }
-  }
-
-  usr->r->global.bg_opacity = 0;
-  usr->r->global.bd_opacity = 0;
-  usr->r->global.minimap_opacity = 0;
-
-  /* This screen has a live skin preview + color/accessory grid drawn by a
-     separate renderer (bp_renderer_render() runs in the base scene pass,
-     before ImGui composites on top), so any background painted here as a
-     single full-screen rect sits OVER that content, not behind it --
-     even a low alpha visibly dulls it. Rather than trade theme strength
-     for color accuracy, carve the preview strip and (if visible) the
-     color grid panel out of the background entirely: full-strength
-     purple everywhere else, zero tint on the actual snake/colors. The
-     two exclusion rects are computed below, before any widgets are laid
-     out, and the background is drawn once that's known -- see
-     crystal_draw_background_alpha_excl2(). */
-  float frame_height = igGetFrameHeight();
-
-  /* Popup rect: same footprint as the lobby Settings / Controls popups. */
-  const float pop_w = ctx->size[0] * 0.52f;
-  const float pop_h = ctx->size[1] * 0.88f;
-  const float pop_x = (ctx->size[0] - pop_w) * 0.5f;
-  const float pop_y = (ctx->size[1] - pop_h) * 0.5f;
-  const float pop_bottom = pop_y + pop_h;
-  const float header_h = frame_height * 1.3f + style->ItemSpacing.y;
-
-  float resolution_scale = fminf(ctx->size[0] / 1280.0f, ctx->size[1] / 720.0f);
-  if (resolution_scale < 0.70f) resolution_scale = 0.70f;
-  if (resolution_scale > 1.25f) resolution_scale = 1.25f;
-  float scale = 48.0f * resolution_scale;
-
-  /* The 256-segment preview is very wide. Shrink it only when necessary so
-     the editor remains fully visible on lower-resolution devices. */
-  float preview_units = 1.0f + (MAX_SKIN_CODE_LEN / 2.0f - 1.0f) * (8.0f / 48.0f);
-  float max_scale_for_width = (pop_w * 0.94f) / preview_units;
-  if (scale > max_scale_for_width) scale = max_scale_for_width;
-
-  vec2 tot_size = {style->ItemSpacing.x * 6 + 7 * scale,
-                   style->ItemSpacing.y * 5 + 6 * scale};
-
-  /* Row-units reserved above grid_y for the buttons/labels below the
-     preview. The full color/accessory grid (child panel starting at
-     grid_y) only ever shows while gdata->skin_editing is true, so the two
-     modes reserve a different number of rows:
-       editing:     [skin code input] [Save] [Default] [OK]        -> 4
-       not editing: [Default skins] [<>] [Saved skins] [<>]
-                    [Custom] [OK]                                   -> 6 */
-  /* Both views (main + Custom) share ONE preview box: its position and size
-     are always computed from the main SKIN EDITOR layout. */
-  float row_h = style->ItemSpacing.y + frame_height;
-  float tag_h_main = ntl_tags_block_height();
-  float stack_h_main = row_h * 6 + tag_h_main;
-  float reserved_main = stack_h_main + (scale + style->ItemSpacing.y) * 2.0f;
-  float min_grid_main = pop_y + header_h + style->WindowPadding.y + reserved_main;
-  float grid_main = (pop_y + header_h + pop_bottom) * 0.5f + reserved_main * 0.5f;
-  if (grid_main < min_grid_main) grid_main = min_grid_main;
-  float shift_y = scale * 0.8f;
-  float box_up = scale * 0.3f;
-  float box_dn = shift_y - frame_height * 0.75f;
-  grid_main += shift_y;
-
-  /* The NTL tag block only shows in the main view. */
-  float tag_h = gdata->skin_editing ? 0.0f : tag_h_main;
-  float stack_h = gdata->skin_editing ? row_h * 4 : stack_h_main;
-  float grid_y = grid_main;
-
-  float sk_w = scale + (8 * (scale / 48)) * ((MAX_SKIN_CODE_LEN / 2.0f) - 1);
-
-  /* Bounding box around both preview rows (the row further up on screen
-     comes from the "+ 2 * (scale + spacing)" offset, the lower one from
-     "+ scale + spacing" -- see the two bp_renderer loops below). Padded
-     generously for the shadow sprites (which extend 10*(scale/48) past
-     each segment) and the eyes/accessory (small offsets past the last
-     segment). */
-  float preview_row_a_y = grid_main - shift_y - (stack_h_main + scale + style->ItemSpacing.y);
-  float preview_row_b_y = grid_main - shift_y - (stack_h_main + 2 * (scale + style->ItemSpacing.y));
-  float preview_pad = scale * 0.5f;
-  /* The preview box: same vertical band as before, but a fixed, compact
-     width instead of the old 256-segment-wide strip. */
-  float box_w = pop_w * 0.90f;
-  float cur_top = fminf(preview_row_a_y, preview_row_b_y) - preview_pad - box_up;
-  float cur_bot = fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad + box_dn;
-  float box_extra = 0.20f * (cur_bot - cur_top);
-  ImVec2 preview_excl_min = {ctx->size[0] * 0.5f - box_w * 0.5f,
-                             fminf(preview_row_a_y, preview_row_b_y) - preview_pad - box_up - box_extra};
-  ImVec2 preview_excl_max = {ctx->size[0] * 0.5f + box_w * 0.5f,
-                             fmaxf(preview_row_a_y, preview_row_b_y) + scale + preview_pad + box_dn};
-
-  /* Custom view: the buttons start just below the box, then the two tab
-     buttons (SKIN COLOURS / ACCESSORIES) sit under OK and the wide panel
-     under them. Geometry is computed once here and reused when drawing. */
-  float panel_x = 0, panel_y = 0, panel_w = 0, panel_h = 0;
-  int ncols = 7;
-  float ts = scale; /* colour / accessory tile size in the Custom panel */
-  ImVec2 panel_excl_min = {0, 0};
-  ImVec2 panel_excl_max = {0, 0};
-  if (gdata->skin_editing) {
-    grid_y = preview_excl_max.y + row_h * 0.45f + row_h * 4.0f;
-    panel_w = pop_w * 0.94f;
-    panel_x = ctx->size[0] * 0.5f - panel_w * 0.5f;
-    panel_y = grid_y + row_h;
-    panel_h = pop_bottom - panel_y - style->WindowPadding.y * 2.0f;
-    if (panel_h < scale * 2.25f) panel_h = scale * 2.25f;
-    /* Big tiles: 14 per row, as large as the panel width allows. */
-    float inner_w = panel_w - style->ScrollbarSize - style->WindowPadding.x * 2.0f;
-    ncols = 14;
-    ts = (inner_w - (ncols - 1) * style->ItemSpacing.x) / ncols;
-    if (ts > scale * 1.6f) ts = scale * 1.6f;
-    if (ts < scale) {
-      ts = scale;
-      ncols = (int)(inner_w / (ts + style->ItemSpacing.x));
-      if (ncols < 4) ncols = 4;
-    }
-    if (usrs->custom_skin) {
-      panel_excl_min = (ImVec2){panel_x, panel_y};
-      panel_excl_max = (ImVec2){panel_x + panel_w, panel_y + panel_h};
-    }
-  }
-
-  /* Restored to the original 0.72 (in fact this could go all the way to
-     1.0 now) -- alpha no longer trades off against the preview/swatch
-     colors since this doesn't paint over them at all. */
-  se_draw_popup_bg(env, pop_x, pop_y, pop_w, pop_h, preview_excl_min,
-                   preview_excl_max, panel_excl_min, panel_excl_max);
-  se_draw_preview_frame(preview_excl_min, preview_excl_max, resolution_scale);
-  crystal_push_theme();
-
-  /* ---- header: title + round close (same as OK) ---- */
-  {
-    ImDrawList* hdl = igGetWindowDrawList();
-    float hpad = style->WindowPadding.x + 6.0f;
-    float d = frame_height * 1.15f;
-    ImVec2 tp = {pop_x + hpad + 14.0f, pop_y + (header_h - igGetTextLineHeight()) * 0.5f};
-    ImDrawList_AddCircleFilled(hdl, (ImVec2){pop_x + hpad + 3.0f, tp.y + igGetTextLineHeight() * 0.5f},
-                               4.5f, se_col(0.800f, 0.700f, 1.0f, 1.0f), 16);
-    ImDrawList_AddText_Vec2(hdl, tp, se_col(0.850f, 0.780f, 1.0f, 1.0f),
-                            "SKIN EDITOR", NULL);
-    /* Import / Export, immediately left of the close button. */
-    {
-      float bh = d * 0.85f;
-      ImVec2 t1, t2;
-      igCalcTextSize(&t1, "Import", NULL, false, -1.0f);
-      igCalcTextSize(&t2, "Export", NULL, false, -1.0f);
-      float padx = style->FramePadding.x;
-      float w_imp = t1.x + padx * 2.0f, w_exp = t2.x + padx * 2.0f;
-      float gap = 6.0f;
-      float y = pop_y + (header_h - bh) * 0.5f;
-      float x_exp = pop_x + pop_w - hpad - d - gap - w_exp;
-      float x_imp = x_exp - gap - w_imp;
-      igSetCursorScreenPos((ImVec2){x_imp, y});
-      if (igButton("Import##skin_imp", (ImVec2){w_imp, bh})) skin_io_request_import(env);
-      crystal_sheen();
-      igSetCursorScreenPos((ImVec2){x_exp, y});
-      if (igButton("Export##skin_exp", (ImVec2){w_exp, bh})) skin_io_request_export(env);
-      crystal_sheen();
-
-      /* Result message, centred just under the header line. */
-      const char* st = skin_io_status();
-      if (st[0]) {
-        ImVec2 ts;
-        igCalcTextSize(&ts, st, NULL, false, -1.0f);
-        ImDrawList_AddText_Vec2(hdl,
-                                (ImVec2){pop_x + (pop_w - ts.x) * 0.5f, pop_y + header_h + 6.0f},
-                                se_col(0.760f, 0.700f, 0.920f, 0.95f), st, NULL);
-      }
-    }
-    if (crystal_close_button("##skin_close",
-                             (ImVec2){pop_x + pop_w - hpad - d,
-                                      pop_y + (header_h - d) * 0.5f},
-                             d)) {
-      if (usrs->skin_code[0] == 0) usrs->custom_skin = false;
-      gdata->skin_editing = false;
-      gdata->curr_screen = TITLE_SCREEN;
-      save_user_settings(usrs);
-    }
-    ImVec2 l0 = {pop_x + hpad, pop_y + header_h};
-    ImDrawList_AddRectFilledMultiColor(
-        hdl, l0, (ImVec2){pop_x + pop_w - hpad, pop_y + header_h + 2.0f},
-        se_col(0.800f, 0.700f, 1.0f, 0.90f), se_col(0.592f, 0.353f, 1.0f, 0.0f),
-        se_col(0.592f, 0.353f, 1.0f, 0.0f), se_col(0.800f, 0.700f, 1.0f, 0.90f));
-  }
-
-
-  for (int i = strlen(usrs->skin_code); i < MAX_SKIN_CODE_LEN + 1; i++)
-    usrs->skin_code[i] = 0;
 
   /* ---- snake preview: racetrack loop inside the themed box ---- */
   float bx0 = preview_excl_min.x, by0 = preview_excl_min.y;
@@ -800,107 +604,230 @@ void ui_skin_editor(tenv* env) {
     ntl_tags_draw_preview(head_x, head_y, d);
   }
 
-  igSetCursorPosX(ctx->size[0] * 0.5 - sk_w * 0.5f);
-  igSetCursorPosY((grid_y) - (stack_h + 2 * (scale + style->ItemSpacing.y)));
+}
 
-  float picker_x = ctx->size[0] * 0.5 - tot_size[0] * 0.5f;
-  float half_w = tot_size[0] / 2 - style->ItemSpacing.x / 2;
+/* A "< >" pair that steps through a list. Returns -1 (no click), 0 (prev) or
+   1 (next). */
+static int se_arrow_pair(const char* id_prev, const char* id_next, float x,
+                         float y, float w_each, bool disabled) {
+  int r = -1;
+  igSetCursorPos((ImVec2){x, y});
+  igBeginDisabled(disabled);
+  if (igButton(id_prev, (ImVec2){w_each, 0})) r = 0;
+  crystal_sheen();
+  igSameLine(0, -1);
+  if (igButton(id_next, (ImVec2){w_each, 0})) r = 1;
+  crystal_sheen();
+  igEndDisabled();
+  return r;
+}
 
-  if (gdata->skin_editing) {
-    /* Rows 4-3: skin code input, then Save (image 2). */
-    igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - row_h * 4);
-    igSetNextItemWidth(tot_size[0] - 3 * (frame_height + style->ItemSpacing.x));
-    igInputTextWithHint("##ss", "Skin code", usrs->skin_code,
-                        MAX_SKIN_CODE_LEN + 1,
-                        ImGuiInputTextFlags_CallbackCharFilter |
-                            ImGuiInputTextFlags_EnterReturnsTrue,
-                        skin_code_filter, NULL);
-    crystal_sheen();
-    igSameLine(0, -1);
-    igPushStyleVarX(ImGuiStyleVar_FramePadding, 0);
-    int skin_code_len = strlen(usrs->skin_code);
-    if (igButton("C", (ImVec2){frame_height, frame_height}) &&
-        skin_code_len > 0) {
-      usrs->skin_code[strlen(usrs->skin_code) - 1] = 0;
-    }
-    crystal_sheen();
-    igSameLine(0, -1);
-    if (igButton("\ue9ac", (ImVec2){frame_height, frame_height})) {
-      usrs->skin_code[0] = 0;
-    }
-    crystal_sheen();
-    igSameLine(0, -1);
-    if (igButton("R##skin_rnd", (ImVec2){frame_height, frame_height})) {
-      se_generate(usrs, true);
-    }
-    crystal_sheen();
-    igSetItemTooltip("%s", "Random skin (see the RANDOM tab for options)");
-    igPopStyleVar(1);
+void ui_skin_editor(tenv* env) {
+  tuser_data* usr = env->usr;
+  tcontext* ctx = env->ctx;
+  ImGuiStyle* style = igGetStyle();
+  game_data* gdata = &usr->gdata;
+  user_settings* usrs = &usr->usrs;
 
-    igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - row_h * 3);
-    bool can_save = usrs->skin_code[0] != 0 &&
-                    skin_saved_total(usrs) < MAX_SAVED_SKINS + SKIN_LIB_MAX;
-    igBeginDisabled(!can_save);
-    if (igButton("Save", (ImVec2){tot_size[0]})) {
-      int existing = skin_saved_find(usrs, usrs->skin_code, usrs->accessory);
-      if (existing >= 0)
-        usrs->active_saved_skin = existing; /* already saved: just select it */
-      else if (skin_saved_add(usrs, usrs->skin_code, usrs->accessory))
-        usrs->active_saved_skin = skin_saved_total(usrs) - 1;
-    }
-    crystal_sheen();
-    igEndDisabled();
-  } else {
-    /* Rows (bottom to top): OK, NTL tags, Custom, Saved skins, Default skins.
-       Everything above OK is shifted up by the tag block's height. */
-    /* "Default skins" label + arrows. */
-    igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 6);
-    igTextDisabled("Default skins");
+  igPushFont(usr->imgui_data.regular_font[usrs->ui_font_size],
+             usr->imgui_data.regular_font[usrs->ui_font_size]->LegacySize);
 
-    igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 5);
-    if (igButton("\uea38##default_prev", (ImVec2){half_w, 0})) {
-      usrs->default_skin =
-          (usrs->default_skin + (NUM_DEFAULT_SKINS - 1)) % NUM_DEFAULT_SKINS;
+  /* One-time cleanup: older versions let the same skin be saved many times. */
+  {
+    static bool s_deduped = false;
+    if (!s_deduped) {
+      s_deduped = true;
+      if (skin_saved_dedupe(usrs) > 0) save_user_settings(usrs);
+    }
+  }
+
+  usr->r->global.bg_opacity = 0;
+  usr->r->global.bd_opacity = 0;
+  usr->r->global.minimap_opacity = 0;
+
+  const float frame_height = igGetFrameHeight();
+  const bool editing = gdata->skin_editing; /* false = main view, true = Custom */
+
+  /* ---- popup rect: same footprint as the lobby Settings / Controls ---- */
+  const float pop_w = ctx->size[0] * 0.52f;
+  const float pop_h = ctx->size[1] * 0.88f;
+  const float pop_x = (ctx->size[0] - pop_w) * 0.5f;
+  const float pop_y = (ctx->size[1] - pop_h) * 0.5f;
+  const float pop_bottom = pop_y + pop_h;
+  const float header_h = frame_height * 1.3f + style->ItemSpacing.y;
+
+  float resolution_scale = fminf(ctx->size[0] / 1280.0f, ctx->size[1] / 720.0f);
+  if (resolution_scale < 0.70f) resolution_scale = 0.70f;
+  if (resolution_scale > 1.25f) resolution_scale = 1.25f;
+  float scale = 48.0f * resolution_scale;
+  {
+    /* The 256-segment strip is very wide: shrink only when necessary. */
+    float preview_units = 1.0f + (MAX_SKIN_CODE_LEN / 2.0f - 1.0f) * (8.0f / 48.0f);
+    float max_scale_for_width = (pop_w * 0.94f) / preview_units;
+    if (scale > max_scale_for_width) scale = max_scale_for_width;
+  }
+
+  /* ---- layout -------------------------------------------------------------
+     One content column (cx0, cw) shared by every row. Rows are placed top to
+     bottom from the preview box; the footer button is pinned to the bottom of
+     the popup and the Custom panel takes whatever is left in between. */
+  const float spx = style->ItemSpacing.x, spy = style->ItemSpacing.y;
+  const float pad = style->WindowPadding.x + 6.0f;
+  const float cx0 = pop_x + pad;
+  const float cw = pop_w - 2.0f * pad;
+  const float row_h = frame_height + spy;
+  const float gap = spy * 2.0f;
+  const float line_h = igGetTextLineHeight();
+  const float status_h = line_h + 10.0f; /* import / export message line */
+  const float foot_h = frame_height * 1.2f;
+  const float foot_y = pop_bottom - pad * 0.7f - foot_h;
+  const float top = pop_y + header_h + status_h;
+
+  /* tile size / columns of the colour + accessory grid */
+  int ncols = 14;
+  float ts = scale;
+  {
+    float inner_w = cw - style->ScrollbarSize - style->WindowPadding.x * 2.0f;
+    ts = (inner_w - (ncols - 1) * spx) / ncols;
+    if (ts > scale * 1.6f) ts = scale * 1.6f;
+    if (ts < scale) {
+      ts = scale;
+      ncols = (int)(inner_w / (ts + spx));
+      if (ncols < 4) ncols = 4;
+    }
+  }
+
+  /* One preview box for both views, so nothing jumps when switching. Its
+     height is capped so the controls of BOTH views always fit below it. */
+  const float tag_h = ntl_tags_block_height();
+  const float main_ctrl_h = (line_h + spy) + frame_height + gap + frame_height + gap + tag_h;
+  const float custom_ctrl_h = 3.0f * row_h;
+  const float panel_min_h = ts * 2.3f + style->WindowPadding.y * 2.0f + line_h;
+  float room = (foot_y - gap) - top - gap; /* preview + controls */
+  float ph = pop_h * 0.26f;
+  float cap_a = room - main_ctrl_h;
+  float cap_b = room - (custom_ctrl_h + gap + panel_min_h);
+  if (ph > cap_a) ph = cap_a;
+  if (ph > cap_b) ph = cap_b;
+  if (ph < pop_h * 0.12f) ph = pop_h * 0.12f;
+
+  const ImVec2 pmn = {cx0, top};
+  const ImVec2 pmx = {cx0 + cw, top + ph};
+  const float cy0 = pmx.y + gap; /* first control row */
+
+  /* Custom panel rectangle (also the second "hole" in the popup fill) */
+  float panel_x = cx0, panel_y = cy0 + 3.0f * row_h, panel_w = cw;
+  float panel_h = (foot_y - gap) - panel_y;
+  if (panel_h < panel_min_h) panel_h = panel_min_h;
+  ImVec2 panel_excl_min = {0, 0};
+  ImVec2 panel_excl_max = {0, 0};
+  if (editing && usrs->custom_skin) {
+    panel_excl_min = (ImVec2){panel_x, panel_y};
+    panel_excl_max = (ImVec2){panel_x + panel_w, panel_y + panel_h};
+  }
+
+  se_draw_popup_bg(env, pop_x, pop_y, pop_w, pop_h, pmn, pmx, panel_excl_min,
+                   panel_excl_max);
+  se_draw_preview_frame(pmn, pmx, resolution_scale);
+  crystal_push_theme();
+
+  /* ---- header: title + round close (same as OK) ---- */
+  {
+    ImDrawList* hdl = igGetWindowDrawList();
+    float hpad = style->WindowPadding.x + 6.0f;
+    float d = frame_height * 1.15f;
+    ImVec2 tp = {pop_x + hpad + 14.0f, pop_y + (header_h - igGetTextLineHeight()) * 0.5f};
+    ImDrawList_AddCircleFilled(hdl, (ImVec2){pop_x + hpad + 3.0f, tp.y + igGetTextLineHeight() * 0.5f},
+                               4.5f, se_col(0.800f, 0.700f, 1.0f, 1.0f), 16);
+    ImDrawList_AddText_Vec2(hdl, tp, se_col(0.850f, 0.780f, 1.0f, 1.0f),
+                            editing ? "CUSTOM SKIN" : "SKIN EDITOR", NULL);
+    /* Import / Export, immediately left of the close button. */
+    {
+      float bh = d * 0.85f;
+      ImVec2 t1, t2;
+      igCalcTextSize(&t1, "Import", NULL, false, -1.0f);
+      igCalcTextSize(&t2, "Export", NULL, false, -1.0f);
+      float padx = style->FramePadding.x;
+      float w_imp = t1.x + padx * 2.0f, w_exp = t2.x + padx * 2.0f;
+      float gap = 6.0f;
+      float y = pop_y + (header_h - bh) * 0.5f;
+      float x_exp = pop_x + pop_w - hpad - d - gap - w_exp;
+      float x_imp = x_exp - gap - w_imp;
+      igSetCursorScreenPos((ImVec2){x_imp, y});
+      if (igButton("Import##skin_imp", (ImVec2){w_imp, bh})) skin_io_request_import(env);
+      crystal_sheen();
+      igSetCursorScreenPos((ImVec2){x_exp, y});
+      if (igButton("Export##skin_exp", (ImVec2){w_exp, bh})) skin_io_request_export(env);
+      crystal_sheen();
+
+      /* Result message, centred just under the header line. */
+      const char* st = skin_io_status();
+      if (st[0]) {
+        ImVec2 ts;
+        igCalcTextSize(&ts, st, NULL, false, -1.0f);
+        ImDrawList_AddText_Vec2(hdl,
+                                (ImVec2){pop_x + (pop_w - ts.x) * 0.5f, pop_y + header_h + 6.0f},
+                                se_col(0.760f, 0.700f, 0.920f, 0.95f), st, NULL);
+      }
+    }
+    if (crystal_close_button("##skin_close",
+                             (ImVec2){pop_x + pop_w - hpad - d,
+                                      pop_y + (header_h - d) * 0.5f},
+                             d)) {
+      if (usrs->skin_code[0] == 0) usrs->custom_skin = false;
+      gdata->skin_editing = false;
+      gdata->curr_screen = TITLE_SCREEN;
+      save_user_settings(usrs);
+    }
+    ImVec2 l0 = {pop_x + hpad, pop_y + header_h};
+    ImDrawList_AddRectFilledMultiColor(
+        hdl, l0, (ImVec2){pop_x + pop_w - hpad, pop_y + header_h + 2.0f},
+        se_col(0.800f, 0.700f, 1.0f, 0.90f), se_col(0.592f, 0.353f, 1.0f, 0.0f),
+        se_col(0.592f, 0.353f, 1.0f, 0.0f), se_col(0.800f, 0.700f, 1.0f, 0.90f));
+  }
+
+
+  for (int i = strlen(usrs->skin_code); i < MAX_SKIN_CODE_LEN + 1; i++)
+    usrs->skin_code[i] = 0;
+
+  se_draw_preview(env, pmn, pmx, scale, resolution_scale);
+
+  if (!editing) {
+    /* =================== MAIN VIEW: browse skins + NTL tag =============== */
+    float y = cy0;
+    const float gx = spx * 2.0f;
+    const float colw = (cw - gx) * 0.5f;
+    const float arrow_w = (colw - spx) * 0.5f;
+    const float xr = cx0 + colw + gx; /* right column */
+
+    int total = skin_saved_total(usrs);
+    if (usrs->active_saved_skin >= total) usrs->active_saved_skin = -1;
+    int cur = usrs->active_saved_skin;
+
+    /* captions */
+    igSetCursorPos((ImVec2){cx0, y});
+    igTextDisabled("DEFAULT SKINS   %d / %d", usrs->default_skin + 1, NUM_DEFAULT_SKINS);
+    igSetCursorPos((ImVec2){xr, y});
+    if (total > 0 && cur >= 0) igTextDisabled("SAVED SKINS   %d / %d", cur + 1, total);
+    else igTextDisabled("SAVED SKINS   (%d)", total);
+    y += line_h + spy;
+
+    /* default skins < > */
+    int d = se_arrow_pair("##default_prev", "##default_next", cx0, y,
+                          arrow_w, false);
+    if (d == 0) {
+      usrs->default_skin = (usrs->default_skin + (NUM_DEFAULT_SKINS - 1)) % NUM_DEFAULT_SKINS;
       usrs->custom_skin = false;
-    }
-    crystal_sheen();
-    igSameLine(0, -1);
-    if (igButton("\uea34##default_next", (ImVec2){half_w, 0})) {
+    } else if (d == 1) {
       usrs->default_skin = (usrs->default_skin + 1) % NUM_DEFAULT_SKINS;
       usrs->custom_skin = false;
     }
-    crystal_sheen();
 
-    /* "Saved skins" label + arrows. Cycles the whole saved list (the stored
-       slots plus every imported skin) and loads that entry's code/accessory
-       as the active skin. */
-    int total = skin_saved_total(usrs);
-    if (usrs->active_saved_skin >= total) usrs->active_saved_skin = -1;
-    igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 4);
-    if (total > 0 && usrs->active_saved_skin >= 0)
-      igTextDisabled("Saved skins  %d/%d", usrs->active_saved_skin + 1, total);
-    else
-      igTextDisabled("Saved skins  (%d)", total);
-
-    igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 3);
-    int cur = usrs->active_saved_skin;
-    int pick = -1;
-    igBeginDisabled(total == 0);
-    if (igButton("\uea38##saved_prev", (ImVec2){half_w, 0}) && total > 0)
-      pick = cur <= 0 ? total - 1 : cur - 1;
-    crystal_sheen();
-    igSameLine(0, -1);
-    if (igButton("\uea34##saved_next", (ImVec2){half_w, 0}) && total > 0)
-      pick = (cur + 1) % total;
-    crystal_sheen();
-    igEndDisabled();
-    if (pick >= 0) {
+    /* saved skins < >: cycles the whole saved list and loads that entry */
+    int sv = se_arrow_pair("##saved_prev", "##saved_next", xr, y, arrow_w,
+                           total == 0);
+    if (sv >= 0 && total > 0) {
+      int pick = sv == 0 ? (cur <= 0 ? total - 1 : cur - 1) : (cur + 1) % total;
       char code[MAX_SKIN_CODE_LEN + 1];
       uint8_t acc = 0;
       if (skin_saved_get(usrs, pick, code, &acc)) {
@@ -911,73 +838,113 @@ void ui_skin_editor(tenv* env) {
         usrs->custom_skin = true;
       }
     }
+    y += frame_height + gap;
 
-    /* Custom button, directly below Saved skins. */
-    igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - tag_h - row_h * 2);
-    if (igButton("\ue905 Custom", (ImVec2){tot_size[0]})) {
+    /* Custom skin */
+    igSetCursorPos((ImVec2){cx0, y});
+    if (igButton(" Custom skin", (ImVec2){cw, 0})) {
       gdata->skin_editing = true;
       usrs->custom_skin = true;
     }
     crystal_sheen();
+    y += frame_height + gap;
 
-    /* NTL tags at the bottom: label + show toggle, sliding picker,
-       Upload/Add ID/Sync/Remove. */
-    ntl_tags_skin_editor_ui(env, picker_x, grid_y - row_h * 1 - tag_h, tot_size[0]);
-  }
+    /* NTL tag: label + sliding picker, Upload / Add ID / Remove */
+    ntl_tags_skin_editor_ui(env, cx0, y, cw);
+  } else {
+    /* =================== CUSTOM VIEW: code, tabs, panel ================== */
+    float y = cy0;
+    int skin_code_len = (int)strlen(usrs->skin_code);
 
-  if (gdata->skin_editing) {
-    igSetCursorPosX(picker_x);
-    igSetCursorPosY((grid_y) - row_h * 2);
-    if (igButton("\uea40 Default", (ImVec2){tot_size[0]})) {
+    /* Row 1: code input + backspace + clear + random */
+    igSetCursorPos((ImVec2){cx0, y});
+    igSetNextItemWidth(cw - 3.0f * (frame_height + spx));
+    igInputTextWithHint("##ss", "Skin code", usrs->skin_code, MAX_SKIN_CODE_LEN + 1,
+                        ImGuiInputTextFlags_CallbackCharFilter |
+                            ImGuiInputTextFlags_EnterReturnsTrue,
+                        skin_code_filter, NULL);
+    crystal_sheen();
+    igPushStyleVarX(ImGuiStyleVar_FramePadding, 0);
+    igSameLine(0, -1);
+    if (igButton("C", (ImVec2){frame_height, frame_height}) && skin_code_len > 0)
+      usrs->skin_code[skin_code_len - 1] = 0;
+    crystal_sheen();
+    igSetItemTooltip("%s", "Delete the last colour");
+    igSameLine(0, -1);
+    if (igButton("", (ImVec2){frame_height, frame_height})) usrs->skin_code[0] = 0;
+    crystal_sheen();
+    igSetItemTooltip("%s", "Clear the whole skin");
+    igSameLine(0, -1);
+    if (igButton("R##skin_rnd", (ImVec2){frame_height, frame_height}))
+      se_generate(usrs, true);
+    crystal_sheen();
+    igSetItemTooltip("%s", "Random skin (see the RANDOM tab for options)");
+    igPopStyleVar(1);
+
+    /* Row 2: Save + Use default skin */
+    y += row_h;
+    const float half = (cw - spx) * 0.5f;
+    igSetCursorPos((ImVec2){cx0, y});
+    bool can_save = usrs->skin_code[0] != 0 &&
+                    skin_saved_total(usrs) < MAX_SAVED_SKINS + SKIN_LIB_MAX;
+    igBeginDisabled(!can_save);
+    if (igButton("Save skin", (ImVec2){half, 0})) {
+      int existing = skin_saved_find(usrs, usrs->skin_code, usrs->accessory);
+      if (existing >= 0)
+        usrs->active_saved_skin = existing; /* already saved: just select it */
+      else if (skin_saved_add(usrs, usrs->skin_code, usrs->accessory))
+        usrs->active_saved_skin = skin_saved_total(usrs) - 1;
+    }
+    crystal_sheen();
+    igEndDisabled();
+    igSameLine(0, -1);
+    if (igButton(" Use default skin", (ImVec2){half, 0})) {
       gdata->skin_editing = false;
       usrs->custom_skin = false;
     }
     crystal_sheen();
+
+    /* Row 3: tabs */
+    y += row_h;
+    const char* tab_names[3] = {"SKIN COLOURS##tab_col", "ACCESSORIES##tab_acc",
+                                "RANDOM##tab_rnd"};
+    const float tab_w = (cw - 2.0f * spx) / 3.0f;
+    for (int t = 0; t < 3; t++) {
+      igSetCursorPos((ImVec2){cx0 + t * (tab_w + spx), y});
+      bool on = s_se_tab == t;
+      if (on)
+        igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.510f, 0.294f, 0.910f, 0.60f});
+      if (igButton(tab_names[t], (ImVec2){tab_w, 0})) s_se_tab = t;
+      crystal_sheen();
+      if (on) igPopStyleColor(1);
+    }
   }
 
-  igSetCursorPosX(picker_x);
-  igSetCursorPosY((grid_y) - row_h * 1);
+  /* ---- footer: OK ----
+     Main view: save and go back to the lobby.
+     Custom view: save and go back to the main SKIN EDITOR view. */
+  igSetCursorPos((ImVec2){cx0, foot_y});
   {
     ImVec2 ok_pos;
     igGetCursorScreenPos(&ok_pos);
-    crystal_glow_rect(ok_pos, (ImVec2){tot_size[0], frame_height}, 0.647f,
-                      0.420f, 1.0f);
+    crystal_glow_rect(ok_pos, (ImVec2){cw, foot_h}, 0.647f, 0.420f, 1.0f);
   }
-  igPushStyleColor_Vec4(ImGuiCol_Button,
-                        (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered,
-                        (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
-  igPushStyleColor_Vec4(ImGuiCol_ButtonActive,
-                        (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
-  if (igButton("OK", (ImVec2){tot_size[0]})) {
+  igPushStyleColor_Vec4(ImGuiCol_Button, (ImVec4){0.510f, 0.294f, 0.910f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonHovered, (ImVec4){0.569f, 0.353f, 0.960f, 1.0f});
+  igPushStyleColor_Vec4(ImGuiCol_ButtonActive, (ImVec4){0.450f, 0.243f, 0.850f, 1.0f});
+  if (igButton("OK", (ImVec2){cw, foot_h})) {
     if (usrs->skin_code[0] == 0) usrs->custom_skin = false;
-    gdata->skin_editing = false;
-    gdata->curr_screen = TITLE_SCREEN;
+    if (editing) {
+      gdata->skin_editing = false; /* back to the main skin editor */
+    } else {
+      gdata->curr_screen = TITLE_SCREEN;
+    }
     save_user_settings(usrs);
   }
   crystal_sheen();
   igPopStyleColor(3);
 
   if (!gdata->skin_editing) s_se_tab = 0;
-
-  if (gdata->skin_editing) {
-    /* SKIN COLOURS / ACCESSORIES tabs, directly under OK. */
-    const char* tab_names[3] = {"SKIN COLOURS##tab_col", "ACCESSORIES##tab_acc",
-                                "RANDOM##tab_rnd"};
-    float tab_w = (tot_size[0] - 2.0f * style->ItemSpacing.x) / 3.0f;
-    for (int t = 0; t < 3; t++) {
-      igSetCursorPosY(grid_y);
-      igSetCursorPosX(picker_x + t * (tab_w + style->ItemSpacing.x));
-      bool on = s_se_tab == t;
-      if (on)
-        igPushStyleColor_Vec4(ImGuiCol_Button,
-                              (ImVec4){0.510f, 0.294f, 0.910f, 0.60f});
-      if (igButton(tab_names[t], (ImVec2){tab_w, 0})) s_se_tab = t;
-      crystal_sheen();
-      if (on) igPopStyleColor(1);
-    }
-  }
 
   if (usrs->custom_skin && gdata->skin_editing) {
     igSetCursorPosX(panel_x);

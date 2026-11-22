@@ -5,6 +5,7 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.app.Dialog
 import android.app.NativeActivity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -14,6 +15,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.graphics.Color
 import android.graphics.Typeface
@@ -37,7 +40,10 @@ import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import android.text.Editable
+import android.text.InputFilter
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Display
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
@@ -46,6 +52,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -979,6 +986,24 @@ open class GameActivity : NativeActivity() {
             (activity as? GameActivity)?.setTextInputActiveOnUi(active)
         }
 
+        /**
+         * What the focused ImGui text field holds (UTF-8), its
+         * ImGuiInputTextFlags, the longest text it can take (0 = unknown) and
+         * whether the player turned on Settings > Native text box. Native code
+         * calls this right before setTextInputActive(true).
+         * Signature used in android_jni.c: (Landroid/app/Activity;[BIIZ)V
+         */
+        @JvmStatic
+        fun setTextInputText(
+            activity: Activity, utf8: ByteArray?, flags: Int, maxLen: Int, useBox: Boolean
+        ) {
+            val a = activity as? GameActivity ?: return
+            a.pendingText = if (utf8 == null) "" else String(utf8, Charsets.UTF_8)
+            a.pendingFlags = flags
+            a.pendingMaxLen = maxLen
+            a.useNativeBox = useBox
+        }
+
         @JvmStatic
         fun requestAdFromC(activity: Activity) {
             try {
@@ -1057,6 +1082,26 @@ open class GameActivity : NativeActivity() {
 
         private fun breakRun() {
             recentRun.setLength(0)
+        }
+
+        /* Sends only what CHANGED between the text that is currently shown as
+         * composing ([old]) and the text the keyboard wants there now
+         * ([new]). Keyboards re-send the whole word on every keystroke
+         * ("h", "he", "hel"...). Deleting the entire old word and typing it
+         * again made the letters vanish and reappear on every key press,
+         * because ImGui handles each Backspace over one or two frames. With
+         * the common start kept, a normal keystroke is just "append one
+         * character" and nothing is deleted. */
+        private fun sendReplacement(old: String, new: String) {
+            var p = 0
+            val m = minOf(old.length, new.length)
+            while (p < m && old[p] == new[p]) p++
+            /* Never split a surrogate pair (emoji etc.). */
+            if (p > 0 && Character.isHighSurrogate(old[p - 1])) p--
+            val replace = Character.codePointCount(old, p, old.length)
+            val tail = new.substring(p)
+            if (replace == 0 && tail.isEmpty()) return
+            enqueueImeComposition(replace, tail)
         }
 
         private fun noteKey(keyCode: Int) {
@@ -1166,7 +1211,14 @@ open class GameActivity : NativeActivity() {
             return object : BaseInputConnection(this@ImeBridgeView, false) {
                 override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
                     val committed = text?.toString().orEmpty()
-                    enqueueImeComposition(composingCodePoints, committed)
+                    if (composingCodePoints > 0 &&
+                        codePointCount(composingText) == composingCodePoints) {
+                        /* Usually the same word the keyboard was composing,
+                         * maybe plus a space: only the difference is sent. */
+                        sendReplacement(composingText, committed)
+                    } else {
+                        enqueueImeComposition(composingCodePoints, committed)
+                    }
                     composingCodePoints = 0
                     composingText = ""
                     noteInserted(committed)
@@ -1175,18 +1227,25 @@ open class GameActivity : NativeActivity() {
 
                 override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
                     val composing = text?.toString().orEmpty()
-                    var replace = composingCodePoints
-                    /* The keyboard is re-opening the word it already typed
-                     * ("20" -> "20k") but the bridge was not told those
-                     * characters were composing: replace them instead of
-                     * adding the whole word a second time. */
-                    if (replace == 0 && recentRun.isNotEmpty() &&
+                    if (composingCodePoints == 0 && recentRun.isNotEmpty() &&
                         composing.length > recentRun.length &&
                         composing.startsWith(recentRun.toString())) {
-                        replace = codePointCount(recentRun)
+                        /* The keyboard is re-opening the word it already
+                         * typed ("20" -> "20k") but the bridge was not told
+                         * those characters were composing. They are already
+                         * in the field, so only the new part is added. */
+                        val already = recentRun.toString()
                         breakRun()
+                        sendReplacement(already, composing)
+                    } else if (codePointCount(composingText) == composingCodePoints) {
+                        /* Normal case: change the composing word from what
+                         * is shown now to what the keyboard wants. */
+                        sendReplacement(composingText, composing)
+                    } else {
+                        /* Out of sync (should not happen): fall back to
+                         * replacing everything that is believed composing. */
+                        enqueueImeComposition(composingCodePoints, composing)
                     }
-                    enqueueImeComposition(replace, composing)
                     composingCodePoints = codePointCount(composing)
                     composingText = composing
                     return true
@@ -1299,6 +1358,13 @@ open class GameActivity : NativeActivity() {
 
     private fun setTextInputActiveOnUi(active: Boolean) {
         runOnUiThread {
+            if (useNativeBox) {
+                if (active) showTextBox() else hideTextBox()
+                return@runOnUiThread
+            }
+            /* The option was switched off while the box was open. */
+            if (textDialog?.isShowing == true) hideTextBox()
+
             val bridge = imeBridgeView ?: return@runOnUiThread
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 ?: return@runOnUiThread
@@ -1329,6 +1395,230 @@ open class GameActivity : NativeActivity() {
                 bridge.clearFocus()
                 window.decorView.requestFocus()
             }
+        }
+    }
+
+    /* ── Native text box (Settings > Native text box) ───────────────────
+     *
+     * The game's text fields are drawn by ImGui, so Android never sees them as
+     * text fields. With this option on, tapping one opens a REAL Android
+     * EditText in its own small window docked above the keyboard. Autocorrect,
+     * paste, voice typing, the clipboard bar and selection handles then work
+     * like in any other app, and the field can't end up hidden behind the
+     * keyboard. Whatever is typed is handed to the ImGui field through the same
+     * event queue the invisible IME bridge uses: only the part that changed is
+     * sent, as "delete N characters at the end, then add this text".
+     *
+     * It is its own window (a Dialog), because the game window gives its input
+     * queue to native code and so never delivers touches or keys to ordinary
+     * views. The game keeps running behind it.
+     */
+    private var textDialog: Dialog? = null
+    private var textDialogEdit: EditText? = null
+
+    /** The text the ImGui field holds, as far as this box knows. */
+    private var textDialogSent = ""
+    private var textDialogSuppress = false
+
+    @Volatile private var pendingText = ""
+    @Volatile private var pendingFlags = 0
+    @Volatile private var pendingMaxLen = 0
+    @Volatile private var useNativeBox = false
+
+    /** Sends only what changed between [old] and [new] to the ImGui field. */
+    private fun sendTextDiff(old: String, new: String) {
+        var p = 0
+        val m = minOf(old.length, new.length)
+        while (p < m && old[p] == new[p]) p++
+        /* Never split a surrogate pair (emoji etc.). */
+        if (p > 0 && Character.isHighSurrogate(old[p - 1])) p--
+        val replace = Character.codePointCount(old, p, old.length)
+        val tail = new.substring(p)
+        if (replace == 0 && tail.isEmpty()) return
+        enqueueImeComposition(replace, tail)
+    }
+
+    private fun textBoxSubmit() {
+        enqueueImeKey(KeyEvent.KEYCODE_ENTER, KeyEvent.ACTION_DOWN, 0)
+        enqueueImeKey(KeyEvent.KEYCODE_ENTER, KeyEvent.ACTION_UP, 0)
+        hideTextBox()
+    }
+
+    private fun createTextBox(): Dialog {
+        val edit = EditText(this).apply {
+            setTextColor(Color.WHITE)
+            setHintTextColor(0x99FFFFFF.toInt())
+            setSingleLine(true)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            setBackgroundColor(Color.TRANSPARENT)
+            setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
+            /* NO_EXTRACT_UI / NO_FULLSCREEN: in landscape many keyboards
+             * otherwise cover the whole screen with their own full-screen
+             * editor and ignore this box. */
+            imeOptions = EditorInfo.IME_ACTION_SEND or
+                EditorInfo.IME_FLAG_NO_EXTRACT_UI or
+                EditorInfo.IME_FLAG_NO_FULLSCREEN
+        }
+        val send = Button(this).apply {
+            text = "OK"
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            minWidth = dp(64f)
+            minimumWidth = dp(64f)
+            background = GradientDrawable().apply {
+                setColor(0xFF2F80ED.toInt())
+                cornerRadius = dp(12f).toFloat()
+            }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10f), dp(8f), dp(10f), dp(8f))
+            background = GradientDrawable().apply {
+                setColor(0xF2151A22.toInt())
+                cornerRadius = dp(14f).toFloat()
+                setStroke(dp(1f), 0x33FFFFFF)
+            }
+            addView(edit, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(send, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(44f)
+            ).also { it.leftMargin = dp(8f) })
+        }
+
+        val dialog = Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
+        dialog.setContentView(row)
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.window?.let { w ->
+            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            w.setGravity(Gravity.BOTTOM)
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            /* Touches outside the box still reach the game behind it. */
+            w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+            /* Only this small window is resized by the keyboard; the game's
+             * own window keeps its ADJUST_PAN mode and is never resized. */
+            @Suppress("DEPRECATION")
+            w.setSoftInputMode(
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+            )
+        }
+
+        edit.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                if (textDialogSuppress) return
+                val now = s?.toString().orEmpty()
+                sendTextDiff(textDialogSent, now)
+                textDialogSent = now
+            }
+        })
+        edit.setOnEditorActionListener { _, _, _ ->
+            textBoxSubmit()
+            true
+        }
+        send.setOnClickListener { textBoxSubmit() }
+        dialog.setOnDismissListener {
+            /* Closed (OK, Enter, Back or the field lost focus): forget the
+             * text, the next time the box opens it is filled in again from
+             * the ImGui field. */
+            textDialogSuppress = true
+            edit.setText("")
+            textDialogSuppress = false
+            textDialogSent = ""
+        }
+
+        textDialogEdit = edit
+        return dialog
+    }
+
+    private fun applyTextBoxType(edit: EditText, flags: Int, maxLen: Int) {
+        val password = (flags and (1 shl 10)) != 0   // ImGuiInputTextFlags_Password
+        val decimal = (flags and 1) != 0             // ImGuiInputTextFlags_CharsDecimal
+        val type = when {
+            password -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            decimal -> InputType.TYPE_CLASS_NUMBER or
+                InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
+            else -> InputType.TYPE_CLASS_TEXT
+        }
+        if (edit.inputType != type) edit.inputType = type
+        edit.filters = if (maxLen > 0) {
+            arrayOf<InputFilter>(InputFilter.LengthFilter(maxLen))
+        } else {
+            arrayOf<InputFilter>()
+        }
+    }
+
+    private fun hideDialogSystemBars(d: Dialog) {
+        val w = d.window ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            w.insetsController?.let { c ->
+                c.hide(android.view.WindowInsets.Type.systemBars())
+                c.systemBarsBehavior =
+                    android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            w.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            )
+        }
+    }
+
+    private fun showTextBox() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            ?: return
+
+        /* The invisible bridge must not hold the keyboard at the same time. */
+        if (textInputActive) {
+            textInputActive = false
+            imeBridgeView?.let {
+                it.resetComposition()
+                imm.hideSoftInputFromWindow(it.windowToken, 0)
+            }
+        }
+
+        val dialog = textDialog ?: createTextBox().also { textDialog = it }
+        val edit = textDialogEdit ?: return
+        val text = pendingText
+        applyTextBoxType(edit, pendingFlags, pendingMaxLen)
+
+        val inStep = dialog.isShowing && edit.text.toString() == text
+        if (!inStep) {
+            /* Fill the box with what the ImGui field holds, and make sure
+             * that field's cursor is at the end, because changes are sent as
+             * edits at the end of the text. */
+            clearImeEvents(this)
+            textDialogSuppress = true
+            edit.setText(text)
+            edit.setSelection(edit.text.length)
+            textDialogSuppress = false
+            textDialogSent = text
+            enqueueImeKey(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_DOWN, 0)
+            enqueueImeKey(KeyEvent.KEYCODE_MOVE_END, KeyEvent.ACTION_UP, 0)
+        }
+
+        if (!dialog.isShowing) {
+            dialog.show()
+            hideDialogSystemBars(dialog)
+        }
+        edit.requestFocus()
+        edit.post { imm.showSoftInput(edit, 0) }
+    }
+
+    private fun hideTextBox() {
+        val dialog = textDialog ?: return
+        if (!dialog.isShowing) return
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        textDialogEdit?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+        try {
+            dialog.dismiss()
+        } catch (e: Exception) {
+            Log.w(TAG, "text box dismiss failed: ${e.message}")
         }
     }
 
@@ -1551,6 +1841,12 @@ open class GameActivity : NativeActivity() {
     }
 
     override fun onDestroy() {
+        try {
+            textDialog?.dismiss()
+        } catch (_: Exception) {
+        }
+        textDialog = null
+        textDialogEdit = null
         setTextInputActiveOnUi(false)
         clearImeEvents(this)
         imeBridgeView = null

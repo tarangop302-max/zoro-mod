@@ -173,6 +173,15 @@ const char *jsr_network_get_last_error(
     jsr_network *net
 );
 
+// Change our username WITHOUT reconnecting: sends a fresh join on the
+// existing socket (the relay treats it as a rename and announces the old
+// name as gone). Returns false if we are not connected, in which case the
+// caller should disconnect + connect instead.
+bool jsr_network_rename(
+    jsr_network *net,
+    const char *new_username
+);
+
 // Disconnect from the relay.
 void jsr_network_disconnect(
     jsr_network *net

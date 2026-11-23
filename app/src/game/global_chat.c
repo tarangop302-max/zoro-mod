@@ -1015,11 +1015,18 @@ void global_chat_update(tenv* env) {
             nickname_settle_timer += 1.0f / 60.0f;
 
             if (nickname_settle_timer >= 2.0f) {
-                jsr_network_disconnect(
-                    global_chat_net
-                );
+                /* Rename on the live socket when we can: no reconnect, so
+                 * nothing is left behind for the relay to show twice. Only
+                 * if we are not connected do we fall back to a fresh
+                 * connection under the new name. */
+                if (!jsr_network_rename(
+                        global_chat_net, current_nickname)) {
+                    jsr_network_disconnect(
+                        global_chat_net
+                    );
 
-                global_chat_try_connect(env);
+                    global_chat_try_connect(env);
+                }
 
                 strncpy(
                     last_seen_nickname,

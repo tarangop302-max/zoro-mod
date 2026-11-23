@@ -1203,8 +1203,17 @@ void jsr_network_disconnect(
 
     if (net->ws_connection != NULL) {
         net->ws_connection->fn_data = NULL;
-        net->ws_connection
-            ->is_closing = 1;
+
+        if (net->ws_connection->is_websocket) {
+            /* Tell the relay we are leaving (proper close frame) so it
+             * drops this session right away instead of waiting for a
+             * timeout -- a lingering old session is what showed up as
+             * a second copy of you after a rename. */
+            mg_ws_send(net->ws_connection, "", 0, WEBSOCKET_OP_CLOSE);
+            net->ws_connection->is_draining = 1;
+        } else {
+            net->ws_connection->is_closing = 1;
+        }
 
         net->ws_connection = NULL;
     }
@@ -1230,6 +1239,43 @@ void jsr_network_disconnect(
             sizeof(net->username) - 1
         )
     );
+}
+
+bool jsr_network_rename(
+    jsr_network *net,
+    const char *new_username
+) {
+    if (net == NULL ||
+        new_username == NULL ||
+        new_username[0] == '\0' ||
+        net->ws_connection == NULL ||
+        !net->is_connected) {
+        return false;
+    }
+
+    /* The relay never sends us a "left" for our own old name. */
+    {
+        size_t old_len = jsr_safe_strlen(
+            net->username, sizeof(net->username) - 1);
+
+        jsr_roster_remove(net, net->username, old_len);
+        jsr_location_remove(net, net->username, old_len);
+    }
+
+    strncpy(net->username, new_username, sizeof(net->username) - 1);
+    net->username[sizeof(net->username) - 1] = '\0';
+
+    jsr_roster_add(
+        net,
+        net->username,
+        jsr_safe_strlen(net->username, sizeof(net->username) - 1),
+        NULL,
+        0
+    );
+
+    jsr_network_send_join(net);
+
+    return true;
 }
 
 bool jsr_network_send_message(

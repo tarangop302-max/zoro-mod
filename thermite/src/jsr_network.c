@@ -229,10 +229,20 @@ static void jsr_roster_add(
         return;
     }
 
-    if (
-        jsr_roster_find(net, name, name_len) >= 0
-    ) {
-        /* Already tracked -- avoid duplicates. */
+    int existing = jsr_roster_find(net, name, name_len);
+
+    if (existing >= 0) {
+        /* Already tracked -- no duplicate, but pick up a changed key
+         * holder name (admin renamed the holder while online). */
+        if (owner_name != NULL && owner_len > 0) {
+            if (owner_len >= sizeof(net->roster_owner[0])) {
+                owner_len = sizeof(net->roster_owner[0]) - 1;
+            }
+
+            memcpy(net->roster_owner[existing], owner_name, owner_len);
+            net->roster_owner[existing][owner_len] = '\0';
+        }
+
         return;
     }
 
